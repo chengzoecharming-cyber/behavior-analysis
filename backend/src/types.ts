@@ -1,0 +1,76 @@
+export interface RawVisit {
+  id: number;
+  raw_user_name: string;
+  raw_time: string;
+  raw_location: string;
+  raw_address: string;
+  raw_lat: string;
+  raw_lng: string;
+  raw_customer_name: string;
+  source: string;
+  created_at: Date;
+}
+
+export interface Visit {
+  id: number;
+  raw_visit_id: number | null;
+  user_id: string;
+  user_name: string;
+  department: string;
+  timestamp: Date;
+  lat: number;
+  lng: number;
+  location_name: string;
+  address: string;
+  customer_name: string;
+  source: string;
+  created_at: Date;
+}
+
+export interface Stop {
+  id: number;
+  user_id: string;
+  start_time: Date;
+  end_time: Date;
+  duration_minutes: number;
+  lat: number;
+  lng: number;
+  location_name: string;
+  visit_ids: number[];
+  created_at: Date;
+}
+
+export interface Route {
+  id: number;
+  user_id: string;
+  from_visit_id: number;
+  to_visit_id: number;
+  distance_km: number;
+  duration_min: number;
+  polyline: string;
+  created_at: Date;
+}
+
+export interface Anomaly {
+  id: number;
+  user_id: string;
+  type: "long_stop" | "long_idle" | "route_detour" | string;
+  description: string;
+  start_time: Date | null;
+  end_time: Date | null;
+  lat: number | null;
+  lng: number | null;
+  severity: "low" | "medium" | "high";
+  related_visit_ids: number[];
+  created_at: Date;
+}
+
+export interface RawVisitRow {
+  user_name: string;
+  time: string | number | Date;
+  location_name: string;
+  address: string;
+  lat: number;
+  lng: number;
+  customer_name: string;
+}

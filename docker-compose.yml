@@ -1,0 +1,57 @@
+# 注意：AMAP_KEY / VITE_AMAP_KEY 请通过环境变量或 .env 文件注入，
+# 不要直接将真实 Key 提交到仓库。
+version: "3.8"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sales-map-postgres
+    environment:
+      POSTGRES_USER: sales
+      POSTGRES_PASSWORD: sales123
+      POSTGRES_DB: sales_map
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sales -d sales_map"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: sales-map-backend
+    environment:
+      DATABASE_URL: postgresql://sales:sales123@postgres:5432/sales_map
+      AMAP_KEY: ${AMAP_KEY}
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - backend_uploads:/app/uploads
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        VITE_AMAP_KEY: ${VITE_AMAP_KEY}
+    container_name: sales-map-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  backend_uploads:

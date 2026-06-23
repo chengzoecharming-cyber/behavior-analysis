@@ -1,0 +1,64 @@
+import { Router, Request, Response } from "express";
+import { pool } from "../db";
+import { detectStops } from "../services/stopDetection";
+import { Visit, Stop } from "../types";
+
+const router = Router();
+
+router.get("/", async (req: Request, res: Response) => {
+  const { user, date } = req.query;
+
+  if (!user || !date) {
+    res.status(400).json({ error: "Missing user or date parameter" });
+    return;
+  }
+
+  const start = `${date}T00:00:00+08:00`;
+  const end = `${date}T23:59:59+08:00`;
+
+  try {
+    const result = await pool.query(
+      `SELECT * FROM visits
+       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+       ORDER BY timestamp ASC`,
+      [user, start, end]
+    );
+
+    const visits: Visit[] = result.rows;
+    const stops = detectStops(visits);
+
+    // 持久化到 DERIVED 层（先删除旧数据避免重复）
+    await pool.query(
+      `DELETE FROM stops WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3`,
+      [user, start, end]
+    );
+
+    const persisted: Stop[] = [];
+    for (const stop of stops) {
+      const r = await pool.query(
+        `INSERT INTO stops
+         (user_id, start_time, end_time, duration_minutes, lat, lng, location_name, visit_ids)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING *`,
+        [
+          stop.user_id,
+          stop.start_time,
+          stop.end_time,
+          stop.duration_minutes,
+          stop.lat,
+          stop.lng,
+          stop.location_name,
+          stop.visit_ids,
+        ]
+      );
+      persisted.push(r.rows[0]);
+    }
+
+    res.json(persisted);
+  } catch (err) {
+    console.error("Failed to fetch stops:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+export default router;

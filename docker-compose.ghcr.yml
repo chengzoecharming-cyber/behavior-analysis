@@ -1,0 +1,55 @@
+# 使用 GitHub Container Registry 上预构建的镜像
+# 用法：
+#   AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
+# 前提：
+#   1. 仓库已配置 GitHub Actions 并推送过镜像
+#   2. 镜像 ghcr.io/<你的用户名>/sales-map-backend 与 sales-map-frontend 已存在且公开
+#   3. 后端 AMAP_KEY 通过环境变量注入；前端 Key 已在构建时固化到镜像里
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sales-map-postgres
+    environment:
+      POSTGRES_USER: sales
+      POSTGRES_PASSWORD: sales123
+      POSTGRES_DB: sales_map
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sales -d sales_map"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ghcr.io/${GHCR_OWNER:-<your-github-username>}/sales-map-backend:latest
+    container_name: sales-map-backend
+    environment:
+      DATABASE_URL: postgresql://sales:sales123@postgres:5432/sales_map
+      AMAP_KEY: ${AMAP_KEY}
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - backend_uploads:/app/uploads
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER:-<your-github-username>}/sales-map-frontend:latest
+    container_name: sales-map-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  backend_uploads:
