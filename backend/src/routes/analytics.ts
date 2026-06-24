@@ -4,6 +4,10 @@ import { detectAnomalies } from "../services/anomalyDetection";
 import { detectStops } from "../services/stopDetection";
 import { planRoute } from "../services/routePlanning";
 import { computeAndPersistRoutes } from "../services/routeService";
+import {
+  computeMileageSegments,
+  computeMileageStats,
+} from "../services/mileageAnalysis";
 import { Visit, Stop, Route, Anomaly } from "../types";
 
 const router = Router();
@@ -76,7 +80,7 @@ router.get("/anomaly", async (req: Request, res: Response) => {
       routes.push(await planRoute(visits[i - 1], visits[i], user as string));
     }
 
-    const anomalies = detectAnomalies(visits, stops, routes);
+    const anomalies = await detectAnomalies(visits, stops, routes);
 
     // 持久化异常事件
     await pool.query(
@@ -109,6 +113,41 @@ router.get("/anomaly", async (req: Request, res: Response) => {
     res.json(persisted);
   } catch (err) {
     console.error("Failed to detect anomalies:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// GET /analytics/mileage-distribution?start=&end=
+// 返回填报里程 vs 高德里程的偏差分布，用于训练集分析
+router.get("/mileage-distribution", async (req: Request, res: Response) => {
+  const { start, end } = req.query;
+
+  if (!start || !end) {
+    res.status(400).json({ error: "Missing start or end parameter" });
+    return;
+  }
+
+  try {
+    const visitsResult = await pool.query(
+      `SELECT * FROM visits
+       WHERE timestamp >= $1 AND timestamp <= $2
+       ORDER BY user_id, timestamp ASC`,
+      [start, end]
+    );
+    const visits: Visit[] = visitsResult.rows;
+
+    const segments = await computeMileageSegments(visits);
+    const stats = computeMileageStats(segments);
+
+    res.json({
+      start,
+      end,
+      totalSegments: segments.length,
+      stats,
+      segments: segments.slice(0, 100), // 最多返回 100 条明细
+    });
+  } catch (err) {
+    console.error("Failed to compute mileage distribution:", err);
     res.status(500).json({ error: "Database error" });
   }
 });

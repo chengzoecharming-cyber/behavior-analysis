@@ -42,8 +42,23 @@ export async function initDB(): Promise<void> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      -- 扩展业务字段
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS approval_id VARCHAR(64);
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS sequence INTEGER DEFAULT 0;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS trip_type VARCHAR(64);
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS vehicle VARCHAR(128);
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS start_odometer DOUBLE PRECISION;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS end_odometer DOUBLE PRECISION;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS reported_distance_km DOUBLE PRECISION;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS visit_note TEXT;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS special_sign_reason TEXT;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS geocode_status VARCHAR(16) DEFAULT 'pending';
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS source_detail VARCHAR(64);
+
       CREATE INDEX IF NOT EXISTS idx_visits_user_time
         ON visits(user_id, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_visits_approval
+        ON visits(approval_id, sequence);
 
       -- DERIVED 层：停留分析
       CREATE TABLE IF NOT EXISTS stops (

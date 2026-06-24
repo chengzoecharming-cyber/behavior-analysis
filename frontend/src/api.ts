@@ -72,14 +72,62 @@ export async function fetchAnomalies(
   return res.data;
 }
 
+export interface RiskReason {
+  type: string;
+  description: string;
+  severity: "low" | "medium" | "high";
+  count: number;
+}
+
+export interface EmployeeRiskSummary {
+  user_id: string;
+  user_name: string;
+  department: string;
+  risk_score: number;
+  risk_level: "high" | "medium" | "low";
+  anomaly_count: number;
+  high_anomaly_count: number;
+  medium_anomaly_count: number;
+  low_anomaly_count: number;
+  visit_count: number;
+  total_stop_minutes: number;
+  total_distance_km: number;
+  risk_reasons: RiskReason[];
+  summary_text: string;
+}
+
+export interface RiskSummaryResponse {
+  date: string;
+  total_employees: number;
+  high_risk_count: number;
+  medium_risk_count: number;
+  low_risk_count: number;
+  employees: EmployeeRiskSummary[];
+}
+
+export async function fetchRiskSummary(date: string): Promise<RiskSummaryResponse> {
+  const res = await api.get("/analytics/risk-summary", {
+    params: { date },
+  });
+  return res.data;
+}
+
 export interface PreviewRow {
   user_name: string;
   time: string;
   location_name: string;
   address: string;
-  lat: number;
-  lng: number;
+  lat: number | null;
+  lng: number | null;
   customer_name: string;
+  approval_id?: string;
+  sequence?: number;
+  trip_type?: string;
+  vehicle?: string;
+  start_odometer?: number;
+  end_odometer?: number;
+  reported_distance_km?: number;
+  visit_note?: string;
 }
 
 export async function previewExcel(file: File): Promise<{
@@ -95,13 +143,19 @@ export async function previewExcel(file: File): Promise<{
   return res.data;
 }
 
+export interface GeocodeFailure {
+  row: number;
+  location: string;
+  user: string;
+}
+
 export async function uploadExcel(file: File): Promise<{
   success: boolean;
   rawInserted: number;
   normalizedInserted: number;
   totalDistanceKm: number;
-  geocodeFailures?: number;
-  geocodeFailureSamples?: string[];
+  geocodeFailures?: GeocodeFailure[];
+  geocodeFailureSamples?: GeocodeFailure[];
 }> {
   const formData = new FormData();
   formData.append("file", file);

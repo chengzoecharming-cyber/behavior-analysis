@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Card, DatePicker, Select, Button, Slider, Row, Col, Space } from "antd";
+import { DatePicker, Select, Slider, Row, Col } from "antd";
 import { PlayCircleOutlined, PauseCircleOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
 import {
@@ -82,10 +82,12 @@ function MapPage() {
         height: "calc(100vh - 112px)",
         display: "flex",
         flexDirection: "column",
+        gap: 16,
       }}
     >
-      <Card style={{ marginBottom: 16 }}>
-        <Row gutter={16} align="middle">
+      {/* Filter Bar */}
+      <div style={{ marginBottom: 16 }}>
+        <Row gutter={12} align="middle">
           <Col>
             <Select
               placeholder="选择员工"
@@ -108,29 +110,41 @@ function MapPage() {
             />
           </Col>
           <Col>
-            <Button type="primary" onClick={loadData} loading={loading} disabled={!date}>
-              加载轨迹
-            </Button>
+            <button
+              onClick={loadData}
+              disabled={loading || !date}
+              style={{
+                backgroundColor: loading || !date ? "#F3F4F6" : "#EBECED",
+                color: "#0f1419",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 16px",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: loading || !date ? "not-allowed" : "pointer",
+                opacity: loading || !date ? 0.6 : 1,
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                if (!loading && date) e.currentTarget.style.backgroundColor = "#E6E7E8";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = loading || !date ? "#F3F4F6" : "#EBECED";
+              }}
+            >
+              {loading ? "加载中..." : "加载轨迹"}
+            </button>
           </Col>
           {availableDates.length > 0 && (
-            <Col style={{ color: "#888" }}>
+            <Col style={{ color: "#72808a", fontSize: 13 }}>
               该员工共有 {availableDates.length} 天有数据
             </Col>
           )}
         </Row>
-      </Card>
+      </div>
 
-      <Card
-        style={{ flex: 1, minHeight: 0 }}
-        styles={{
-          body: {
-            height: "100%",
-            padding: 0,
-            display: "flex",
-            flexDirection: "column",
-          },
-        }}
-      >
+      {/* Map Area */}
+      <div style={{ flex: 1, minHeight: 0, backgroundColor: "#fff", borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
           <MapContainer
             visits={visits}
@@ -143,27 +157,46 @@ function MapPage() {
           />
         </div>
 
-        <Space
-          direction="vertical"
-          style={{ width: "100%", padding: 16, borderTop: "1px solid #f0f0f0" }}
+        <div
+          style={{ padding: 16, borderTop: "1px solid #f0f0f0", display: "flex", flexDirection: "column", gap: 12 }}
         >
-          <Space>
-            <Button
-              type="primary"
-              icon={playing ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
               onClick={() => setPlaying(!playing)}
               disabled={visits.length === 0}
+              style={{
+                backgroundColor: visits.length === 0 ? "#F3F4F6" : "#EBECED",
+                color: "#0f1419",
+                border: "none",
+                borderRadius: 8,
+                padding: "6px 16px",
+                fontSize: 14,
+                fontWeight: 500,
+                cursor: visits.length === 0 ? "not-allowed" : "pointer",
+                opacity: visits.length === 0 ? 0.6 : 1,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={(e) => {
+                if (visits.length > 0) e.currentTarget.style.backgroundColor = "#E6E7E8";
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.backgroundColor = visits.length === 0 ? "#F3F4F6" : "#EBECED";
+              }}
             >
+              {playing ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
               {playing ? "暂停" : "播放"}
-            </Button>
-            <span>
+            </button>
+            <span style={{ fontSize: 14, color: "#333" }}>
               {visits[Math.min(progress, visits.length - 1)]
                 ? dayjs(
                     visits[Math.min(progress, visits.length - 1)].timestamp
                   ).format("HH:mm")
                 : "--:--"}
             </span>
-          </Space>
+          </div>
           <Slider
             min={0}
             max={Math.max(0, visits.length - 1)}
@@ -183,8 +216,8 @@ function MapPage() {
                 : ""
             }}
           />
-        </Space>
-      </Card>
+        </div>
+      </div>
     </div>
   );
 }

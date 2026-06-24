@@ -1,3 +1,7 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
 html, body, #root {
   margin: 0;
   padding: 0;
@@ -8,4 +12,70 @@ html, body, #root {
 
 * {
   box-sizing: border-box;
+}
+
+/* 禁用 Tailwind preflight 后，补充移除链接默认下划线 */
+a {
+  text-decoration: none;
+}
+
+/* 全局背景色 */
+#root {
+  background-color: #F6F8FC;
+}
+
+/* 覆盖 Ant Design 默认样式 */
+.ant-card {
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 16px !important;
+}
+
+.ant-card-head {
+  border-bottom: 1px solid #f0f0f0 !important;
+}
+
+.ant-btn-primary {
+  background-color: #EBECED !important;
+  border-color: #EBECED !important;
+  color: #0f1419 !important;
+  border-radius: 8px !important;
+}
+
+.ant-btn-primary:hover {
+  background-color: #E6E7E8 !important;
+  border-color: #E6E7E8 !important;
+  color: #0f1419 !important;
+}
+
+.ant-input,
+.ant-picker-input > input,
+.ant-select-selector {
+  border-radius: 12px !important;
+}
+
+.ant-upload-drag {
+  border-radius: 16px !important;
+  background-color: #fff !important;
+  border: 1px dashed #DDE2F0 !important;
+}
+
+.ant-alert {
+  border-radius: 12px !important;
+  border: none !important;
+}
+
+.ant-steps {
+  padding: 8px 0;
+}
+
+.ant-table {
+  border-radius: 12px !important;
+}
+
+/* 覆盖 Semi UI 默认样式 */
+.semi-card {
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 16px !important;
 }

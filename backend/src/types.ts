@@ -25,6 +25,18 @@ export interface Visit {
   customer_name: string;
   source: string;
   created_at: Date;
+  // 扩展字段
+  approval_id?: string;
+  sequence?: number;
+  trip_type?: string;
+  vehicle?: string;
+  start_odometer?: number;
+  end_odometer?: number;
+  reported_distance_km?: number;
+  visit_note?: string;
+  special_sign_reason?: string;
+  geocode_status?: string;
+  source_detail?: string;
 }
 
 export interface Stop {
@@ -73,4 +85,27 @@ export interface RawVisitRow {
   lat: number;
   lng: number;
   customer_name: string;
+}
+
+export interface ParsedVisit {
+  user_name: string;
+  department: string;
+  time: string;
+  location_name: string;
+  address: string;
+  customer_name: string;
+  lat: number | null;
+  lng: number | null;
+  approval_id?: string;
+  sequence?: number;
+  trip_type?: string;
+  vehicle?: string;
+  start_odometer?: number;
+  end_odometer?: number;
+  reported_distance_km?: number;
+  visit_note?: string;
+  special_sign_reason?: string;
+  sign_count?: number;
+  continues_to_next?: boolean;
+  source_detail?: string;
 }

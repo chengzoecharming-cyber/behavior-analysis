@@ -1,6 +1,6 @@
 const AMAP_KEY = process.env.AMAP_KEY || "";
 
-interface GeoResult {
+export interface GeoResult {
   lat: number;
   lng: number;
 }
@@ -66,20 +66,35 @@ const CITY_COORDS: Record<string, GeoResult> = {
 };
 
 export async function geocodeAddress(address: string): Promise<GeoResult | null> {
-  // 优先尝试高德（如果有配置且平台匹配）
   if (AMAP_KEY && AMAP_KEY !== "YOUR_AMAP_KEY") {
     const gaode = await geocodeWithGaode(address);
     if (gaode) return gaode;
-
-    // 高德失败后，回退到城市级坐标
     return geocodeWithCityFallback(address);
   }
-
-  // 没有高德 Key：直接用城市级近似坐标，避免 Nominatim 长时间超时
   return geocodeWithCityFallback(address);
 }
 
+/**
+ * 批量地理编码：对地址去重后统一解析，返回地址到坐标的映射。
+ * 失败的地址会尝试城市级 fallback，仍失败则映射为 null。
+ */
+export async function batchGeocode(addresses: string[]): Promise<Map<string, GeoResult | null>> {
+  const uniqueAddresses = Array.from(new Set(addresses.filter((a) => !!a)));
+  const result = new Map<string, GeoResult | null>();
+
+  for (const address of uniqueAddresses) {
+    let coords = await geocodeWithGaode(address);
+    if (!coords) {
+      coords = geocodeWithCityFallback(address);
+    }
+    result.set(address, coords);
+  }
+
+  return result;
+}
+
 async function geocodeWithGaode(address: string): Promise<GeoResult | null> {
+  if (!AMAP_KEY || AMAP_KEY === "YOUR_AMAP_KEY") return null;
   try {
     const url =
       `https://restapi.amap.com/v3/geocode/geo?` +
@@ -102,7 +117,6 @@ function geocodeWithCityFallback(address: string): GeoResult | null {
   if (!address) return null;
   for (const [name, coords] of Object.entries(CITY_COORDS)) {
     if (name.length >= 2 && address.includes(name)) {
-      // 加一点随机偏移，避免同城市点完全重叠
       const jitter = 0.04;
       return {
         lat: coords.lat + (Math.random() - 0.5) * jitter,

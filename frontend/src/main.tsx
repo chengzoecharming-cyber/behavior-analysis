@@ -1,8 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
-import { ConfigProvider } from "antd";
-import zhCN from "antd/locale/zh_CN";
+import { ConfigProvider as SemiConfigProvider } from "@douyinfe/semi-ui";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
@@ -10,11 +9,11 @@ import "./index.css";
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <ErrorBoundary>
-      <ConfigProvider locale={zhCN}>
+      <SemiConfigProvider>
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </ConfigProvider>
+      </SemiConfigProvider>
     </ErrorBoundary>
   </React.StrictMode>
 );

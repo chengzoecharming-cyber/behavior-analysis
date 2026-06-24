@@ -12,6 +12,18 @@ export interface Visit {
   customer_name: string;
   source: string;
   created_at: string;
+  // 扩展字段
+  approval_id?: string;
+  sequence?: number;
+  trip_type?: string;
+  vehicle?: string;
+  start_odometer?: number;
+  end_odometer?: number;
+  reported_distance_km?: number;
+  visit_note?: string;
+  special_sign_reason?: string;
+  geocode_status?: string;
+  source_detail?: string;
 }
 
 export interface RawVisit {

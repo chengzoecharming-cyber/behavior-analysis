@@ -3,6 +3,39 @@ import { pool } from "../db";
 
 const router = Router();
 
+// 手动补坐标
+router.post("/:id/coordinates", async (req: Request, res: Response) => {
+  const { id } = req.params;
+  const { lat, lng } = req.body;
+
+  if (!id || isNaN(Number(id))) {
+    res.status(400).json({ error: "Invalid visit id" });
+    return;
+  }
+  if (typeof lat !== "number" || typeof lng !== "number") {
+    res.status(400).json({ error: "lat and lng must be numbers" });
+    return;
+  }
+
+  try {
+    const result = await pool.query(
+      `UPDATE visits
+       SET lat = $1, lng = $2, geocode_status = 'manual'
+       WHERE id = $3
+       RETURNING *`,
+      [lat, lng, Number(id)]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: "Visit not found" });
+      return;
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error("Failed to update coordinates:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 router.get("/", async (req: Request, res: Response) => {
   const { user, start, end } = req.query;
 

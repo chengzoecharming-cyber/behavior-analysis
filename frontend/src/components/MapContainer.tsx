@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { Visit, Stop, Route, Anomaly } from "../types";
 import dayjs from "dayjs";
+import { Card, Descriptions } from "antd";
 
 interface MapContainerProps {
   visits: Visit[];
@@ -31,6 +32,7 @@ export default function MapContainer({
   const movingMarker = useRef<any>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
+  const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
@@ -74,6 +76,7 @@ export default function MapContainer({
       movingMarker.current.setMap(null);
       movingMarker.current = null;
     }
+    setSelectedVisit(null);
 
     if (visits.length === 0) return;
 
@@ -121,6 +124,9 @@ export default function MapContainer({
           idx === 0
             ? "https://webapi.amap.com/theme/v1.3/markers/n/start.png"
             : undefined,
+      });
+      marker.on("click", () => {
+        setSelectedVisit(v);
       });
       marker.setMap(mapInstance.current);
       markers.current.push(marker);
@@ -263,6 +269,61 @@ export default function MapContainer({
           }}
         >
           地图加载失败，请检查高德地图 Key 是否配置正确
+        </div>
+      )}
+      {selectedVisit && (
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            right: 12,
+            width: 320,
+            zIndex: 10,
+          }}
+        >
+          <Card
+            title="拜访详情"
+            size="small"
+            extra={
+              <button
+                onClick={() => setSelectedVisit(null)}
+                style={{
+                  background: "none",
+                  border: "none",
+                  cursor: "pointer",
+                  fontSize: 16,
+                  color: "#999",
+                }}
+              >
+                ✕
+              </button>
+            }
+            styles={{ body: { padding: 12 } }}
+          >
+            <Descriptions column={1} size="small" bordered>
+              <Descriptions.Item label="员工姓名">
+                {selectedVisit.user_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="部门">
+                {selectedVisit.department}
+              </Descriptions.Item>
+              <Descriptions.Item label="拜访时间">
+                {dayjs(selectedVisit.timestamp).format("YYYY-MM-DD HH:mm")}
+              </Descriptions.Item>
+              <Descriptions.Item label="客户名称">
+                {selectedVisit.customer_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="地点名称">
+                {selectedVisit.location_name}
+              </Descriptions.Item>
+              <Descriptions.Item label="详细地址">
+                {selectedVisit.address}
+              </Descriptions.Item>
+              <Descriptions.Item label="数据来源">
+                {selectedVisit.source}
+              </Descriptions.Item>
+            </Descriptions>
+          </Card>
         </div>
       )}
     </div>

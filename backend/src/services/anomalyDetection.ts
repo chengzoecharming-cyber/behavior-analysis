@@ -1,15 +1,24 @@
 import { Visit, Stop, Route, Anomaly } from "../types";
 import { haversineDistance } from "./distance";
+import { computeMileageSegments } from "./mileageAnalysis";
 
 const LONG_STOP_MINUTES = 120;
 const LONG_IDLE_MINUTES = 180;
 const DETOUR_RATIO = 2.0;
 
-export function detectAnomalies(
+// 从环境变量读取阈值，给训练阶段留出调整空间
+const MILEAGE_DEVIATION_THRESHOLD = parseFloat(
+  process.env.MILEAGE_DEVIATION_THRESHOLD || "0.5"
+);
+const INVALID_TRIP_DISTANCE_THRESHOLD = parseFloat(
+  process.env.INVALID_TRIP_DISTANCE_THRESHOLD || "5"
+);
+
+export async function detectAnomalies(
   visits: Visit[],
   stops: Stop[],
   routes: Route[]
-): Anomaly[] {
+): Promise<Anomaly[]> {
   const anomalies: Anomaly[] = [];
 
   // 1. 停留时间过长
@@ -87,5 +96,76 @@ export function detectAnomalies(
     }
   }
 
+  // 4. 填报里程与高德推荐里程偏差过大
+  const mileageSegments = await computeMileageSegments(visits);
+  for (const seg of mileageSegments) {
+    if (seg.deviation_rate > MILEAGE_DEVIATION_THRESHOLD) {
+      anomalies.push({
+        id: 0,
+        user_id: seg.user_id,
+        type: "mileage_deviation",
+        description: `从「${seg.from_location}」到「${seg.to_location}」填报里程 ${seg.reported_distance_km} km，高德推荐 ${seg.gaode_distance_km} km，偏差 ${(seg.deviation_rate * 100).toFixed(1)}%`,
+        start_time: null,
+        end_time: null,
+        lat: null,
+        lng: null,
+        severity: seg.deviation_rate > MILEAGE_DEVIATION_THRESHOLD * 1.5 ? "high" : "medium",
+        related_visit_ids: [seg.from_visit_id, seg.to_visit_id],
+        created_at: new Date(),
+      });
+    }
+  }
+
+  // 5. 异常出行方式：公共交通/特殊签到但有较长填报里程
+  for (const visit of visits) {
+    const tripType = visit.trip_type || "";
+    const isPublicOrSpecial =
+      tripType.includes("公共交通") ||
+      tripType.includes("特殊签到") ||
+      tripType.includes("陪同拜访");
+    if (
+      isPublicOrSpecial &&
+      (visit.reported_distance_km ?? 0) > INVALID_TRIP_DISTANCE_THRESHOLD
+    ) {
+      anomalies.push({
+        id: 0,
+        user_id: visit.user_id,
+        type: "invalid_trip_type",
+        description: `出行方式为「${tripType}」但填报累计里程 ${visit.reported_distance_km} km，疑似异常`,
+        start_time: visit.timestamp,
+        end_time: visit.timestamp,
+        lat: visit.lat,
+        lng: visit.lng,
+        severity: "medium",
+        related_visit_ids: [visit.id],
+        created_at: new Date(),
+      });
+    }
+  }
+
+  // 6. 特殊签到未说明原因
+  for (const visit of visits) {
+    const tripType = visit.trip_type || "";
+    if (
+      tripType.includes("特殊签到") &&
+      (!visit.special_sign_reason || visit.special_sign_reason.trim() === "")
+    ) {
+      anomalies.push({
+        id: 0,
+        user_id: visit.user_id,
+        type: "missing_special_reason",
+        description: `在「${visit.location_name}」进行特殊签到但未填写特殊签到原因`,
+        start_time: visit.timestamp,
+        end_time: visit.timestamp,
+        lat: visit.lat,
+        lng: visit.lng,
+        severity: "low",
+        related_visit_ids: [visit.id],
+        created_at: new Date(),
+      });
+    }
+  }
+
   return anomalies;
 }
+

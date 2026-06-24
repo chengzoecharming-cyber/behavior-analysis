@@ -7,6 +7,7 @@ import stopsRouter from "./routes/stops";
 import routesRouter from "./routes/routes";
 import uploadRouter from "./routes/upload";
 import analyticsRouter from "./routes/analytics";
+import riskSummaryRouter from "./routes/riskSummary";
 
 dotenv.config();
 
@@ -21,6 +22,7 @@ app.use("/stops", stopsRouter);
 app.use("/routes", routesRouter);
 app.use("/upload-excel", uploadRouter);
 app.use("/analytics", analyticsRouter);
+app.use("/analytics", riskSummaryRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });

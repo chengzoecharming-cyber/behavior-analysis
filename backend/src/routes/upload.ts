@@ -3,8 +3,7 @@ import multer from "multer";
 import * as XLSX from "xlsx";
 import fs from "fs";
 import { pool } from "../db";
-import { RawVisitRow } from "../types";
-import { ParsedVisit } from "../services/excelParser";
+import { RawVisitRow, ParsedVisit } from "../types";
 import { totalDistanceKm } from "../services/distance";
 import { parseDingTalkExcel } from "../services/excelParser";
 
@@ -22,8 +21,14 @@ interface UploadResponse {
   totalDistanceKm?: number;
   preview?: ParsedVisit[];
   isDingTalk?: boolean;
-  geocodeFailures?: number;
-  geocodeFailureSamples?: string[];
+  geocodeFailures?: GeocodeFailure[];
+  geocodeFailureSamples?: GeocodeFailure[];
+}
+
+interface GeocodeFailure {
+  row: number;
+  location: string;
+  user: string;
 }
 
 router.post("/", upload.single("file"), async (req: Request, res: Response) => {
@@ -77,14 +82,21 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
     const insertedRaw: number[] = [];
     const insertedNormalized: number[] = [];
     const userPointsMap: Record<string, { lat: number; lng: number }[]> = {};
-    const geocodeFailures: string[] = [];
+    const geocodeFailures: GeocodeFailure[] = [];
 
-    for (const visit of parsedVisits) {
+    for (let i = 0; i < parsedVisits.length; i++) {
+      const visit = parsedVisits[i];
       const userId = normalizeUserId(visit.user_name);
       const timestamp = normalizeTimestamp(visit.time);
+      const geocodeStatus =
+        visit.lat == null || visit.lng == null ? "failed" : "success";
 
-      if (visit.lat === 0 && visit.lng === 0) {
-        geocodeFailures.push(visit.location_name);
+      if (geocodeStatus === "failed") {
+        geocodeFailures.push({
+          row: i + 1,
+          location: visit.location_name,
+          user: visit.user_name,
+        });
       }
 
       const rawResult = await pool.query(
@@ -97,8 +109,8 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
           visit.time,
           visit.location_name,
           visit.address,
-          String(visit.lat),
-          String(visit.lng),
+          String(visit.lat ?? ""),
+          String(visit.lng ?? ""),
           visit.customer_name,
           isDingTalk ? "dingtalk" : "excel",
         ]
@@ -108,8 +120,12 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
 
       const visitResult = await pool.query(
         `INSERT INTO visits
-         (raw_visit_id, user_id, user_name, department, timestamp, lat, lng, location_name, address, customer_name, source)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
+          location_name, address, customer_name, source,
+          approval_id, sequence, trip_type, vehicle, start_odometer, end_odometer,
+          reported_distance_km, visit_note, special_sign_reason, geocode_status, source_detail)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
          RETURNING id`,
         [
           rawVisitId,
@@ -117,12 +133,23 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
           visit.user_name,
           visit.department,
           timestamp,
-          visit.lat,
-          visit.lng,
+          visit.lat ?? 0,
+          visit.lng ?? 0,
           visit.location_name,
           visit.address,
           visit.customer_name,
           isDingTalk ? "dingtalk" : "excel",
+          visit.approval_id ?? null,
+          visit.sequence ?? 0,
+          visit.trip_type ?? null,
+          visit.vehicle ?? null,
+          visit.start_odometer ?? null,
+          visit.end_odometer ?? null,
+          visit.reported_distance_km ?? null,
+          visit.visit_note ?? null,
+          visit.special_sign_reason ?? null,
+          geocodeStatus,
+          visit.source_detail ?? null,
         ]
       );
       insertedNormalized.push(visitResult.rows[0].id);
@@ -143,7 +170,7 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
       rawInserted: insertedRaw.length,
       normalizedInserted: insertedNormalized.length,
       totalDistanceKm: parseFloat(totalDistance.toFixed(2)),
-      geocodeFailures: geocodeFailures.length,
+      geocodeFailures: geocodeFailures,
       geocodeFailureSamples: geocodeFailures.slice(0, 5),
     };
 
