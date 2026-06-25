@@ -24,6 +24,8 @@ export interface EmployeeRiskSummary {
 
 export interface RiskSummaryResult {
   date: string;
+  start_date?: string;
+  end_date?: string;
   total_employees: number;
   high_risk_count: number;
   medium_risk_count: number;
@@ -359,4 +361,126 @@ export async function getRiskSummary(dateStr: string): Promise<RiskSummaryResult
   const result = await computeRiskSummaryForDate(dateStr);
   await persistRiskSummaryCache(dateStr);
   return { ...result, from_cache: false };
+}
+
+// 生成 [startStr, endStr] 之间（含）的所有日期字符串（YYYY-MM-DD），按本地日期处理
+function eachDate(startStr: string, endStr: string): string[] {
+  const dates: string[] = [];
+  const parse = (s: string) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  };
+  const start = parse(startStr);
+  const end = parse(endStr);
+  const current = new Date(start);
+  while (current.getTime() <= end.getTime()) {
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, "0");
+    const d = String(current.getDate()).padStart(2, "0");
+    dates.push(`${y}-${m}-${d}`);
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
+
+function mergeRiskReasons(reasonsList: RiskReason[][]): RiskReason[] {
+  const map = new Map<string, RiskReason>();
+  for (const reasons of reasonsList) {
+    for (const r of reasons) {
+      const key = `${r.type}|${r.severity}`;
+      const existing = map.get(key);
+      if (existing) {
+        existing.count = (existing.count || 1) + (r.count || 1);
+      } else {
+        map.set(key, { ...r, count: r.count || 1 });
+      }
+    }
+  }
+  return Array.from(map.values());
+}
+
+export async function getRiskSummaryRange(
+  startStr: string,
+  endStr: string
+): Promise<RiskSummaryResult> {
+  const dates = eachDate(startStr, endStr);
+
+  // 逐日获取风险摘要（优先缓存，缺失则实时计算）
+  const dailyResults = await Promise.all(
+    dates.map((date) => getRiskSummary(date))
+  );
+
+  // 按员工聚合（使用 visit_count 加权的平均分）
+  type AccEmp = EmployeeRiskSummary & { _scoreSum: number; _visitWeight: number };
+  const employeeMap = new Map<string, AccEmp>();
+
+  for (const daily of dailyResults) {
+    for (const emp of daily.employees) {
+      const existing = employeeMap.get(emp.user_id);
+      if (!existing) {
+        employeeMap.set(emp.user_id, {
+          ...emp,
+          _scoreSum: emp.risk_score * emp.visit_count,
+          _visitWeight: emp.visit_count,
+        });
+        continue;
+      }
+
+      existing._scoreSum += emp.risk_score * emp.visit_count;
+      existing._visitWeight += emp.visit_count;
+      const avgScore =
+        existing._visitWeight > 0
+          ? Math.ceil(existing._scoreSum / existing._visitWeight)
+          : 0;
+
+      const levelRank = { low: 1, medium: 2, high: 3 };
+      const highestLevel: "high" | "medium" | "low" =
+        levelRank[existing.risk_level] >= levelRank[emp.risk_level]
+          ? existing.risk_level
+          : emp.risk_level;
+
+      existing.risk_score = avgScore;
+      existing.risk_level = highestLevel;
+      existing.anomaly_count += emp.anomaly_count;
+      existing.high_anomaly_count += emp.high_anomaly_count;
+      existing.medium_anomaly_count += emp.medium_anomaly_count;
+      existing.low_anomaly_count += emp.low_anomaly_count;
+      existing.visit_count += emp.visit_count;
+      existing.total_stop_minutes += emp.total_stop_minutes;
+      existing.total_distance_km = parseFloat(
+        (existing.total_distance_km + emp.total_distance_km).toFixed(2)
+      );
+      existing.risk_reasons = mergeRiskReasons([
+        existing.risk_reasons,
+        emp.risk_reasons,
+      ]);
+      existing.summary_text = generateSummaryText(
+        existing.user_name,
+        highestLevel,
+        existing.anomaly_count,
+        existing.high_anomaly_count,
+        existing.visit_count,
+        existing.total_stop_minutes
+      );
+    }
+  }
+
+  const employees = Array.from(employeeMap.values())
+    .map((emp) => {
+      const { _scoreSum, _visitWeight, ...rest } = emp;
+      return rest;
+    })
+    .sort((a, b) => b.risk_score - a.risk_score);
+
+  return {
+    date: `${startStr} ~ ${endStr}`,
+    start_date: startStr,
+    end_date: endStr,
+    total_employees: employees.length,
+    high_risk_count: employees.filter((s) => s.risk_level === "high").length,
+    medium_risk_count: employees.filter((s) => s.risk_level === "medium").length,
+    low_risk_count: employees.filter((s) => s.risk_level === "low").length,
+    employees,
+    from_cache: dailyResults.every((d) => d.from_cache),
+  };
 }

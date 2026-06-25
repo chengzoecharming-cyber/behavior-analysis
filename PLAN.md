@@ -47,23 +47,18 @@
 - ✅ 决策系统默认展示昨天数据
 - ✅ 路线规划结果已持久化到 `routes` 表，缺失时补算
 
+### Step 2：Date Range 支持
+
+- ✅ 决策系统增加快捷筛选：今天 / 昨天 / 本周 / 本月 / 自定义
+- ✅ 本周/本月默认不包含今天；自定义范围含今天时给出提示
+- ✅ 新增 `/analytics/risk-summary/range` 基于日缓存聚合
+- ✅ Dashboard 日期选择器改为 RangePicker，默认昨天单日
+- ✅ 后端 `/stops`、`/routes`、`/analytics/mileage`、`/analytics/anomaly` 支持 `start` + `end`
+- ✅ 员工卡片下钻链接携带 `start`/`end`，Dashboard 可按范围加载
+
 ---
 
 ## 待开发
-
-### Step 2：Date Range 支持
-
-#### 2.1 决策系统
-
-- 保持单日排名为主
-- 增加快捷筛选：今天 / 昨天 / 本周 / 本月
-- 本周/本月风险分基于日缓存聚合
-
-#### 2.2 Dashboard / 控制台
-
-- 日期选择器改为 `RangePicker`
-- 后端接口 `/visits`、`/stops`、`/routes`、`/analytics/mileage`、`/analytics/anomaly` 支持 `start` + `end`
-- 轨迹地图支持展示多天的连续轨迹
 
 ---
 

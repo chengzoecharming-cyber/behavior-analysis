@@ -57,9 +57,9 @@ function MapPage() {
       const end = `${dateStr}T23:59:59`;
       const [v, s, r, a] = await Promise.all([
         fetchVisits(userId, start, end),
-        fetchStops(userId, dateStr),
-        fetchRoutes(userId, dateStr),
-        fetchAnomalies(userId, dateStr),
+        fetchStops(userId, start, end),
+        fetchRoutes(userId, start, end),
+        fetchAnomalies(userId, start, end),
       ]);
       setVisits(v);
       setStops(s);

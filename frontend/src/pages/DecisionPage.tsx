@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   DatePicker,
+  Button,
   Tag,
   Typography,
   Spin,
@@ -11,11 +12,37 @@ import {
 } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
-import { fetchRiskSummary, RiskSummaryResponse, EmployeeRiskSummary } from "../api";
+import {
+  fetchRiskSummary,
+  fetchRiskSummaryRange,
+  RiskSummaryResponse,
+  EmployeeRiskSummary,
+} from "../api";
 
 const { Title, Text } = Typography;
 
 type RiskLevel = "high" | "medium" | "low";
+type DateRangeMode = "today" | "yesterday" | "week" | "month" | "custom";
+
+function getWeekRange(): { start: string; end: string } {
+  const today = dayjs();
+  // 计算本周一（中国习惯）
+  const day = today.day(); // 0=周日, 1=周一, ...
+  const mondayOffset = day === 0 ? -6 : 1 - day;
+  const monday = today.add(mondayOffset, "day").startOf("day");
+  const yesterday = today.subtract(1, "day").startOf("day");
+  return {
+    start: monday.format("YYYY-MM-DD"),
+    end: yesterday.format("YYYY-MM-DD"),
+  };
+}
+
+function getMonthRange(): { start: string; end: string } {
+  const today = dayjs();
+  const firstDay = today.startOf("month");
+  const yesterday = today.subtract(1, "day");
+  return { start: firstDay.format("YYYY-MM-DD"), end: yesterday.format("YYYY-MM-DD") };
+}
 
 const levelConfig: Record<RiskLevel, { color: string; bg: string; label: string }> = {
   high: { color: "#F54C5C", bg: "#FFF2F0", label: "高风险" },
@@ -42,14 +69,29 @@ const riskTypeLabels: Record<string, string> = {
 
 function DecisionPage() {
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // 从 URL 初始化模式与范围
+  const initialMode = (searchParams.get("mode") as DateRangeMode) || "yesterday";
+  const initialDate = searchParams.get("date");
+  const initialStart = searchParams.get("start");
+  const initialEnd = searchParams.get("end");
+
+  const [mode, setMode] = useState<DateRangeMode>(initialMode);
   const [date, setDate] = useState<Date>(() => {
-    const dateFromUrl = searchParams.get("date");
-    if (dateFromUrl) return new Date(dateFromUrl);
-    // 默认展示昨天数据（缓存命中率高）
+    if (initialDate) return new Date(initialDate);
+    if (initialMode === "today") return new Date();
     const yesterday = new Date();
     yesterday.setDate(yesterday.getDate() - 1);
     return yesterday;
   });
+  const [customRange, setCustomRange] = useState<Date[]>(() => {
+    if (initialStart && initialEnd) {
+      return [new Date(initialStart), new Date(initialEnd)];
+    }
+    const yesterday = dayjs().subtract(1, "day").toDate();
+    return [yesterday, yesterday];
+  });
+
   const [data, setData] = useState<RiskSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -57,10 +99,57 @@ function DecisionPage() {
   const [modalVisible, setModalVisible] = useState(false);
   const [modalLevel, setModalLevel] = useState<RiskLevel | null>(null);
 
+  // 当前生效的查询范围
+  const currentRange = useMemo<{ start: string; end: string; isRange: boolean }>(() => {
+    if (mode === "today") {
+      const d = dayjs(date).format("YYYY-MM-DD");
+      return { start: d, end: d, isRange: false };
+    }
+    if (mode === "yesterday") {
+      const d = dayjs(date).format("YYYY-MM-DD");
+      return { start: d, end: d, isRange: false };
+    }
+    if (mode === "week") {
+      return { ...getWeekRange(), isRange: true };
+    }
+    if (mode === "month") {
+      return { ...getMonthRange(), isRange: true };
+    }
+    if (customRange.length === 2) {
+      return {
+        start: dayjs(customRange[0]).format("YYYY-MM-DD"),
+        end: dayjs(customRange[1]).format("YYYY-MM-DD"),
+        isRange: true,
+      };
+    }
+    const d = dayjs(date).format("YYYY-MM-DD");
+    return { start: d, end: d, isRange: false };
+  }, [mode, date, customRange]);
+
   const loadData = async () => {
     setLoading(true);
     try {
-      const res = await fetchRiskSummary(dayjs(date).format("YYYY-MM-DD"));
+      const { start, end, isRange } = currentRange;
+      if (isRange && start > end) {
+        setData({
+          date: `${start} ~ ${end}`,
+          start_date: start,
+          end_date: end,
+          total_employees: 0,
+          high_risk_count: 0,
+          medium_risk_count: 0,
+          low_risk_count: 0,
+          employees: [],
+          from_cache: true,
+        });
+        return;
+      }
+      let res: RiskSummaryResponse;
+      if (isRange) {
+        res = await fetchRiskSummaryRange(start, end);
+      } else {
+        res = await fetchRiskSummary(start);
+      }
       setData(res);
     } finally {
       setLoading(false);
@@ -69,7 +158,8 @@ function DecisionPage() {
 
   useEffect(() => {
     loadData();
-  }, [date]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, date, customRange]);
 
   const openRiskModal = (level: RiskLevel) => {
     setModalLevel(level);
@@ -143,10 +233,11 @@ function DecisionPage() {
       <div
         key={emp.user_id}
         onClick={() => {
-          window.open(
-            `/dashboard?user=${emp.user_id}&date=${dayjs(date).format("YYYY-MM-DD")}`,
-            "_blank"
-          );
+          const { start, end, isRange } = currentRange;
+          const url = isRange
+            ? `/dashboard?user=${emp.user_id}&start=${start}&end=${end}`
+            : `/dashboard?user=${emp.user_id}&date=${start}`;
+          window.open(url, "_blank");
         }}
         style={{
           backgroundColor: "#fff",
@@ -252,48 +343,143 @@ function DecisionPage() {
       </div>
 
       {/* Filter Bar */}
-      <div className="flex flex-wrap items-center gap-6" style={{ marginBottom: 24 }}>
-        <DatePicker
-          value={date}
-          onChange={(d) => {
-            if (d) {
-              const newDate = d as Date;
-              setDate(newDate);
-              const params = new URLSearchParams(searchParams);
-              params.set("date", dayjs(newDate).format("YYYY-MM-DD"));
-              setSearchParams(params);
+      <div style={{ marginBottom: 16 }}>
+        <div className="flex flex-wrap items-center gap-3" style={{ marginBottom: 12 }}>
+          {[
+            { key: "today", label: "今天" },
+            { key: "yesterday", label: "昨天" },
+            { key: "week", label: "本周" },
+            { key: "month", label: "本月" },
+            { key: "custom", label: "自定义" },
+          ].map((btn) => {
+            const active = mode === btn.key;
+            return (
+              <Button
+                key={btn.key}
+                theme={active ? "solid" : "light"}
+                type={active ? "primary" : "tertiary"}
+                onClick={() => {
+                  const newMode = btn.key as DateRangeMode;
+                  setMode(newMode);
+                  const params = new URLSearchParams(searchParams);
+                  params.set("mode", newMode);
+
+                  if (newMode === "today") {
+                    const d = dayjs().toDate();
+                    setDate(d);
+                    params.set("date", dayjs(d).format("YYYY-MM-DD"));
+                    params.delete("start");
+                    params.delete("end");
+                  } else if (newMode === "yesterday") {
+                    const d = dayjs().subtract(1, "day").toDate();
+                    setDate(d);
+                    params.set("date", dayjs(d).format("YYYY-MM-DD"));
+                    params.delete("start");
+                    params.delete("end");
+                  } else if (newMode === "week") {
+                    const { start, end } = getWeekRange();
+                    params.set("start", start);
+                    params.set("end", end);
+                    params.delete("date");
+                  } else if (newMode === "month") {
+                    const { start, end } = getMonthRange();
+                    params.set("start", start);
+                    params.set("end", end);
+                    params.delete("date");
+                  } else if (newMode === "custom" && customRange.length === 2) {
+                    params.set("start", dayjs(customRange[0]).format("YYYY-MM-DD"));
+                    params.set("end", dayjs(customRange[1]).format("YYYY-MM-DD"));
+                    params.delete("date");
+                  }
+                  setSearchParams(params);
+                }}
+              >
+                {btn.label}
+              </Button>
+            );
+          })}
+          <Button
+            icon={<IconSearch />}
+            onClick={loadData}
+            loading={loading}
+            theme="light"
+            type="primary"
+          >
+            查询
+          </Button>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-4" style={{ marginBottom: 12 }}>
+          {(mode === "today" || mode === "yesterday") && (
+            <DatePicker
+              value={date}
+              onChange={(d) => {
+                if (d) {
+                  const newDate = d as Date;
+                  setDate(newDate);
+                  const params = new URLSearchParams(searchParams);
+                  params.set("date", dayjs(newDate).format("YYYY-MM-DD"));
+                  setSearchParams(params);
+                }
+              }}
+              style={{ width: 160 }}
+            />
+          )}
+          {mode === "custom" && (
+            <DatePicker
+              type="dateRange"
+              value={customRange as any}
+              onChange={(range) => {
+                const r = range as Date[] | null;
+                if (r && r[0] && r[1]) {
+                  setCustomRange([r[0], r[1]]);
+                  const params = new URLSearchParams(searchParams);
+                  params.set("start", dayjs(r[0]).format("YYYY-MM-DD"));
+                  params.set("end", dayjs(r[1]).format("YYYY-MM-DD"));
+                  params.delete("date");
+                  setSearchParams(params);
+                }
+              }}
+              style={{ width: 280 }}
+            />
+          )}
+        </div>
+
+        {(() => {
+          if (mode === "week") {
+            return (
+              <div style={{ fontSize: 13, color: "#F7A046" }}>
+                提示：本周统计不包含今天
+              </div>
+            );
+          }
+          if (mode === "month") {
+            return (
+              <div style={{ fontSize: 13, color: "#F7A046" }}>
+                提示：本月统计不包含今天
+              </div>
+            );
+          }
+          if (mode === "custom" && customRange.length === 2) {
+            const today = dayjs().startOf("day");
+            const end = dayjs(customRange[1]).startOf("day");
+            if (end.isSame(today) || end.isAfter(today)) {
+              return (
+                <div style={{ fontSize: 13, color: "#F7A046" }}>
+                  提示：范围包含今天，部分数据为实时计算，结果可能随数据更新变化
+                </div>
+              );
             }
-          }}
-          style={{ width: 160 }}
-        />
-        <button
-          onClick={loadData}
-          disabled={loading}
-          style={{
-            backgroundColor: "#EBECED",
-            color: "#0f1419",
-            border: "none",
-            borderRadius: 8,
-            padding: "6px 16px",
-            fontSize: 14,
-            fontWeight: 500,
-            cursor: loading ? "not-allowed" : "pointer",
-            opacity: loading ? 0.6 : 1,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            transition: "background-color 0.2s",
-          }}
-          onMouseEnter={(e) => {
-            if (!loading) e.currentTarget.style.backgroundColor = "#E6E7E8";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.backgroundColor = "#EBECED";
-          }}
-        >
-          <IconSearch />
-          {loading ? "查询中..." : "查询"}
-        </button>
+          }
+          if (!loading && data && data.total_employees === 0) {
+            return (
+              <div style={{ fontSize: 13, color: "#999" }}>
+                当前范围暂无数据
+              </div>
+            );
+          }
+          return null;
+        })()}
       </div>
 
       {/* Loading */}

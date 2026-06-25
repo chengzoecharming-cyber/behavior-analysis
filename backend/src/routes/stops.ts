@@ -6,22 +6,45 @@ import { Visit, Stop } from "../types";
 const router = Router();
 
 router.get("/", async (req: Request, res: Response) => {
-  const { user, date } = req.query;
+  const { user, date, start, end } = req.query;
 
-  if (!user || !date) {
-    res.status(400).json({ error: "Missing user or date parameter" });
+  if (!user) {
+    res.status(400).json({ error: "Missing user parameter" });
     return;
   }
 
-  const start = `${date}T00:00:00+08:00`;
-  const end = `${date}T23:59:59+08:00`;
+  // 范围模式：直接查询已持久化的 stops
+  if (start && end) {
+    try {
+      const result = await pool.query(
+        `SELECT * FROM stops
+         WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+         ORDER BY start_time ASC`,
+        [user, start, end]
+      );
+      res.json(result.rows);
+      return;
+    } catch (err) {
+      console.error("Failed to fetch stops range:", err);
+      res.status(500).json({ error: "Database error" });
+      return;
+    }
+  }
+
+  if (!date) {
+    res.status(400).json({ error: "Missing date or start/end parameter" });
+    return;
+  }
+
+  const dayStart = `${date}T00:00:00+08:00`;
+  const dayEnd = `${date}T23:59:59+08:00`;
 
   try {
     const result = await pool.query(
       `SELECT * FROM visits
        WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
        ORDER BY timestamp ASC`,
-      [user, start, end]
+      [user, dayStart, dayEnd]
     );
 
     const visits: Visit[] = result.rows;
@@ -30,7 +53,7 @@ router.get("/", async (req: Request, res: Response) => {
     // 持久化到 DERIVED 层（先删除旧数据避免重复）
     await pool.query(
       `DELETE FROM stops WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3`,
-      [user, start, end]
+      [user, dayStart, dayEnd]
     );
 
     const persisted: Stop[] = [];

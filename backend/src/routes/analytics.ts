@@ -16,30 +16,80 @@ import {
 
 const router = Router();
 
-router.get("/mileage", async (req: Request, res: Response) => {
-  const { user, date } = req.query;
+function eachDate(startStr: string, endStr: string): string[] {
+  const dates: string[] = [];
+  const parse = (s: string) => {
+    const [y, m, d] = s.split("-").map(Number);
+    return new Date(y, m - 1, d);
+  };
+  const start = parse(startStr);
+  const end = parse(endStr);
+  const current = new Date(start);
+  while (current.getTime() <= end.getTime()) {
+    const y = current.getFullYear();
+    const m = String(current.getMonth() + 1).padStart(2, "0");
+    const d = String(current.getDate()).padStart(2, "0");
+    dates.push(`${y}-${m}-${d}`);
+    current.setDate(current.getDate() + 1);
+  }
+  return dates;
+}
 
-  if (!user || !date) {
-    res.status(400).json({ error: "Missing user or date parameter" });
+router.get("/mileage", async (req: Request, res: Response) => {
+  const { user, date, start, end } = req.query;
+
+  if (!user) {
+    res.status(400).json({ error: "Missing user parameter" });
     return;
   }
 
-  const start = `${date}T00:00:00+08:00`;
-  const end = `${date}T23:59:59+08:00`;
-
   try {
+    let rangeStart: string;
+    let rangeEnd: string;
+    let responseDate: any;
+
+    if (start && end) {
+      rangeStart = start as string;
+      rangeEnd = end as string;
+      responseDate = { start, end };
+    } else if (date) {
+      rangeStart = `${date}T00:00:00+08:00`;
+      rangeEnd = `${date}T23:59:59+08:00`;
+      responseDate = { date };
+    } else {
+      res.status(400).json({ error: "Missing date or start/end parameter" });
+      return;
+    }
+
     let routesResult = await pool.query(
       `SELECT * FROM routes
        WHERE user_id = $1
          AND from_visit_id IN (
            SELECT id FROM visits WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
          )`,
-      [user, start, end]
+      [user, rangeStart, rangeEnd]
     );
 
     let routes: Route[] = routesResult.rows;
-    if (routes.length === 0) {
-      routes = await computeAndPersistRoutes(user as string, start, end);
+    if (routes.length === 0 && start && end) {
+      // 范围模式：按天补算 route
+      const dates = eachDate(start as string, end as string);
+      for (const d of dates) {
+        const dayStart = `${d}T00:00:00+08:00`;
+        const dayEnd = `${d}T23:59:59+08:00`;
+        const dayRoutes = await computeAndPersistRoutes(
+          user as string,
+          dayStart,
+          dayEnd
+        );
+        routes.push(...dayRoutes);
+      }
+    } else if (routes.length === 0) {
+      routes = await computeAndPersistRoutes(
+        user as string,
+        rangeStart,
+        rangeEnd
+      );
     }
 
     const totalKm = routes.reduce((sum, r) => sum + r.distance_km, 0);
@@ -49,7 +99,7 @@ router.get("/mileage", async (req: Request, res: Response) => {
       `SELECT reported_distance_km
        FROM visits
        WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3`,
-      [user, start, end]
+      [user, rangeStart, rangeEnd]
     );
     const reportedDistanceKm = visitsResult.rows.reduce(
       (sum: number, row: any) => sum + (row.reported_distance_km || 0),
@@ -58,7 +108,7 @@ router.get("/mileage", async (req: Request, res: Response) => {
 
     res.json({
       user_id: user,
-      date,
+      ...responseDate,
       totalKm: parseFloat(totalKm.toFixed(2)),
       reportedDistanceKm: parseFloat(reportedDistanceKm.toFixed(2)),
       segmentCount: routes.length,
@@ -71,22 +121,39 @@ router.get("/mileage", async (req: Request, res: Response) => {
 });
 
 router.get("/anomaly", async (req: Request, res: Response) => {
-  const { user, date } = req.query;
+  const { user, date, start, end } = req.query;
 
-  if (!user || !date) {
-    res.status(400).json({ error: "Missing user or date parameter" });
+  if (!user) {
+    res.status(400).json({ error: "Missing user parameter" });
     return;
   }
 
-  const start = `${date}T00:00:00+08:00`;
-  const end = `${date}T23:59:59+08:00`;
-
   try {
+    // 范围模式：直接查询已持久化的 anomalies
+    if (start && end) {
+      const result = await pool.query(
+        `SELECT * FROM anomalies
+         WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
+         ORDER BY created_at ASC`,
+        [user, start, end]
+      );
+      res.json(result.rows);
+      return;
+    }
+
+    if (!date) {
+      res.status(400).json({ error: "Missing date or start/end parameter" });
+      return;
+    }
+
+    const dayStart = `${date}T00:00:00+08:00`;
+    const dayEnd = `${date}T23:59:59+08:00`;
+
     const visitsResult = await pool.query(
       `SELECT * FROM visits
        WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
        ORDER BY timestamp ASC`,
-      [user, start, end]
+      [user, dayStart, dayEnd]
     );
     const visits: Visit[] = visitsResult.rows;
 
@@ -108,7 +175,7 @@ router.get("/anomaly", async (req: Request, res: Response) => {
     // 持久化异常事件
     await pool.query(
       `DELETE FROM anomalies WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3`,
-      [user, start, end]
+      [user, dayStart, dayEnd]
     );
 
     const persisted: Anomaly[] = [];

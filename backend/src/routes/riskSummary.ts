@@ -1,5 +1,5 @@
 import { Router, Request, Response } from "express";
-import { getRiskSummary, computeRiskSummaryForDate, persistRiskSummaryCache } from "../services/riskSummaryService";
+import { getRiskSummary, getRiskSummaryRange, computeRiskSummaryForDate, persistRiskSummaryCache } from "../services/riskSummaryService";
 
 const router = Router();
 
@@ -24,6 +24,33 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
     });
   } catch (err) {
     console.error("Failed to compute risk summary:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// GET /analytics/risk-summary/range?start=YYYY-MM-DD&end=YYYY-MM-DD
+router.get("/risk-summary/range", async (req: Request, res: Response) => {
+  const { start, end } = req.query;
+  if (!start || !end) {
+    res.status(400).json({ error: "Missing start or end parameter" });
+    return;
+  }
+
+  try {
+    const result = await getRiskSummaryRange(start as string, end as string);
+    res.json({
+      date: result.date,
+      start_date: result.start_date,
+      end_date: result.end_date,
+      total_employees: result.total_employees,
+      high_risk_count: result.high_risk_count,
+      medium_risk_count: result.medium_risk_count,
+      low_risk_count: result.low_risk_count,
+      employees: result.employees,
+      from_cache: result.from_cache,
+    });
+  } catch (err) {
+    console.error("Failed to compute risk summary range:", err);
     res.status(500).json({ error: "Database error" });
   }
 });

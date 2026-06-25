@@ -80,7 +80,9 @@ export interface Anomaly {
 
 export interface MileageStats {
   user_id: string;
-  date: string;
+  date?: string;
+  start?: string;
+  end?: string;
   totalKm: number;
   reportedDistanceKm: number;
   segmentCount: number;

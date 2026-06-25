@@ -36,39 +36,46 @@ export async function fetchVisits(
   return res.data;
 }
 
-export async function fetchStops(userId: string, date: string): Promise<Stop[]> {
+export async function fetchStops(
+  userId: string,
+  start: string,
+  end: string
+): Promise<Stop[]> {
   const res = await api.get("/stops", {
-    params: { user: userId, date },
+    params: { user: userId, start, end },
   });
   return res.data;
 }
 
 export async function fetchRoutes(
   userId: string,
-  date: string
+  start: string,
+  end: string
 ): Promise<Route[]> {
   const res = await api.get("/routes", {
-    params: { user: userId, date },
+    params: { user: userId, start, end },
   });
   return res.data;
 }
 
 export async function fetchMileage(
   userId: string,
-  date: string
+  start: string,
+  end: string
 ): Promise<MileageStats> {
   const res = await api.get("/analytics/mileage", {
-    params: { user: userId, date },
+    params: { user: userId, start, end },
   });
   return res.data;
 }
 
 export async function fetchAnomalies(
   userId: string,
-  date: string
+  start: string,
+  end: string
 ): Promise<Anomaly[]> {
   const res = await api.get("/analytics/anomaly", {
-    params: { user: userId, date },
+    params: { user: userId, start, end },
   });
   return res.data;
 }
@@ -99,16 +106,29 @@ export interface EmployeeRiskSummary {
 
 export interface RiskSummaryResponse {
   date: string;
+  start_date?: string;
+  end_date?: string;
   total_employees: number;
   high_risk_count: number;
   medium_risk_count: number;
   low_risk_count: number;
   employees: EmployeeRiskSummary[];
+  from_cache?: boolean;
 }
 
 export async function fetchRiskSummary(date: string): Promise<RiskSummaryResponse> {
   const res = await api.get("/analytics/risk-summary", {
     params: { date },
+  });
+  return res.data;
+}
+
+export async function fetchRiskSummaryRange(
+  start: string,
+  end: string
+): Promise<RiskSummaryResponse> {
+  const res = await api.get("/analytics/risk-summary/range", {
+    params: { start, end },
   });
   return res.data;
 }
