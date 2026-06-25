@@ -8,10 +8,12 @@ import {
   User,
   Menu,
   MapPin,
+  Settings,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import Dashboard from "./pages/Dashboard";
 import UploadPage from "./pages/UploadPage";
+import RulesConfigPage from "./pages/RulesConfigPage";
 
 interface NavItem {
   path: string;
@@ -23,6 +25,7 @@ const navItems: NavItem[] = [
   { path: "/", label: "决策系统", icon: Home },
   { path: "/dashboard", label: "控制台", icon: BarChart3 },
   { path: "/upload", label: "数据上传", icon: Upload },
+  { path: "/rules", label: "规则配置", icon: Settings },
 ];
 
 function cn(...classes: (string | boolean | undefined)[]) {
@@ -154,6 +157,7 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/map" element={<Navigate to="/dashboard" replace />} />
           <Route path="/upload" element={<UploadPage />} />
+          <Route path="/rules" element={<RulesConfigPage />} />
         </Routes>
       </main>
     </div>

@@ -90,3 +90,15 @@ export interface User {
   user_name: string;
   department: string;
 }
+
+export interface AnomalyWeight {
+  id: number;
+  rule_key: string;
+  rule_name: string;
+  weight: number;
+  threshold_value: number | null;
+  enabled: boolean;
+  description: string | null;
+  created_at: string;
+  updated_at: string;
+}

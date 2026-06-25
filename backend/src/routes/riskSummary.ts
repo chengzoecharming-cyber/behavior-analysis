@@ -3,16 +3,10 @@ import { pool } from "../db";
 import { detectAnomalies } from "../services/anomalyDetection";
 import { detectStops } from "../services/stopDetection";
 import { planRoute } from "../services/routePlanning";
-import { Visit, Stop, Route, Anomaly } from "../types";
+import { calculateRiskScore, getRiskLevel, RiskReason } from "../services/riskScoring";
+import { Visit, Stop, Route } from "../types";
 
 const router = Router();
-
-export interface RiskReason {
-  type: string;
-  description: string;
-  severity: "low" | "medium" | "high";
-  count: number;
-}
 
 export interface EmployeeRiskSummary {
   user_id: string;
@@ -29,59 +23,6 @@ export interface EmployeeRiskSummary {
   total_distance_km: number;
   risk_reasons: RiskReason[];
   summary_text: string;
-}
-
-// 计算风险分数
-function calculateRiskScore(anomalies: Anomaly[]): { score: number; reasons: RiskReason[] } {
-  const weights: Record<string, number> = {
-    long_stop: 25,
-    long_idle: 30,
-    route_detour: 20,
-  };
-
-  const severityMultiplier: Record<string, number> = {
-    high: 2,
-    medium: 1,
-    low: 0.5,
-  };
-
-  let score = 0;
-  const grouped: Record<string, { severity: string; count: number; description: string }> = {};
-
-  for (const a of anomalies) {
-    const type = a.type || "unknown";
-    if (!grouped[type]) {
-      grouped[type] = { severity: a.severity, count: 0, description: a.description };
-    }
-    grouped[type].count += 1;
-  }
-
-  const reasons: RiskReason[] = [];
-  for (const [type, info] of Object.entries(grouped)) {
-    const weight = weights[type] || 15;
-    const multiplier = severityMultiplier[info.severity] || 1;
-    const typeScore = weight * info.count * multiplier;
-    score += typeScore;
-    reasons.push({
-      type,
-      description: info.description,
-      severity: info.severity as "low" | "medium" | "high",
-      count: info.count,
-    });
-  }
-
-  // 基础分：无异常时给一个低分
-  if (score === 0) {
-    score = 5;
-  }
-
-  return { score: Math.min(Math.round(score), 100), reasons };
-}
-
-function getRiskLevel(score: number): "high" | "medium" | "low" {
-  if (score >= 70) return "high";
-  if (score >= 40) return "medium";
-  return "low";
 }
 
 function generateSummaryText(
@@ -101,6 +42,38 @@ function generateSummaryText(
   return `${userName} 今日完成 ${visitCount} 次拜访，行程正常，无显著风险。`;
 }
 
+// 计算包含 endDate 当天在内的最近 N 个工作日范围
+function getPastWorkdaysRange(n: number, endDateStr: string): { start: string; end: string } {
+  const end = new Date(`${endDateStr}T23:59:59+08:00`);
+  let count = 0;
+  const start = new Date(end);
+  while (count < n) {
+    const day = start.getDay();
+    if (day !== 0 && day !== 6) {
+      count++;
+    }
+    if (count < n) {
+      start.setDate(start.getDate() - 1);
+    }
+  }
+  start.setHours(0, 0, 0, 0);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+}
+
+function getPastDaysRange(n: number, endDateStr: string): { start: string; end: string } {
+  const end = new Date(`${endDateStr}T23:59:59+08:00`);
+  const start = new Date(end);
+  start.setDate(start.getDate() - n);
+  start.setHours(0, 0, 0, 0);
+  return {
+    start: start.toISOString(),
+    end: end.toISOString(),
+  };
+}
+
 // GET /analytics/risk-summary?date=YYYY-MM-DD
 router.get("/risk-summary", async (req: Request, res: Response) => {
   const { date } = req.query;
@@ -111,6 +84,7 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
 
   const start = `${date}T00:00:00+08:00`;
   const end = `${date}T23:59:59+08:00`;
+  const dateStr = date as string;
 
   try {
     // 1. 获取当天所有有数据的员工
@@ -125,21 +99,43 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
     const users = usersResult.rows;
     const summaries: EmployeeRiskSummary[] = [];
 
+    // 2. 跨天数据范围
+    const past5Workdays = getPastWorkdaysRange(5, dateStr);
+    const past2Weeks = getPastDaysRange(14, dateStr);
+
     for (const user of users) {
       const userId = user.user_id;
       const userName = user.user_name;
       const department = user.department || "";
 
-      // 2. 查询该员工当天的拜访记录
+      // 3. 查询该员工当天的拜访记录
       const visitsResult = await pool.query(
         `SELECT * FROM visits
          WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
          ORDER BY timestamp ASC`,
         [userId, start, end]
       );
-      const visits: Visit[] = visitsResult.rows;
+      const visitsToday: Visit[] = visitsResult.rows;
 
-      // 3. 查询停留点
+      // 4. 过去5个工作日拜访记录
+      const past5WorkdaysResult = await pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+         ORDER BY timestamp ASC`,
+        [userId, past5Workdays.start, past5Workdays.end]
+      );
+      const visitsPast5Workdays: Visit[] = past5WorkdaysResult.rows;
+
+      // 5. 过去两周拜访记录
+      const past2WeeksResult = await pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+         ORDER BY timestamp ASC`,
+        [userId, past2Weeks.start, past2Weeks.end]
+      );
+      const visitsPast2Weeks: Visit[] = past2WeeksResult.rows;
+
+      // 6. 查询停留点
       const stopsResult = await pool.query(
         `SELECT * FROM stops
          WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
@@ -148,8 +144,8 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
       );
       const stops: Stop[] = stopsResult.rows;
 
-      // 4. 查询路径（优先用已持久化的 routes，缺失的并行补算）
-      const visitIds = visits.map((v) => v.id);
+      // 7. 查询路径（优先用已持久化的 routes，缺失的并行补算）
+      const visitIds = visitsToday.map((v) => v.id);
       const routesResult = await pool.query(
         `SELECT * FROM routes
          WHERE user_id = $1
@@ -164,10 +160,10 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
       );
 
       const missingPairs: { from: Visit; to: Visit }[] = [];
-      for (let i = 1; i < visits.length; i++) {
-        const pairKey = `${visits[i - 1].id}-${visits[i].id}`;
+      for (let i = 1; i < visitsToday.length; i++) {
+        const pairKey = `${visitsToday[i - 1].id}-${visitsToday[i].id}`;
         if (!existingPairs.has(pairKey)) {
-          missingPairs.push({ from: visits[i - 1], to: visits[i] });
+          missingPairs.push({ from: visitsToday[i - 1], to: visitsToday[i] });
         }
       }
 
@@ -175,7 +171,6 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
         missingPairs.map(async (pair) => {
           try {
             const route = await planRoute(pair.from, pair.to, userId);
-            // 持久化新计算的 route（避免重复）
             const existing = await pool.query(
               `SELECT id FROM routes
                WHERE user_id = $1 AND from_visit_id = $2 AND to_visit_id = $3`,
@@ -207,11 +202,19 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
         ...(computedRoutes.filter((r) => r !== null) as Route[]),
       ];
 
-      // 5. 检测异常
-      const anomalies = await detectAnomalies(visits, stops, routes);
+      // 8. 检测异常
+      const anomalies = await detectAnomalies({
+        userId,
+        analysisDate: new Date(dateStr),
+        visitsToday,
+        stopsToday: stops,
+        routesToday: routes,
+        visitsPast5Workdays,
+        visitsPast2Weeks,
+      });
 
-      // 6. 计算风险分数
-      const { score, reasons } = calculateRiskScore(anomalies);
+      // 9. 计算风险分数
+      const { score, reasons } = await calculateRiskScore(anomalies);
       const riskLevel = getRiskLevel(score);
 
       const highAnomalies = anomalies.filter((a) => a.severity === "high");
@@ -231,7 +234,7 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
         high_anomaly_count: highAnomalies.length,
         medium_anomaly_count: mediumAnomalies.length,
         low_anomaly_count: lowAnomalies.length,
-        visit_count: visits.length,
+        visit_count: visitsToday.length,
         total_stop_minutes: totalStopMinutes,
         total_distance_km: parseFloat(totalDistance.toFixed(2)),
         risk_reasons: reasons,
@@ -240,7 +243,7 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
           riskLevel,
           anomalies.length,
           highAnomalies.length,
-          visits.length,
+          visitsToday.length,
           totalStopMinutes
         ),
       };

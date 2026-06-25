@@ -9,6 +9,10 @@ import {
   computeMileageStats,
 } from "../services/mileageAnalysis";
 import { Visit, Stop, Route, Anomaly } from "../types";
+import {
+  getAnomalyWeights,
+  updateAnomalyWeight,
+} from "../services/anomalyWeights";
 
 const router = Router();
 
@@ -80,7 +84,13 @@ router.get("/anomaly", async (req: Request, res: Response) => {
       routes.push(await planRoute(visits[i - 1], visits[i], user as string));
     }
 
-    const anomalies = await detectAnomalies(visits, stops, routes);
+    const anomalies = await detectAnomalies({
+      userId: user as string,
+      analysisDate: new Date(date as string),
+      visitsToday: visits,
+      stopsToday: stops,
+      routesToday: routes,
+    });
 
     // 持久化异常事件
     await pool.query(
@@ -151,5 +161,97 @@ router.get("/mileage-distribution", async (req: Request, res: Response) => {
     res.status(500).json({ error: "Database error" });
   }
 });
+
+// 异常规则权重配置
+router.get("/anomaly-weights", async (_req: Request, res: Response) => {
+  try {
+    const weights = await getAnomalyWeights();
+    res.json(Object.values(weights));
+  } catch (err) {
+    console.error("Failed to fetch anomaly weights:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+router.put("/anomaly-weights/:key", async (req: Request, res: Response) => {
+  const { key } = req.params;
+  const { weight, threshold_value, enabled, rule_name, description } = req.body;
+
+  try {
+    const updated = await updateAnomalyWeight(key, {
+      weight,
+      threshold_value,
+      enabled,
+      rule_name,
+      description,
+    });
+    if (!updated) {
+      res.status(404).json({ error: "Rule not found" });
+      return;
+    }
+    res.json(updated);
+  } catch (err) {
+    console.error("Failed to update anomaly weight:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+
+// 单日风险评分
+router.get("/risk-score", async (req: Request, res: Response) => {
+  const { user_id, date } = req.query;
+  if (!user_id || !date) {
+    res.status(400).json({ error: "Missing user_id or date parameter" });
+    return;
+  }
+
+  const start = `${date}T00:00:00+08:00`;
+  const end = `${date}T23:59:59+08:00`;
+
+  try {
+    const visitsResult = await pool.query(
+      `SELECT * FROM visits
+       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+       ORDER BY timestamp ASC`,
+      [user_id, start, end]
+    );
+    const visits: Visit[] = visitsResult.rows;
+
+    const stops = detectStops(visits);
+    const routes: Route[] = [];
+    for (let i = 1; i < visits.length; i++) {
+      routes.push(await planRoute(visits[i - 1], visits[i], user_id as string));
+    }
+
+    const anomalies = await detectAnomalies({
+      userId: user_id as string,
+      analysisDate: new Date(date as string),
+      visitsToday: visits,
+      stopsToday: stops,
+      routesToday: routes,
+    });
+
+    const { score, reasons } = await calculateRiskScore(anomalies);
+
+    res.json({
+      user_id,
+      date,
+      risk_score: score,
+      risk_level: getRiskLevel(score),
+      anomaly_count: anomalies.length,
+      reasons,
+      anomalies: anomalies.map((a) => ({
+        type: a.type,
+        description: a.description,
+        severity: a.severity,
+      })),
+    });
+  } catch (err) {
+    console.error("Failed to compute risk score:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+import { calculateRiskScore, getRiskLevel } from "../services/riskScoring";
 
 export default router;

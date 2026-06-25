@@ -109,6 +109,31 @@ export async function initDB(): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS idx_anomalies_user
         ON anomalies(user_id, created_at);
+
+      -- 异常规则权重配置表
+      CREATE TABLE IF NOT EXISTS anomaly_weights (
+        id SERIAL PRIMARY KEY,
+        rule_key VARCHAR(64) UNIQUE NOT NULL,
+        rule_name VARCHAR(128) NOT NULL,
+        weight DOUBLE PRECISION NOT NULL DEFAULT 0.1,
+        threshold_value DOUBLE PRECISION,
+        enabled BOOLEAN DEFAULT true,
+        description TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      INSERT INTO anomaly_weights (rule_key, rule_name, weight, threshold_value, enabled, description)
+      VALUES
+        ('low_visit_count', '拜访量不足', 0.25, 15, true, '过去5个工作日累计签到次数<15次'),
+        ('duplicate_location', '重复签到', 0.20, 7, true, '过去两周同一地点重复签到>=7次'),
+        ('mileage_deviation', '里程偏差', 0.20, 0.30, true, '填报里程 vs 高德里程偏差>30%'),
+        ('long_stop', '停留过长', 0.15, 120, true, '停留>120分钟'),
+        ('route_detour', '路径绕行', 0.10, 2.0, true, '实际距离>直线距离*2'),
+        ('long_idle', '长时间未移动', 0.05, 180, true, '>180分钟无移动记录'),
+        ('invalid_trip_type', '异常出行方式', 0.03, 5, true, '公共交通/特殊签到但填报较长里程'),
+        ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, '特殊签到未填写原因')
+      ON CONFLICT (rule_key) DO NOTHING;
     `);
     console.log("Database initialized");
   } finally {

@@ -6,6 +6,7 @@ import {
   Anomaly,
   MileageStats,
   User,
+  AnomalyWeight,
 } from "./types";
 
 const api = axios.create({
@@ -109,6 +110,19 @@ export async function fetchRiskSummary(date: string): Promise<RiskSummaryRespons
   const res = await api.get("/analytics/risk-summary", {
     params: { date },
   });
+  return res.data;
+}
+
+export async function fetchAnomalyWeights(): Promise<AnomalyWeight[]> {
+  const res = await api.get("/analytics/anomaly-weights");
+  return res.data;
+}
+
+export async function updateAnomalyWeight(
+  ruleKey: string,
+  updates: Partial<Pick<AnomalyWeight, "weight" | "threshold_value" | "enabled" | "rule_name" | "description">>
+): Promise<AnomalyWeight> {
+  const res = await api.put(`/analytics/anomaly-weights/${ruleKey}`, updates);
   return res.data;
 }
 
