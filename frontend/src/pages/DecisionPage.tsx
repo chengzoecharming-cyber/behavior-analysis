@@ -44,7 +44,11 @@ function DecisionPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [date, setDate] = useState<Date>(() => {
     const dateFromUrl = searchParams.get("date");
-    return dateFromUrl ? new Date(dateFromUrl) : new Date();
+    if (dateFromUrl) return new Date(dateFromUrl);
+    // 默认展示昨天数据（缓存命中率高）
+    const yesterday = new Date();
+    yesterday.setDate(yesterday.getDate() - 1);
+    return yesterday;
   });
   const [data, setData] = useState<RiskSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);

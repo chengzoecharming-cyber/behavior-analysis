@@ -8,6 +8,7 @@ import routesRouter from "./routes/routes";
 import uploadRouter from "./routes/upload";
 import analyticsRouter from "./routes/analytics";
 import riskSummaryRouter from "./routes/riskSummary";
+import { startRiskSummaryCacheScheduler } from "./services/scheduler";
 
 dotenv.config();
 
@@ -30,6 +31,7 @@ app.get("/health", (_req, res) => {
 
 async function main() {
   await initDB();
+  startRiskSummaryCacheScheduler();
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

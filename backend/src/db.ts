@@ -112,6 +112,38 @@ export async function initDB(): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS idx_anomalies_user
         ON anomalies(user_id, created_at);
+      CREATE INDEX IF NOT EXISTS idx_anomalies_user_type_time
+        ON anomalies(user_id, type, created_at);
+
+      -- 风险摘要预计算缓存表
+      CREATE TABLE IF NOT EXISTS risk_summary_cache (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        user_name VARCHAR(128),
+        department VARCHAR(128),
+        date DATE NOT NULL,
+        risk_score INTEGER NOT NULL DEFAULT 0,
+        risk_level VARCHAR(16) NOT NULL DEFAULT 'low',
+        anomaly_count INTEGER NOT NULL DEFAULT 0,
+        high_anomaly_count INTEGER NOT NULL DEFAULT 0,
+        medium_anomaly_count INTEGER NOT NULL DEFAULT 0,
+        low_anomaly_count INTEGER NOT NULL DEFAULT 0,
+        visit_count INTEGER NOT NULL DEFAULT 0,
+        total_stop_minutes INTEGER NOT NULL DEFAULT 0,
+        total_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0,
+        reasons JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW(),
+        UNIQUE(user_id, date)
+      );
+
+      ALTER TABLE risk_summary_cache ADD COLUMN IF NOT EXISTS user_name VARCHAR(128);
+      ALTER TABLE risk_summary_cache ADD COLUMN IF NOT EXISTS department VARCHAR(128);
+
+      CREATE INDEX IF NOT EXISTS idx_risk_summary_date
+        ON risk_summary_cache(date);
+      CREATE INDEX IF NOT EXISTS idx_risk_summary_user_date
+        ON risk_summary_cache(user_id, date);
 
       -- 异常规则权重配置表
       CREATE TABLE IF NOT EXISTS anomaly_weights (

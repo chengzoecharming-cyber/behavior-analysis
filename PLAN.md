@@ -23,82 +23,33 @@
 - ✅ 清理历史重复/mock 数据
 - ✅ 地图点位防御性去重
 
----
-
-## 进行中（尚未提交）
-
 ### Dashboard UI/UX 优化
 
-- [x] 异常事件结构化展示
+- ✅ 异常事件结构化展示
   - 涉及两地（mileage_deviation / route_detour）显示为 `A → B` 标题
   - 副标题显示 `填报 xx km vs 高德 xx km · 偏差 xx%`
   - 风险等级 tag 位于文字左侧
   - 后端 `anomalies` 表新增 `metadata` JSONB 字段
-- [x] 日期选择自动填充第一个可用日期，仍需点击「查询」加载
-- [x] 统计卡片调整
+- ✅ 日期选择自动填充第一个可用日期，仍需点击「查询」加载
+- ✅ 统计卡片调整
   - 「总里程 vs 估算里程」卡片移到第二行
   - 总里程 = 用户填报里程
   - 估算里程 = 高德路线规划里程
   - 无填报时显示「未填报」
 - [ ] 字段命名待讨论：「停留点数」「停留时长」是否改名或移除
 
+### Step 1：查询优化
+
+- ✅ 数据库索引（visits / stops / routes / anomalies / risk_summary_cache）
+- ✅ 新建 `risk_summary_cache` 预计算缓存表
+- ✅ 每日凌晨 2 点定时任务增量计算前一天缓存
+- ✅ `/analytics/risk-summary` 历史日期优先读缓存，今天实时计算
+- ✅ 决策系统默认展示昨天数据
+- ✅ 路线规划结果已持久化到 `routes` 表，缺失时补算
+
 ---
 
 ## 待开发
-
-### Step 1：查询优化（高优先级，在钉钉 API 接入前完成）
-
-目标：钉钉 API 接入后预计有几千条数据，当前查询方式会变慢，需先优化。
-
-#### 1.1 数据库索引
-
-```sql
-CREATE INDEX idx_visits_user_time ON visits(user_id, timestamp);
-CREATE INDEX idx_visits_approval ON visits(approval_id, sequence);
-CREATE INDEX idx_routes_user_from_to ON routes(user_id, from_visit_id, to_visit_id);
-CREATE INDEX idx_stops_user_time ON stops(user_id, start_time);
-CREATE INDEX idx_anomalies_user_type ON anomalies(user_id, type, created_at);
-```
-
-#### 1.2 风险摘要预计算缓存
-
-- 新建 `risk_summary_cache` 表：
-
-```sql
-CREATE TABLE risk_summary_cache (
-  id SERIAL PRIMARY KEY,
-  user_id VARCHAR(64),
-  date DATE,
-  risk_score INTEGER,
-  risk_level VARCHAR(16),
-  anomaly_count INTEGER,
-  visit_count INTEGER,
-  total_distance_km DOUBLE PRECISION,
-  reasons JSONB,
-  created_at TIMESTAMPTZ DEFAULT NOW()
-);
-```
-
-- 每天凌晨预计算前一天每个员工的风险评分
-- 决策系统查询时直接读缓存
-- 本周/本月排名基于日缓存聚合
-
-#### 1.3 路线规划结果缓存
-
-- `routes` 表已持久化规划结果
-- 进一步避免重复调用 AMap：查询时优先用已缓存 route，缺失再补算
-
-#### 1.4 决策系统列表 → 详情（可选）
-
-- 首页只返回精简字段：姓名、部门、风险等级、风险分
-- 点击员工卡片后再调 `/analytics/risk-score` 加载异常明细
-
-#### 1.5 分页
-
-- 决策系统员工卡片已支持前端分页
-- 如数据量大，后端也支持分页返回
-
----
 
 ### Step 2：Date Range 支持
 
