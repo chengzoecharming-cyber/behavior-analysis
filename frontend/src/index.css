@@ -79,3 +79,34 @@ a {
   box-shadow: none !important;
   border-radius: 16px !important;
 }
+
+/* 决策系统员工卡片网格 */
+.employee-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 16px;
+}
+
+@media (max-width: 1600px) {
+  .employee-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 1200px) {
+  .employee-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+@media (max-width: 900px) {
+  .employee-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+@media (max-width: 600px) {
+  .employee-grid {
+    grid-template-columns: repeat(1, 1fr);
+  }
+}

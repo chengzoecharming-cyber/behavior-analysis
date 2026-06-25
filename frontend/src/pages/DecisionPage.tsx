@@ -18,9 +18,15 @@ import { fetchRiskSummary, RiskSummaryResponse, EmployeeRiskSummary } from "../a
 const { Title, Text } = Typography;
 
 const levelConfig = {
-  high: { color: "#F54C5C", label: "高风险" },
-  medium: { color: "#F7A046", label: "可疑" },
-  low: { color: "#27C39D", label: "正常" },
+  high: { color: "#F54C5C", bg: "#FFF2F0", label: "高风险" },
+  medium: { color: "#F7A046", bg: "#FFFBE6", label: "可疑" },
+  low: { color: "#27C39D", bg: "#F0FFF9", label: "正常" },
+};
+
+const tagStyleMap: Record<string, React.CSSProperties> = {
+  high: { backgroundColor: "#FFF2F0", color: "#F54C5C", border: "1px solid #FFD8D2" },
+  medium: { backgroundColor: "#FFFBE6", color: "#F7A046", border: "1px solid #FFE7B8" },
+  low: { backgroundColor: "#F0FFF9", color: "#27C39D", border: "1px solid #B7EB8F" },
 };
 
 const PAGE_SIZE = 12;
@@ -87,102 +93,124 @@ function DecisionPage() {
     return filteredEmployees.slice(start, start + PAGE_SIZE);
   }, [filteredEmployees, currentPage]);
 
+  const renderRiskTags = (emp: EmployeeRiskSummary) => {
+    const tags: React.ReactNode[] = [];
+    const reasons = emp.risk_reasons.slice(0, 3);
+    const hasMore = emp.risk_reasons.length > 3;
+
+    reasons.forEach((r, i) => {
+      tags.push(
+        <Tag
+          key={i}
+          size="small"
+          style={{
+            ...tagStyleMap[r.severity],
+            alignSelf: "flex-start",
+            marginRight: 0,
+            borderRadius: 4,
+          }}
+        >
+          {riskTypeLabels[r.type] || r.type}
+          {r.count > 1 ? `(${r.count})` : ""}
+        </Tag>
+      );
+    });
+
+    if (hasMore) {
+      tags.push(
+        <Tag
+          key="more"
+          size="small"
+          style={{
+            alignSelf: "flex-start",
+            marginRight: 0,
+            borderRadius: 4,
+            backgroundColor: "#f5f5f5",
+            color: "#666",
+            border: "1px solid #e8e8e8",
+          }}
+        >
+          +{emp.risk_reasons.length - 3}
+        </Tag>
+      );
+    }
+
+    // 固定 3 个 tag 高度，不足留空
+    while (tags.length < 3) {
+      tags.push(
+        <div
+          key={`empty-${tags.length}`}
+          style={{ height: 22, alignSelf: "flex-start" }}
+        />
+      );
+    }
+
+    return tags;
+  };
+
   const renderEmployeeCard = (emp: EmployeeRiskSummary) => {
     const cfg = levelConfig[emp.risk_level];
     return (
-      <Col key={emp.user_id} span={6}>
-        <div
-          onClick={() => {
-            window.location.href = `/dashboard?user=${emp.user_id}&date=${dayjs(date).format(
-              "YYYY-MM-DD"
-            )}`;
-          }}
-          style={{
-            backgroundColor: "#fff",
-            borderRadius: 12,
-            padding: 16,
-            minHeight: 160,
-            cursor: "pointer",
-            transition: "all 0.2s ease",
-            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
-            display: "flex",
-            flexDirection: "column",
-            justifyContent: "space-between",
-          }}
-          onMouseEnter={(e) => {
-            e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
-            e.currentTarget.style.transform = "translateY(-2px)";
-          }}
-          onMouseLeave={(e) => {
-            e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)";
-            e.currentTarget.style.transform = "translateY(0)";
-          }}
-        >
-          {/* Header */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span
-                style={{
-                  width: 10,
-                  height: 10,
-                  borderRadius: "50%",
-                  backgroundColor: cfg.color,
-                  display: "inline-block",
-                  flexShrink: 0,
-                }}
-              />
-              <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
-                {emp.user_name}
-              </span>
-            </div>
-            <div style={{ fontSize: 20, fontWeight: 700, color: cfg.color }}>
-              {emp.risk_score}
-            </div>
-          </div>
-
-          {/* Risk tags */}
-          <div style={{ marginTop: 12, flex: 1 }}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {emp.risk_reasons.slice(0, 5).map((r, i) => (
-                <Tag
-                  key={i}
-                  size="small"
-                  type="light"
-                  color={
-                    r.severity === "high" ? "red" : r.severity === "medium" ? "orange" : "green"
-                  }
-                  style={{ alignSelf: "flex-start", marginRight: 0 }}
-                >
-                  {riskTypeLabels[r.type] || r.type}
-                  {r.count > 1 ? `(${r.count})` : ""}
-                </Tag>
-              ))}
-              {emp.risk_reasons.length > 5 && (
-                <Tag size="small" type="light" style={{ alignSelf: "flex-start", marginRight: 0 }}>
-                  +{emp.risk_reasons.length - 5}
-                </Tag>
-              )}
-            </div>
-          </div>
-
-          {/* Footer stats */}
-          <div
-            style={{
-              marginTop: 12,
-              paddingTop: 12,
-              borderTop: "1px solid #f0f0f0",
-              fontSize: 12,
-              color: "#888",
-              display: "flex",
-              gap: 12,
-            }}
-          >
-            <span>{emp.visit_count} 次拜访</span>
-            <span>{Math.round(emp.total_stop_minutes)} 分钟停留</span>
-            <span>{emp.total_distance_km.toFixed(1)} km</span>
+      <div
+        key={emp.user_id}
+        onClick={() => {
+          window.location.href = `/dashboard?user=${emp.user_id}&date=${dayjs(date).format(
+            "YYYY-MM-DD"
+          )}`;
+        }}
+        style={{
+          backgroundColor: "#fff",
+          borderRadius: 12,
+          padding: 16,
+          height: 220,
+          cursor: "pointer",
+          transition: "all 0.2s ease",
+          boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "space-between",
+        }}
+        onMouseEnter={(e) => {
+          e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+          e.currentTarget.style.transform = "translateY(-2px)";
+        }}
+        onMouseLeave={(e) => {
+          e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)";
+          e.currentTarget.style.transform = "translateY(0)";
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+          <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
+            {emp.user_name}
+          </span>
+          <div style={{ fontSize: 20, fontWeight: 700, color: cfg.color }}>
+            {emp.risk_score}
           </div>
         </div>
-      </Col>
+
+        {/* Risk tags - 固定 3 行高度 */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, marginTop: 8 }}>
+          {renderRiskTags(emp)}
+        </div>
+
+        {/* Footer stats */}
+        <div
+          style={{
+            marginTop: 12,
+            paddingTop: 12,
+            borderTop: "1px solid #f0f0f0",
+            fontSize: 12,
+            color: "#888",
+            display: "flex",
+            gap: 12,
+          }}
+        >
+          <span>{emp.visit_count} 次拜访</span>
+          <span>{Math.round(emp.total_stop_minutes)} 分钟停留</span>
+          <span>{emp.total_distance_km.toFixed(1)} km</span>
+        </div>
+      </div>
     );
   };
 
@@ -324,9 +352,9 @@ function DecisionPage() {
             <Empty description="暂无数据" />
           ) : (
             <>
-              <Row gutter={[16, 16]}>
+              <div className="employee-grid">
                 {pagedEmployees.map(renderEmployeeCard)}
-              </Row>
+              </div>
               <div style={{ marginTop: 24, display: "flex", justifyContent: "center" }}>
                 <Pagination
                   currentPage={currentPage}
