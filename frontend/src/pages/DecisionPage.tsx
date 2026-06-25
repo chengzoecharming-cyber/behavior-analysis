@@ -24,9 +24,9 @@ const levelConfig = {
 };
 
 const tagStyleMap: Record<string, React.CSSProperties> = {
-  high: { backgroundColor: "#FFF2F0", color: "#F54C5C", border: "1px solid #FFD8D2" },
-  medium: { backgroundColor: "#FFFBE6", color: "#F7A046", border: "1px solid #FFE7B8" },
-  low: { backgroundColor: "#F0FFF9", color: "#27C39D", border: "1px solid #B7EB8F" },
+  high: { backgroundColor: "#FFF7F6", color: "#CF1322" },
+  medium: { backgroundColor: "#FFFBEB", color: "#D46B08" },
+  low: { backgroundColor: "#F6FFED", color: "#389E0D" },
 };
 
 const PAGE_SIZE = 12;
@@ -162,7 +162,7 @@ function DecisionPage() {
           backgroundColor: "#fff",
           borderRadius: 12,
           padding: 16,
-          height: 220,
+          height: 240,
           cursor: "pointer",
           transition: "all 0.2s ease",
           boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
@@ -184,20 +184,32 @@ function DecisionPage() {
           <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
             {emp.user_name}
           </span>
-          <div style={{ fontSize: 20, fontWeight: 700, color: cfg.color }}>
+          <div style={{ fontSize: 28, fontWeight: 700, color: cfg.color }}>
             {emp.risk_score}
           </div>
         </div>
 
-        {/* Risk tags - 固定 3 行高度 */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, flex: 1, marginTop: 8 }}>
+        {/* Spacer */}
+        <div style={{ flex: 1 }} />
+
+        {/* Risk tags - 固定 3 行高度，从底部向上排列 */}
+        <div
+          style={{
+            display: "flex",
+            flexDirection: "column",
+            justifyContent: "flex-end",
+            gap: 8,
+            marginBottom: 12,
+            minHeight: 80,
+          }}
+        >
           {renderRiskTags(emp)}
         </div>
 
         {/* Footer stats */}
         <div
           style={{
-            marginTop: 12,
+            marginTop: 0,
             paddingTop: 12,
             borderTop: "1px solid #f0f0f0",
             fontSize: 12,
