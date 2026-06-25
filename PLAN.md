@@ -83,8 +83,9 @@
 - ✅ 前端「数据同步」页面（/sync）
 - ✅ 环境变量模板（`backend/.env.example`）
 
-#### 待完成
+#### 待完成（暂缓，等待管理员）
 
+- [ ] 管理员在企业后台授予「OA 审批管理」权限，并提供审批模板 `processCode`
 - [ ] 用户提供 `DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET` / `DINGTALK_PROCESS_CODE`
 - [ ] 调用 `/dingtalk/test` 验证权限与数据格式
 - [ ] 根据实际审批表单字段名调整 `parseApprovalForm` 映射
