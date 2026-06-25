@@ -74,6 +74,7 @@ export interface Anomaly {
   lng: number | null;
   severity: "low" | "medium" | "high";
   related_visit_ids: number[];
+  metadata: Record<string, any>;
   created_at: Date;
 }
 

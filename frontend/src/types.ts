@@ -74,6 +74,7 @@ export interface Anomaly {
   lng: number | null;
   severity: "low" | "medium" | "high";
   related_visit_ids: number[];
+  metadata: Record<string, any>;
   created_at: string;
 }
 
@@ -81,6 +82,7 @@ export interface MileageStats {
   user_id: string;
   date: string;
   totalKm: number;
+  reportedDistanceKm: number;
   segmentCount: number;
   estimatedFuelCost: number;
 }

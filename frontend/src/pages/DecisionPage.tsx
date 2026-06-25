@@ -2,14 +2,12 @@ import { useEffect, useState, useMemo } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
   DatePicker,
-  Select,
   Tag,
   Typography,
-  Empty,
   Spin,
   Row,
   Col,
-  Pagination,
+  Modal,
 } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
@@ -17,19 +15,19 @@ import { fetchRiskSummary, RiskSummaryResponse, EmployeeRiskSummary } from "../a
 
 const { Title, Text } = Typography;
 
-const levelConfig = {
+type RiskLevel = "high" | "medium" | "low";
+
+const levelConfig: Record<RiskLevel, { color: string; bg: string; label: string }> = {
   high: { color: "#F54C5C", bg: "#FFF2F0", label: "高风险" },
   medium: { color: "#F7A046", bg: "#FFFBE6", label: "可疑" },
   low: { color: "#27C39D", bg: "#F0FFF9", label: "正常" },
 };
 
 const tagStyleMap: Record<string, React.CSSProperties> = {
-  high: { backgroundColor: "#FFF7F6", color: "#595959" },
-  medium: { backgroundColor: "#FFFBEB", color: "#595959" },
-  low: { backgroundColor: "#F6FFED", color: "#595959" },
+  high: { backgroundColor: "#FBE7E4", color: "#751B2F" },
+  medium: { backgroundColor: "#FDF4E3", color: "#7A4A0F" },
+  low: { backgroundColor: "#E4F7ED", color: "#1D5C3D" },
 };
-
-const PAGE_SIZE = 12;
 
 const riskTypeLabels: Record<string, string> = {
   low_visit_count: "拜访量不足",
@@ -50,16 +48,16 @@ function DecisionPage() {
   });
   const [data, setData] = useState<RiskSummaryResponse | null>(null);
   const [loading, setLoading] = useState(false);
-  const [riskFilter, setRiskFilter] = useState<"all" | "high" | "medium" | "low">("all");
-  const [deptFilter, setDeptFilter] = useState<string>("all");
-  const [currentPage, setCurrentPage] = useState(1);
+
+  // 弹窗状态
+  const [modalVisible, setModalVisible] = useState(false);
+  const [modalLevel, setModalLevel] = useState<RiskLevel | null>(null);
 
   const loadData = async () => {
     setLoading(true);
     try {
       const res = await fetchRiskSummary(dayjs(date).format("YYYY-MM-DD"));
       setData(res);
-      setCurrentPage(1);
     } finally {
       setLoading(false);
     }
@@ -69,29 +67,20 @@ function DecisionPage() {
     loadData();
   }, [date]);
 
-  const departments = useMemo(() => {
-    if (!data) return [];
-    const depts = new Set<string>();
-    data.employees.forEach((e) => depts.add(e.department));
-    return Array.from(depts);
-  }, [data]);
+  const openRiskModal = (level: RiskLevel) => {
+    setModalLevel(level);
+    setModalVisible(true);
+  };
 
-  const filteredEmployees = useMemo(() => {
-    if (!data) return [];
-    let filtered = data.employees;
-    if (riskFilter !== "all") {
-      filtered = filtered.filter((e) => e.risk_level === riskFilter);
-    }
-    if (deptFilter !== "all") {
-      filtered = filtered.filter((e) => e.department === deptFilter);
-    }
-    return filtered;
-  }, [data, riskFilter, deptFilter]);
+  const closeRiskModal = () => {
+    setModalVisible(false);
+    setModalLevel(null);
+  };
 
-  const pagedEmployees = useMemo(() => {
-    const start = (currentPage - 1) * PAGE_SIZE;
-    return filteredEmployees.slice(start, start + PAGE_SIZE);
-  }, [filteredEmployees, currentPage]);
+  const modalEmployees = useMemo(() => {
+    if (!data || !modalLevel) return [];
+    return data.employees.filter((e) => e.risk_level === modalLevel);
+  }, [data, modalLevel]);
 
   const renderRiskTags = (emp: EmployeeRiskSummary) => {
     const tags: React.ReactNode[] = [];
@@ -135,13 +124,9 @@ function DecisionPage() {
       );
     }
 
-    // 固定 3 个 tag 高度，不足留空
     while (tags.length < 3) {
       tags.push(
-        <div
-          key={`empty-${tags.length}`}
-          style={{ height: 22, alignSelf: "flex-start" }}
-        />
+        <div key={`empty-${tags.length}`} style={{ height: 22, alignSelf: "flex-start" }} />
       );
     }
 
@@ -154,9 +139,10 @@ function DecisionPage() {
       <div
         key={emp.user_id}
         onClick={() => {
-          window.location.href = `/dashboard?user=${emp.user_id}&date=${dayjs(date).format(
-            "YYYY-MM-DD"
-          )}`;
+          window.open(
+            `/dashboard?user=${emp.user_id}&date=${dayjs(date).format("YYYY-MM-DD")}`,
+            "_blank"
+          );
         }}
         style={{
           backgroundColor: "#fff",
@@ -179,7 +165,6 @@ function DecisionPage() {
           e.currentTarget.style.transform = "translateY(0)";
         }}
       >
-        {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
           <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
             {emp.user_name}
@@ -189,10 +174,8 @@ function DecisionPage() {
           </div>
         </div>
 
-        {/* Spacer */}
         <div style={{ flex: 1 }} />
 
-        {/* Risk tags - 固定 3 行高度，从底部向上排列 */}
         <div
           style={{
             display: "flex",
@@ -206,10 +189,8 @@ function DecisionPage() {
           {renderRiskTags(emp)}
         </div>
 
-        {/* Footer stats */}
         <div
           style={{
-            marginTop: 0,
             paddingTop: 12,
             borderTop: "1px solid #f0f0f0",
             fontSize: 12,
@@ -226,36 +207,30 @@ function DecisionPage() {
     );
   };
 
-  const renderStatCard = (
-    level: "high" | "medium" | "low",
-    count: number
-  ) => {
+  const renderStatCard = (level: RiskLevel, count: number) => {
     const cfg = levelConfig[level];
-    const isActive = riskFilter === level;
     return (
       <div
-        onClick={() => setRiskFilter(isActive ? "all" : level)}
+        onClick={() => openRiskModal(level)}
         style={{
           padding: 20,
-          backgroundColor: isActive ? cfg.color : "#fff",
+          backgroundColor: "#fff",
           borderRadius: 16,
           cursor: "pointer",
           transition: "all 0.2s ease",
           boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
         }}
         onMouseEnter={(e) => {
-          if (!isActive) e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+          e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+          e.currentTarget.style.transform = "translateY(-2px)";
         }}
         onMouseLeave={(e) => {
           e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)";
+          e.currentTarget.style.transform = "translateY(0)";
         }}
       >
-        <div style={{ fontSize: 14, color: isActive ? "rgba(255,255,255,0.8)" : "#72808a", marginBottom: 4 }}>
-          {cfg.label}
-        </div>
-        <div style={{ fontSize: 32, fontWeight: 700, color: isActive ? "#fff" : cfg.color }}>
-          {count}
-        </div>
+        <div style={{ fontSize: 14, color: "#72808a", marginBottom: 4 }}>{cfg.label}</div>
+        <div style={{ fontSize: 32, fontWeight: 700, color: cfg.color }}>{count}</div>
       </div>
     );
   };
@@ -270,13 +245,10 @@ function DecisionPage() {
         <Text type="tertiary" style={{ fontSize: 14 }}>
           帮助管理者 10 秒内发现今日风险员工
         </Text>
-        <div style={{ marginTop: 8, fontSize: 13, color: "#72808a" }}>
-          点击员工卡片可跳转控制台查看详情与轨迹
-        </div>
       </div>
 
       {/* Filter Bar */}
-      <div className="flex flex-wrap items-center gap-6" style={{ marginBottom: 16 }}>
+      <div className="flex flex-wrap items-center gap-6" style={{ marginBottom: 24 }}>
         <DatePicker
           value={date}
           onChange={(d) => {
@@ -289,26 +261,6 @@ function DecisionPage() {
             }
           }}
           style={{ width: 160 }}
-        />
-        <Select
-          value={riskFilter}
-          onChange={(v) => setRiskFilter(v as any)}
-          style={{ width: 120 }}
-          optionList={[
-            { value: "all", label: "全部风险" },
-            { value: "high", label: "高风险" },
-            { value: "medium", label: "可疑" },
-            { value: "low", label: "正常" },
-          ]}
-        />
-        <Select
-          value={deptFilter}
-          onChange={(v) => setDeptFilter(v as any)}
-          style={{ width: 140 }}
-          optionList={[
-            { value: "all", label: "全部部门" },
-            ...departments.map((d) => ({ value: d, label: d })),
-          ]}
         />
         <button
           onClick={loadData}
@@ -340,15 +292,6 @@ function DecisionPage() {
         </button>
       </div>
 
-      {/* Stats */}
-      {data && (
-        <Row gutter={16} style={{ marginBottom: 16 }}>
-          <Col span={8}>{renderStatCard("high", data.high_risk_count)}</Col>
-          <Col span={8}>{renderStatCard("medium", data.medium_risk_count)}</Col>
-          <Col span={8}>{renderStatCard("low", data.low_risk_count)}</Col>
-        </Row>
-      )}
-
       {/* Loading */}
       {loading && (
         <div style={{ textAlign: "center", padding: 40 }}>
@@ -357,29 +300,61 @@ function DecisionPage() {
         </div>
       )}
 
-      {/* Employee Grid */}
+      {/* Risk Cards */}
       {!loading && data && (
-        <>
-          {filteredEmployees.length === 0 ? (
-            <Empty description="暂无数据" />
-          ) : (
-            <>
-              <div className="employee-grid">
-                {pagedEmployees.map(renderEmployeeCard)}
-              </div>
-              <div style={{ marginTop: 24, display: "flex", justifyContent: "center" }}>
-                <Pagination
-                  currentPage={currentPage}
-                  pageSize={PAGE_SIZE}
-                  total={filteredEmployees.length}
-                  onPageChange={(page: number) => setCurrentPage(page)}
-                  showSizeChanger={false}
-                />
-              </div>
-            </>
-          )}
-        </>
+        <Row gutter={16}>
+          <Col span={8}>{renderStatCard("high", data.high_risk_count)}</Col>
+          <Col span={8}>{renderStatCard("medium", data.medium_risk_count)}</Col>
+          <Col span={8}>{renderStatCard("low", data.low_risk_count)}</Col>
+        </Row>
       )}
+
+      {/* Risk Detail Modal */}
+      <Modal
+        title={
+          modalLevel ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span>{levelConfig[modalLevel].label}</span>
+              <Tag
+                size="small"
+                style={{
+                  backgroundColor: "#f0f0f0",
+                  color: "#666",
+                  border: "none",
+                  borderRadius: 4,
+                }}
+              >
+                {modalEmployees.length}人
+              </Tag>
+            </div>
+          ) : (
+            ""
+          )
+        }
+        visible={modalVisible}
+        onCancel={closeRiskModal}
+        footer={null}
+        size="large"
+        width={1000}
+        className="risk-modal"
+      >
+        <div
+          style={{
+            fontSize: 13,
+            color: "#999",
+            marginBottom: 16,
+          }}
+        >
+          提示：分值越高，风险越高
+        </div>
+        {modalEmployees.length === 0 ? (
+          <div style={{ textAlign: "center", padding: 40, color: "#999" }}>暂无数据</div>
+        ) : (
+          <div className="employee-grid">
+            {modalEmployees.map(renderEmployeeCard)}
+          </div>
+        )}
+      </Modal>
     </div>
   );
 }

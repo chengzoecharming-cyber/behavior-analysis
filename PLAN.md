@@ -1,52 +1,143 @@
-# 销售外勤行为分析系统 - 后续开发计划
+# 销售外勤行为分析系统 - 开发计划
 
-## 已上线：Phase 1（数据治理 + 控制台增强）
+## 已上线
+
+### Phase 1：数据治理 + 控制台增强
 
 - ✅ 1A 钉钉宽表解析 & 数据模型扩展
 - ✅ 1B 批量地理编码 + 失败 fallback + 手动坐标修正接口
 - ✅ 1C 里程对比分析 + 新增异常类型
 - ✅ 1D Dashboard 合并地图轨迹 + 决策系统下钻
 
----
+### Phase 2：可配置权重后台 + 行为评分
 
-## Phase 2：可配置权重后台 + 行为评分（已完成）
+- ✅ 创建 `anomaly_weights` 配置表并初始化 8 条规则
+- ✅ 后端权重 CRUD 接口
+- ✅ `detectAnomalies` 读取权重配置
+- ✅ 风险评分接口与决策系统排序
+- ✅ 前端「规则配置」页面
 
-### 目标
-建立可动态调整的异常规则权重体系，输出员工单日/单周风险评分，支撑决策系统风险排名。
+### 数据质量修复
 
-### 初始权重与阈值
-
-| 规则 key | 规则名 | 权重 | 阈值 |
-|---|---|---|---|
-| low_visit_count | 拜访量不足 | 0.25 | 5 个工作日累计签到 < 15 次 |
-| duplicate_location | 重复签到 | 0.20 | 2 周同一地点重复签到 ≥ 7 次 |
-| mileage_deviation | 里程偏差 | 0.20 | 填报里程 vs 高德里程偏差 > 30% |
-| long_stop | 停留过长 | 0.15 | 停留 > 120 分钟 |
-| route_detour | 路径绕行 | 0.10 | 实际距离 > 直线距离 × 2 |
-| idle_gap | 长时间未移动 | 0.05 | > 180 分钟无记录 |
-| missing_special_reason | 特殊签到缺原因 | 0.05 | 特殊签到未填写原因 |
-
-### 任务
-
-- [ ] 创建 `anomaly_weights` 配置表
-- [ ] 初始化 7 条默认规则
-- [ ] 新增 `GET /analytics/anomaly-weights` 查询权重
-- [ ] 新增 `PUT /analytics/anomaly-weights/:key` 更新权重/阈值/开关
-- [ ] 将 `detectAnomalies` 改为读取权重配置
-- [ ] 新增 `GET /analytics/risk-score?user_id=&date=` 单日评分
-- [ ] 新增 `GET /analytics/risk-score/weekly?user_id=&week=` 单周评分
-- [ ] 增强 `GET /analytics/risk-summary` 返回评分、命中规则明细
-- [ ] 前端新增「规则配置」页面
-- [ ] 决策系统卡片按风险评分排序
+- ✅ Excel 重复导入去重
+- ✅ 清理历史重复/mock 数据
+- ✅ 地图点位防御性去重
 
 ---
 
-## Phase 3：车辆/油卡/加油记录导入 + 油耗预估模型
+## 进行中（尚未提交）
 
-### 目标
-支持员工整理的车辆、油卡、加油记录批量导入，建立油耗预估与实际对比能力。
+### Dashboard UI/UX 优化
 
-### 表结构
+- [x] 异常事件结构化展示
+  - 涉及两地（mileage_deviation / route_detour）显示为 `A → B` 标题
+  - 副标题显示 `填报 xx km vs 高德 xx km · 偏差 xx%`
+  - 风险等级 tag 位于文字左侧
+  - 后端 `anomalies` 表新增 `metadata` JSONB 字段
+- [x] 日期选择自动填充第一个可用日期，仍需点击「查询」加载
+- [x] 统计卡片调整
+  - 「总里程 vs 估算里程」卡片移到第二行
+  - 总里程 = 用户填报里程
+  - 估算里程 = 高德路线规划里程
+  - 无填报时显示「未填报」
+- [ ] 字段命名待讨论：「停留点数」「停留时长」是否改名或移除
+
+---
+
+## 待开发
+
+### Step 1：查询优化（高优先级，在钉钉 API 接入前完成）
+
+目标：钉钉 API 接入后预计有几千条数据，当前查询方式会变慢，需先优化。
+
+#### 1.1 数据库索引
+
+```sql
+CREATE INDEX idx_visits_user_time ON visits(user_id, timestamp);
+CREATE INDEX idx_visits_approval ON visits(approval_id, sequence);
+CREATE INDEX idx_routes_user_from_to ON routes(user_id, from_visit_id, to_visit_id);
+CREATE INDEX idx_stops_user_time ON stops(user_id, start_time);
+CREATE INDEX idx_anomalies_user_type ON anomalies(user_id, type, created_at);
+```
+
+#### 1.2 风险摘要预计算缓存
+
+- 新建 `risk_summary_cache` 表：
+
+```sql
+CREATE TABLE risk_summary_cache (
+  id SERIAL PRIMARY KEY,
+  user_id VARCHAR(64),
+  date DATE,
+  risk_score INTEGER,
+  risk_level VARCHAR(16),
+  anomaly_count INTEGER,
+  visit_count INTEGER,
+  total_distance_km DOUBLE PRECISION,
+  reasons JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW()
+);
+```
+
+- 每天凌晨预计算前一天每个员工的风险评分
+- 决策系统查询时直接读缓存
+- 本周/本月排名基于日缓存聚合
+
+#### 1.3 路线规划结果缓存
+
+- `routes` 表已持久化规划结果
+- 进一步避免重复调用 AMap：查询时优先用已缓存 route，缺失再补算
+
+#### 1.4 决策系统列表 → 详情（可选）
+
+- 首页只返回精简字段：姓名、部门、风险等级、风险分
+- 点击员工卡片后再调 `/analytics/risk-score` 加载异常明细
+
+#### 1.5 分页
+
+- 决策系统员工卡片已支持前端分页
+- 如数据量大，后端也支持分页返回
+
+---
+
+### Step 2：Date Range 支持
+
+#### 2.1 决策系统
+
+- 保持单日排名为主
+- 增加快捷筛选：今天 / 昨天 / 本周 / 本月
+- 本周/本月风险分基于日缓存聚合
+
+#### 2.2 Dashboard / 控制台
+
+- 日期选择器改为 `RangePicker`
+- 后端接口 `/visits`、`/stops`、`/routes`、`/analytics/mileage`、`/analytics/anomaly` 支持 `start` + `end`
+- 轨迹地图支持展示多天的连续轨迹
+
+---
+
+### Step 3：钉钉 API 自动接入
+
+#### 前置条件
+
+- 钉钉开放平台企业内部应用
+- `appKey` / `appSecret`
+- 审批模板 ID（`process_code`）
+
+#### 任务
+
+- [ ] 钉钉 AccessToken 获取与缓存
+- [ ] 拉取审批实例列表
+- [ ] 解析审批实例详情，写入 `raw_visits`
+- [ ] 增量同步（按更新时间）
+- [ ] 定时任务（每天凌晨同步前一天）
+- [ ] 从钉钉同步用户/部门信息到 `users` 表
+
+---
+
+### Step 4：车辆 / 油卡 / 油耗模型
+
+#### 4.1 表结构
 
 ```sql
 CREATE TABLE vehicles (
@@ -62,7 +153,7 @@ CREATE TABLE fuel_cards (
   id SERIAL PRIMARY KEY,
   card_no VARCHAR(64),
   vehicle_id INTEGER REFERENCES vehicles(id),
-  user_id INTEGER REFERENCES users(id)
+  user_id INTEGER REFERENCES vehicles(id)
 );
 
 CREATE TABLE fuel_records (
@@ -78,67 +169,36 @@ CREATE TABLE fuel_records (
 );
 ```
 
-### 计算逻辑
+#### 4.2 计算逻辑
 
 ```text
 预估油耗(升) = 实际里程(km) × 车型百公里油耗 × 1.2 / 100
 油耗偏差(升) = 实际加油量(升) - 预估油耗(升)
 ```
 
-### 任务
+#### 4.3 任务
 
 - [ ] 创建 vehicles / fuel_cards / fuel_records 表
-- [ ] 新增车辆信息 Excel/CSV 导入接口
-- [ ] 新增油卡信息 Excel/CSV 导入接口
-- [ ] 新增加油记录 Excel/CSV 导入接口
-- [ ] 新增油耗预估接口 `GET /analytics/fuel-estimate?user_id=&month=`
-- [ ] 前端新增「油耗数据上传」页面
-- [ ] 控制台显示预估油耗与实际加油对比
+- [ ] 车辆信息 Excel/CSV 导入
+- [ ] 油卡信息 Excel/CSV 导入
+- [ ] 加油记录 Excel/CSV 导入
+- [ ] 油耗预估接口
+- [ ] 控制台显示预估油耗 vs 实际加油
 
 ---
 
-## Phase 4：月维度数据导出
+### Step 5：月维度数据导出
 
-### 目标
-支持按月份导出员工/部门的拜访、里程、油耗、异常汇总报表。
-
-### 任务
-
-- [ ] 新增 `GET /analytics/export/monthly?month=&department=` 导出 Excel
+- [ ] 后端 `GET /analytics/export/monthly?month=&department=` 导出 Excel
 - [ ] 导出字段：员工、部门、拜访次数、总里程、停留次数、异常次数、预估油耗、实际加油、风险评分
-- [ ] 前端新增「月报导出」入口
+- [ ] 前端「月报导出」入口
 - [ ] 时间筛选支持「过去一个月」「过去两周」「过去五个工作日」
 
 ---
 
-## Phase 5：钉钉 API 自动接入
+### Step 6：权限系统
 
-### 目标
-通过钉钉自建应用自动拉取审批数据，替代手动 Excel 导入。
-
-### 前置条件
-
-- 钉钉开放平台企业内部应用
-- `appKey` / `appSecret`
-- 审批模板 ID（`process_code`）
-
-### 任务
-
-- [ ] 新增钉钉 AccessToken 获取与缓存
-- [ ] 新增审批实例列表拉取任务
-- [ ] 新增审批实例详情解析，写入 `raw_visits`
-- [ ] 增量同步逻辑（按更新时间）
-- [ ] 定时任务（每天凌晨同步前一天）
-- [ ] 接入成功后，users 表从钉钉同步用户/部门信息
-
----
-
-## Phase 6：权限系统
-
-### 目标
-基于用户角色控制数据查看范围。
-
-### 角色设计
+#### 角色设计
 
 | 角色 | 权限 |
 |---|---|
@@ -146,17 +206,18 @@ CREATE TABLE fuel_records (
 | manager | 查看本部门 |
 | staff | 仅查看自己 |
 
-### 任务
+#### 任务
 
-- [ ] users 表补充 role、department 字段
-- [ ] 后端所有查询接口增加权限过滤
+- [ ] `users` 表补充 role、department 字段
+- [ ] 后端接口增加权限过滤
 - [ ] 前端根据角色渲染导航和数据范围
-- [ ] 普通员工个人页（轨迹、异常、油耗）
+- [ ] 普通员工个人页
 
 ---
 
-## 未决定/低优先级
+## 待讨论 / 低优先级
 
+- [ ] Dashboard 字段命名：「停留点数」「停留时长」是否改名/移除
 - [ ] 坐标补齐：当前 3 个 geocoding 失败地址（公司/翡翠滨江/莲花苑）暂不处理
 - [ ] 更多异常规则：夜间/节假日签到、短时间密集签到等
-- [ ] 路线规划结果缓存，进一步降低 risk-summary 耗时
+- [ ] 上传接口查重策略细化（接入钉钉 API 后评估）

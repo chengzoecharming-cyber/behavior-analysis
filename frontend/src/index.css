@@ -110,3 +110,8 @@ a {
     grid-template-columns: repeat(1, 1fr);
   }
 }
+
+/* 风险弹窗使用主页背景色 */
+.risk-modal .semi-modal-content {
+  background-color: #F6F8FC !important;
+}

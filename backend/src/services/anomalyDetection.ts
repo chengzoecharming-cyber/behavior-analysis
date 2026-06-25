@@ -84,6 +84,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
         lng: null,
         severity: workdayVisits.length < threshold * 0.6 ? "high" : "medium",
         related_visit_ids: workdayVisits.map((v) => v.id),
+        metadata: {},
         created_at: new Date(),
       });
     }
@@ -125,6 +126,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: info.lng,
           severity: info.count >= threshold + 3 ? "high" : "medium",
           related_visit_ids: info.visitIds,
+          metadata: {},
           created_at: new Date(),
         });
       }
@@ -148,6 +150,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: stop.lng,
           severity: stop.duration_minutes >= threshold * 2 ? "high" : "medium",
           related_visit_ids: stop.visit_ids,
+          metadata: {},
           created_at: new Date(),
         });
       }
@@ -182,6 +185,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: null,
           severity: gapMin >= threshold * 2 ? "high" : "medium",
           related_visit_ids: [prev.id, curr.id],
+          metadata: {},
           created_at: new Date(),
         });
       }
@@ -212,6 +216,12 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: null,
           severity: route.distance_km > straightKm * threshold * 1.5 ? "high" : "medium",
           related_visit_ids: [from.id, to.id],
+          metadata: {
+            from_location: from.location_name,
+            to_location: to.location_name,
+            actual_distance_km: route.distance_km,
+            straight_distance_km: straightKm,
+          },
           created_at: new Date(),
         });
       }
@@ -236,6 +246,13 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: null,
           severity: seg.deviation_rate > threshold * 1.5 ? "high" : "medium",
           related_visit_ids: [seg.from_visit_id, seg.to_visit_id],
+          metadata: {
+            from_location: seg.from_location,
+            to_location: seg.to_location,
+            reported_distance_km: seg.reported_distance_km,
+            gaode_distance_km: seg.gaode_distance_km,
+            deviation_rate: seg.deviation_rate,
+          },
           created_at: new Date(),
         });
       }
@@ -264,6 +281,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: visit.lng,
           severity: "medium",
           related_visit_ids: [visit.id],
+          metadata: {},
           created_at: new Date(),
         });
       }
@@ -290,6 +308,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           lng: visit.lng,
           severity: "low",
           related_visit_ids: [visit.id],
+          metadata: {},
           created_at: new Date(),
         });
       }

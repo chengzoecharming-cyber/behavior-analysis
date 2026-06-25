@@ -104,8 +104,11 @@ export async function initDB(): Promise<void> {
         lng DOUBLE PRECISION,
         severity VARCHAR(16) DEFAULT 'medium',
         related_visit_ids INTEGER[],
+        metadata JSONB DEFAULT '{}',
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      ALTER TABLE anomalies ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
 
       CREATE INDEX IF NOT EXISTS idx_anomalies_user
         ON anomalies(user_id, created_at);

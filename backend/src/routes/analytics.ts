@@ -44,10 +44,23 @@ router.get("/mileage", async (req: Request, res: Response) => {
 
     const totalKm = routes.reduce((sum, r) => sum + r.distance_km, 0);
 
+    // 计算填报总里程（累加所有 visit 的 reported_distance_km）
+    const visitsResult = await pool.query(
+      `SELECT reported_distance_km
+       FROM visits
+       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3`,
+      [user, start, end]
+    );
+    const reportedDistanceKm = visitsResult.rows.reduce(
+      (sum: number, row: any) => sum + (row.reported_distance_km || 0),
+      0
+    );
+
     res.json({
       user_id: user,
       date,
       totalKm: parseFloat(totalKm.toFixed(2)),
+      reportedDistanceKm: parseFloat(reportedDistanceKm.toFixed(2)),
       segmentCount: routes.length,
       estimatedFuelCost: parseFloat((totalKm * 0.8).toFixed(2)), // 假设 0.8 元/km
     });
@@ -102,8 +115,8 @@ router.get("/anomaly", async (req: Request, res: Response) => {
     for (const a of anomalies) {
       const r = await pool.query(
         `INSERT INTO anomalies
-         (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+         (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
          RETURNING *`,
         [
           a.user_id,
@@ -115,6 +128,7 @@ router.get("/anomaly", async (req: Request, res: Response) => {
           a.lng,
           a.severity,
           a.related_visit_ids,
+          a.metadata || {},
         ]
       );
       persisted.push(r.rows[0]);

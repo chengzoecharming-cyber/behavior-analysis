@@ -58,7 +58,18 @@ function Dashboard() {
     }
     fetchAvailableDates(userId).then((dates) => {
       setAvailableDates(dates);
-      // 不要自动设置日期，等待用户选择或点击查询
+      // 如果当前没有选日期，自动填充第一个可用日期（不自动加载）
+      setDate((prev) => {
+        if (prev) return prev;
+        if (dates.length > 0) {
+          const d = dayjs(dates[0]);
+          const params = new URLSearchParams(searchParams);
+          params.set("date", d.format("YYYY-MM-DD"));
+          setSearchParams(params);
+          return d;
+        }
+        return null;
+      });
     });
   }, [userId]);
 
@@ -121,12 +132,6 @@ function Dashboard() {
     }
     return total.toFixed(2);
   }, [visits]);
-
-  const severityColor = {
-    low: "default",
-    medium: "orange",
-    high: "red",
-  } as const;
 
   const disabledDate = (current: Dayjs) => {
     if (availableDates.length === 0) return true;
@@ -242,25 +247,19 @@ function Dashboard() {
 
       {/* Stats Row 1 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}>
+        <Col span={8}>
           <div style={statStyle}>
             <span style={statLabelStyle}>拜访点数</span>
             <span style={statValueStyle}>{visits.length}</span>
           </div>
         </Col>
-        <Col span={6}>
+        <Col span={8}>
           <div style={statStyle}>
             <span style={statLabelStyle}>停留点数</span>
             <span style={statValueStyle}>{stops.length}</span>
           </div>
         </Col>
-        <Col span={6}>
-          <div style={statStyle}>
-            <span style={statLabelStyle}>总里程 (km)</span>
-            <span style={statValueStyle}>{mileage?.totalKm ?? totalDistance}</span>
-          </div>
-        </Col>
-        <Col span={6}>
+        <Col span={8}>
           <div style={statStyle}>
             <span style={statLabelStyle}>异常事件</span>
             <span style={{ ...statValueStyle, color: anomalies.length > 0 ? "#F54C5C" : "#27C39D" }}>
@@ -272,19 +271,31 @@ function Dashboard() {
 
       {/* Stats Row 2 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}>
+        <Col span={6}>
+          <div style={statStyle}>
+            <span style={statLabelStyle}>总里程 vs 估算里程</span>
+            <span style={statValueStyle}>
+              <span style={{ color: mileage?.reportedDistanceKm ? "#0f1419" : "#999" }}>
+                {mileage?.reportedDistanceKm || "未填报"}
+              </span>
+              <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
+              <span>{mileage?.totalKm ?? totalDistance}</span>
+            </span>
+          </div>
+        </Col>
+        <Col span={6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>Segment 数</span>
             <span style={statValueStyle}>{mileage?.segmentCount ?? 0}</span>
           </div>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>估算油费 (元)</span>
             <span style={statValueStyle}>{mileage?.estimatedFuelCost ?? 0}</span>
           </div>
         </Col>
-        <Col span={8}>
+        <Col span={6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>总停留时长 (min)</span>
             <span style={statValueStyle}>{stops.reduce((sum, s) => sum + s.duration_minutes, 0)}</span>
@@ -305,14 +316,8 @@ function Dashboard() {
               <List
                 size="small"
                 dataSource={anomalies}
-                renderItem={(item) => (
-                  <List.Item>
-                    <Tag color={severityColor[item.severity]}>
-                      {item.severity === "high" ? "高" : item.severity === "medium" ? "中" : "低"}
-                    </Tag>
-                    {item.description}
-                  </List.Item>
-                )}
+                split={false}
+                renderItem={(item) => <AnomalyItem item={item} />}
               />
             )}
           </div>
@@ -359,6 +364,73 @@ function haversine(lat1: number, lng1: number, lat2: number, lng2: number): numb
       Math.cos((lat2 * Math.PI) / 180) *
       Math.sin(dLng / 2) ** 2;
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+const anomalySeverityText = {
+  high: "高",
+  medium: "中",
+  low: "低",
+};
+
+const anomalySeverityColor = {
+  high: "red",
+  medium: "orange",
+  low: "green",
+};
+
+function AnomalyItem({ item }: { item: Anomaly }) {
+  const m = item.metadata || {};
+
+  // 涉及两地：mileage_deviation / route_detour
+  if (m.from_location && m.to_location) {
+    const isMileage = item.type === "mileage_deviation";
+    const title = `${m.from_location} → ${m.to_location}`;
+    const subtitle = isMileage
+      ? `填报 ${m.reported_distance_km ?? "-"}km vs 高德 ${m.gaode_distance_km ?? "-"}km · 偏差 ${
+          m.deviation_rate != null ? `${(m.deviation_rate * 100).toFixed(1)}%` : "-"
+        }`
+      : `实际 ${(m.actual_distance_km ?? 0).toFixed(2)}km vs 直线 ${(m.straight_distance_km ?? 0).toFixed(
+          2
+        )}km`;
+
+    return (
+      <List.Item style={{ padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
+        <div style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%" }}>
+          <Tag color={anomalySeverityColor[item.severity]} style={{ flexShrink: 0, marginTop: 2 }}>
+            {anomalySeverityText[item.severity]}
+          </Tag>
+          <div style={{ flex: 1, minWidth: 0 }}>
+            <div
+              style={{
+                fontSize: 14,
+                fontWeight: 600,
+                color: "#0f1419",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+              title={title}
+            >
+              {title}
+            </div>
+            <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{subtitle}</div>
+          </div>
+        </div>
+      </List.Item>
+    );
+  }
+
+  // 其他异常：左侧 tag + description
+  return (
+    <List.Item style={{ padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
+      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%" }}>
+        <Tag color={anomalySeverityColor[item.severity]} style={{ flexShrink: 0, marginTop: 2 }}>
+          {anomalySeverityText[item.severity]}
+        </Tag>
+        <div style={{ fontSize: 14, color: "#0f1419", lineHeight: 1.5 }}>{item.description}</div>
+      </div>
+    </List.Item>
+  );
 }
 
 export default Dashboard;
