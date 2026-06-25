@@ -142,29 +142,27 @@ function DecisionPage() {
 
           {/* Risk tags */}
           <div style={{ marginTop: 12, flex: 1 }}>
-            <Row gutter={[8, 8]}>
-              {emp.risk_reasons.slice(0, 4).map((r, i) => (
-                <Col span={12} key={i}>
-                  <Tag
-                    size="small"
-                    color={
-                      r.severity === "high" ? "red" : r.severity === "medium" ? "orange" : "green"
-                    }
-                    style={{ width: "100%", textAlign: "center", marginRight: 0 }}
-                  >
-                    {riskTypeLabels[r.type] || r.type}
-                    {r.count > 1 ? `(${r.count})` : ""}
-                  </Tag>
-                </Col>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {emp.risk_reasons.slice(0, 5).map((r, i) => (
+                <Tag
+                  key={i}
+                  size="small"
+                  type="light"
+                  color={
+                    r.severity === "high" ? "red" : r.severity === "medium" ? "orange" : "green"
+                  }
+                  style={{ alignSelf: "flex-start", marginRight: 0 }}
+                >
+                  {riskTypeLabels[r.type] || r.type}
+                  {r.count > 1 ? `(${r.count})` : ""}
+                </Tag>
               ))}
-              {emp.risk_reasons.length > 4 && (
-                <Col span={12}>
-                  <Tag size="small" style={{ width: "100%", textAlign: "center", marginRight: 0 }}>
-                    +{emp.risk_reasons.length - 4}
-                  </Tag>
-                </Col>
+              {emp.risk_reasons.length > 5 && (
+                <Tag size="small" type="light" style={{ alignSelf: "flex-start", marginRight: 0 }}>
+                  +{emp.risk_reasons.length - 5}
+                </Tag>
               )}
-            </Row>
+            </div>
           </div>
 
           {/* Footer stats */}
