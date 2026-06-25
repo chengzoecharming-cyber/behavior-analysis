@@ -23,6 +23,21 @@ function isWorkday(date: Date): boolean {
   return day !== 0 && day !== 6;
 }
 
+function formatBeijingTime(date: Date | string): string {
+  const d = typeof date === "string" ? new Date(date) : date;
+  const parts = new Intl.DateTimeFormat("zh-CN", {
+    timeZone: "Asia/Shanghai",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).formatToParts(d);
+  const get = (type: string) => parts.find((p) => p.type === type)?.value || "";
+  return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
+}
+
 // 计算包含 endDate 当天在内的最近 N 个工作日起始日期
 function getPastNWorkdaysStart(n: number, endDate: Date): Date {
   let count = 0;
@@ -158,9 +173,9 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           id: 0,
           user_id: ctx.userId,
           type: "long_idle",
-          description: `${prev.timestamp.toISOString()} 至 ${curr.timestamp.toISOString()} 之间 ${Math.round(
-            gapMin
-          )} 分钟无移动记录`,
+          description: `${formatBeijingTime(prev.timestamp)} 至 ${formatBeijingTime(
+          curr.timestamp
+        )} 之间 ${Math.round(gapMin)} 分钟无移动记录`,
           start_time: prev.timestamp,
           end_time: curr.timestamp,
           lat: null,

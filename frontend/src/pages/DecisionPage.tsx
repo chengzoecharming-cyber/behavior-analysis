@@ -1,5 +1,5 @@
 import { useEffect, useState, useMemo } from "react";
-import { useNavigate, useSearchParams } from "react-router-dom";
+import { useSearchParams } from "react-router-dom";
 import {
   DatePicker,
   Select,
@@ -8,42 +8,23 @@ import {
   Typography,
   Empty,
   Spin,
-  Divider,
   Row,
   Col,
   Space,
 } from "@douyinfe/semi-ui";
-import {
-  IconSearch,
-  IconMapPin,
-  IconClock,
-} from "@douyinfe/semi-icons";
+import { IconSearch } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
 import { fetchRiskSummary, RiskSummaryResponse, EmployeeRiskSummary } from "../api";
 
 const { Title, Text } = Typography;
 
-function RiskBadge({ level }: { level: "high" | "medium" | "low" }) {
-  const colors = {
-    high: "#F54C5C",
-    medium: "#F7A046",
-    low: "#27C39D",
-  };
-  const labels = { high: "高风险", medium: "可疑", low: "正常" };
-  return (
-    <Badge
-      count={labels[level]}
-      style={{
-        backgroundColor: colors[level] + "20",
-        color: colors[level],
-        border: `1px solid ${colors[level]}`,
-      }}
-    />
-  );
-}
+const levelConfig = {
+  high: { color: "#F54C5C", bg: "#FFF2F0", label: "高" },
+  medium: { color: "#F7A046", bg: "#FFF7E6", label: "中" },
+  low: { color: "#27C39D", bg: "#F0FFF9", label: "低" },
+};
 
 function DecisionPage() {
-  const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
   const [date, setDate] = useState<Date>(() => {
     const dateFromUrl = searchParams.get("date");
@@ -87,96 +68,129 @@ function DecisionPage() {
     return filtered;
   }, [data, riskFilter, deptFilter]);
 
-  const groupedByRisk = useMemo(() => {
-    const high = filteredEmployees.filter((e) => e.risk_level === "high");
-    const medium = filteredEmployees.filter((e) => e.risk_level === "medium");
-    const low = filteredEmployees.filter((e) => e.risk_level === "low");
-    return { high, medium, low };
-  }, [filteredEmployees]);
-
-  const renderEmployeeCard = (emp: EmployeeRiskSummary) => (
-    <div
-      key={emp.user_id}
-      style={{
-        padding: 20,
-        borderRadius: 16,
-        borderLeft: `4px solid ${
-          emp.risk_level === "high" ? "#F54C5C" : emp.risk_level === "medium" ? "#F7A046" : "#27C39D"
-        }`,
-        backgroundColor: "#fff",
-        marginBottom: 12,
-        cursor: "pointer",
-        transition: "background-color 0.2s",
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.backgroundColor = "#FAFBFC";
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.backgroundColor = "#fff";
-      }}
-    >
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
-        <div>
-          <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 4, color: "#0f1419" }}>
-            {emp.user_name}
-            <span style={{ fontSize: 13, fontWeight: 400, color: "#72808a", marginLeft: 8 }}>
-              {emp.department}
-            </span>
-          </div>
-          <div style={{ fontSize: 14, color: "#333", marginBottom: 8 }}>{emp.summary_text}</div>
-          <Space wrap>
-            {emp.risk_reasons.map((r, i) => (
-              <Tag
-                key={i}
-                color={r.severity === "high" ? "red" : r.severity === "medium" ? "orange" : "green"}
-                style={{ marginRight: 4, marginBottom: 4, pointerEvents: "none" }}
-              >
-                {r.description} ({r.count})
-              </Tag>
-            ))}
-          </Space>
-        </div>
-        <div style={{ textAlign: "right", flexShrink: 0, marginLeft: 16 }}>
-          <RiskBadge level={emp.risk_level} />
-          <div style={{ fontSize: 24, fontWeight: 700, color: "#F54C5C", marginTop: 8 }}>
-            {emp.risk_score}
-          </div>
-          <div style={{ fontSize: 12, color: "#999" }}>风险分</div>
-        </div>
-      </div>
-      <Divider style={{ margin: "8px 0" }} />
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, color: "#666" }}>
-        <div style={{ display: "flex", gap: 16 }}>
-          <span>
-            <IconMapPin style={{ marginRight: 4 }} />
-            {emp.visit_count} 次拜访
-          </span>
-          <span>
-            <IconClock style={{ marginRight: 4 }} />
-            {Math.round(emp.total_stop_minutes)} 分钟停留
-          </span>
-          <span>{emp.total_distance_km.toFixed(1)} km</span>
-        </div>
-        <button
+  const renderEmployeeCard = (emp: EmployeeRiskSummary) => {
+    const cfg = levelConfig[emp.risk_level];
+    return (
+      <Col key={emp.user_id} xs={24} sm={12} lg={8} xxl={6}>
+        <div
           onClick={() => {
-            window.location.href = `/dashboard?user=${emp.user_id}&date=${dayjs(date).format("YYYY-MM-DD")}`;
+            window.location.href = `/dashboard?user=${emp.user_id}&date=${dayjs(date).format(
+              "YYYY-MM-DD"
+            )}`;
           }}
           style={{
-            backgroundColor: "#F6F8FC",
-            color: "#0f1419",
-            border: "none",
-            borderRadius: 8,
-            padding: "4px 12px",
-            fontSize: 13,
-            fontWeight: 500,
+            backgroundColor: "#fff",
+            borderRadius: 12,
+            padding: 16,
             cursor: "pointer",
+            transition: "all 0.2s ease",
+            boxShadow: "0 1px 2px rgba(0,0,0,0.04)",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.boxShadow = "0 4px 12px rgba(0,0,0,0.08)";
+            e.currentTarget.style.transform = "translateY(-2px)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.boxShadow = "0 1px 2px rgba(0,0,0,0.04)";
+            e.currentTarget.style.transform = "translateY(0)";
           }}
         >
-          查看轨迹
-        </button>
-      </div>
-    </div>
-  );
+          {/* Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
+            <Space align="center">
+              <span
+                style={{
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  backgroundColor: cfg.color,
+                  display: "inline-block",
+                }}
+              />
+              <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
+                {emp.user_name}
+              </span>
+              <Text type="tertiary" size="small">
+                {emp.department}
+              </Text>
+            </Space>
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: 20, fontWeight: 700, color: cfg.color }}>
+                {emp.risk_score}
+              </div>
+              <div style={{ fontSize: 12, color: "#999" }}>风险分</div>
+            </div>
+          </div>
+
+          {/* Risk count & tags */}
+          <div style={{ marginTop: 12 }}>
+            <Space wrap>
+              <Badge
+                count={`${emp.anomaly_count} 个异常`}
+                style={{
+                  backgroundColor: cfg.bg,
+                  color: cfg.color,
+                  fontSize: 12,
+                  fontWeight: 500,
+                }}
+              />
+              {emp.risk_reasons.slice(0, 3).map((r, i) => (
+                <Tag
+                  key={i}
+                  size="small"
+                  color={
+                    r.severity === "high" ? "red" : r.severity === "medium" ? "orange" : "green"
+                  }
+                  style={{ marginRight: 0 }}
+                >
+                  {r.type === "low_visit_count"
+                    ? "拜访量不足"
+                    : r.type === "duplicate_location"
+                    ? "重复签到"
+                    : r.type === "mileage_deviation"
+                    ? "里程偏差"
+                    : r.type === "long_stop"
+                    ? "停留过长"
+                    : r.type === "route_detour"
+                    ? "路径绕行"
+                    : r.type === "long_idle"
+                    ? "长时间未移动"
+                    : r.type === "invalid_trip_type"
+                    ? "异常出行方式"
+                    : r.type === "missing_special_reason"
+                    ? "特殊签到缺原因"
+                    : r.type}
+                  {r.count > 1 ? `(${r.count})` : ""}
+                </Tag>
+              ))}
+              {emp.risk_reasons.length > 3 && (
+                <Tag size="small" style={{ marginRight: 0 }}>
+                  +{emp.risk_reasons.length - 3}
+                </Tag>
+              )}
+            </Space>
+          </div>
+
+          {/* Footer stats */}
+          <div
+            style={{
+              marginTop: 12,
+              paddingTop: 12,
+              borderTop: "1px solid #f0f0f0",
+              fontSize: 13,
+              color: "#666",
+              display: "flex",
+              gap: 16,
+            }}
+          >
+            <span>{emp.visit_count} 次拜访</span>
+            <span>{Math.round(emp.total_stop_minutes)} 分钟停留</span>
+            <span>{emp.total_distance_km.toFixed(1)} km</span>
+          </div>
+        </div>
+      </Col>
+    );
+  };
 
   return (
     <div>
@@ -185,7 +199,9 @@ function DecisionPage() {
         <Title heading={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
           销售外勤行为决策系统
         </Title>
-        <Text type="tertiary" style={{ fontSize: 14 }}>帮助管理者 10 秒内发现今日风险员工</Text>
+        <Text type="tertiary" style={{ fontSize: 14 }}>
+          帮助管理者 10 秒内发现今日风险员工
+        </Text>
         <div style={{ marginTop: 8, fontSize: 13, color: "#72808a" }}>
           点击员工卡片可跳转控制台查看详情与轨迹
         </div>
@@ -261,33 +277,54 @@ function DecisionPage() {
         <Row gutter={16} style={{ marginBottom: 16 }}>
           <Col span={8}>
             <div
-              style={{ padding: 20, backgroundColor: "#fff", borderRadius: 16, cursor: "pointer" }}
-              onClick={() => navigate(`/dashboard?risk=high&date=${dayjs(date).format("YYYY-MM-DD")}`)}
+              style={{
+                padding: 20,
+                backgroundColor: levelConfig.high.bg,
+                borderRadius: 16,
+                cursor: "pointer",
+              }}
+              onClick={() => setRiskFilter("high")}
             >
-              <div style={{ fontSize: 14, color: "#72808a", marginBottom: 4 }}>🔴 高风险员工</div>
-              <div style={{ fontSize: 32, fontWeight: 700, color: "#F54C5C" }}>
+              <div style={{ fontSize: 14, color: levelConfig.high.color, marginBottom: 4 }}>
+                高风险员工
+              </div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: levelConfig.high.color }}>
                 {data.high_risk_count}
               </div>
             </div>
           </Col>
           <Col span={8}>
             <div
-              style={{ padding: 20, backgroundColor: "#fff", borderRadius: 16, cursor: "pointer" }}
-              onClick={() => navigate(`/dashboard?risk=medium&date=${dayjs(date).format("YYYY-MM-DD")}`)}
+              style={{
+                padding: 20,
+                backgroundColor: levelConfig.medium.bg,
+                borderRadius: 16,
+                cursor: "pointer",
+              }}
+              onClick={() => setRiskFilter("medium")}
             >
-              <div style={{ fontSize: 14, color: "#72808a", marginBottom: 4 }}>🟡 可疑员工</div>
-              <div style={{ fontSize: 32, fontWeight: 700, color: "#F7A046" }}>
+              <div style={{ fontSize: 14, color: levelConfig.medium.color, marginBottom: 4 }}>
+                可疑员工
+              </div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: levelConfig.medium.color }}>
                 {data.medium_risk_count}
               </div>
             </div>
           </Col>
           <Col span={8}>
             <div
-              style={{ padding: 20, backgroundColor: "#fff", borderRadius: 16, cursor: "pointer" }}
-              onClick={() => navigate(`/dashboard?risk=low&date=${dayjs(date).format("YYYY-MM-DD")}`)}
+              style={{
+                padding: 20,
+                backgroundColor: levelConfig.low.bg,
+                borderRadius: 16,
+                cursor: "pointer",
+              }}
+              onClick={() => setRiskFilter("low")}
             >
-              <div style={{ fontSize: 14, color: "#72808a", marginBottom: 4 }}>🟢 正常员工</div>
-              <div style={{ fontSize: 32, fontWeight: 700, color: "#27C39D" }}>
+              <div style={{ fontSize: 14, color: levelConfig.low.color, marginBottom: 4 }}>
+                正常员工
+              </div>
+              <div style={{ fontSize: 32, fontWeight: 700, color: levelConfig.low.color }}>
                 {data.low_risk_count}
               </div>
             </div>
@@ -303,35 +340,15 @@ function DecisionPage() {
         </div>
       )}
 
-      {/* Employee Lists */}
+      {/* Employee Grid */}
       {!loading && data && (
         <>
-          {groupedByRisk.high.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <Title heading={4} style={{ color: "#F54C5C", marginBottom: 12, fontWeight: 600 }}>
-                🔴 高风险员工
-              </Title>
-              {groupedByRisk.high.map(renderEmployeeCard)}
-            </div>
-          )}
-          {groupedByRisk.medium.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <Title heading={4} style={{ color: "#F7A046", marginBottom: 12, fontWeight: 600 }}>
-                🟡 可疑员工
-              </Title>
-              {groupedByRisk.medium.map(renderEmployeeCard)}
-            </div>
-          )}
-          {groupedByRisk.low.length > 0 && (
-            <div style={{ marginBottom: 24 }}>
-              <Title heading={4} style={{ color: "#27C39D", marginBottom: 12, fontWeight: 600 }}>
-                🟢 正常员工
-              </Title>
-              {groupedByRisk.low.map(renderEmployeeCard)}
-            </div>
-          )}
-          {filteredEmployees.length === 0 && (
+          {filteredEmployees.length === 0 ? (
             <Empty description="暂无数据" />
+          ) : (
+            <Row gutter={[16, 16]}>
+              {filteredEmployees.map(renderEmployeeCard)}
+            </Row>
           )}
         </>
       )}
