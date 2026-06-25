@@ -18,6 +18,7 @@ interface UploadResponse {
   success: boolean;
   rawInserted?: number;
   normalizedInserted?: number;
+  skipped?: number;
   totalDistanceKm?: number;
   preview?: ParsedVisit[];
   isDingTalk?: boolean;
@@ -81,6 +82,7 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
     // 正式导入模式
     const insertedRaw: number[] = [];
     const insertedNormalized: number[] = [];
+    let skippedCount = 0;
     const userPointsMap: Record<string, { lat: number; lng: number }[]> = {};
     const geocodeFailures: GeocodeFailure[] = [];
 
@@ -97,6 +99,21 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
           location: visit.location_name,
           user: visit.user_name,
         });
+      }
+
+      // 幂等去重
+      const isDuplicate = await checkDuplicateVisit(
+        pool,
+        userId,
+        timestamp,
+        visit.location_name,
+        visit.address,
+        visit.approval_id,
+        visit.sequence
+      );
+      if (isDuplicate) {
+        skippedCount++;
+        continue;
       }
 
       const rawResult = await pool.query(
@@ -169,6 +186,7 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
       success: true,
       rawInserted: insertedRaw.length,
       normalizedInserted: insertedNormalized.length,
+      skipped: skippedCount,
       totalDistanceKm: parseFloat(totalDistance.toFixed(2)),
       geocodeFailures: geocodeFailures,
       geocodeFailureSamples: geocodeFailures.slice(0, 5),
@@ -191,6 +209,37 @@ function normalizeTimestamp(value: string | number | Date): Date {
     return XLSX.SSF.parse_date_code(value);
   }
   return new Date(value);
+}
+
+async function checkDuplicateVisit(
+  pool: any,
+  userId: string,
+  timestamp: Date,
+  locationName: string,
+  address: string,
+  approvalId?: string,
+  sequence?: number
+): Promise<boolean> {
+  // 钉钉数据：按 approval_id + sequence + user_id 去重
+  if (approvalId && sequence !== undefined) {
+    const result = await pool.query(
+      `SELECT id FROM visits WHERE approval_id = $1 AND sequence = $2 AND user_id = $3 LIMIT 1`,
+      [approvalId, sequence, userId]
+    );
+    return result.rows.length > 0;
+  }
+
+  // 普通 Excel：按 user_id + timestamp + location_name + address 去重
+  const result = await pool.query(
+    `SELECT id FROM visits
+     WHERE user_id = $1
+       AND timestamp = $2
+       AND location_name = $3
+       AND COALESCE(address, '') = COALESCE($4, '')
+     LIMIT 1`,
+    [userId, timestamp, locationName, address]
+  );
+  return result.rows.length > 0;
 }
 
 export default router;

@@ -16,6 +16,18 @@ interface MapContainerProps {
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "YOUR_AMAP_KEY";
 
+function deduplicateVisits(visits: Visit[]): Visit[] {
+  const seen = new Set<string>();
+  return visits.filter((v) => {
+    const key = v.approval_id
+      ? `${v.user_id}|${v.approval_id}|${v.sequence ?? 0}`
+      : `${v.user_id}|${v.timestamp}|${v.lat}|${v.lng}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
 export default function MapContainer({
   visits,
   stops,
@@ -78,9 +90,12 @@ export default function MapContainer({
     }
     setSelectedVisit(null);
 
-    if (visits.length === 0) return;
+    // 防御性去重：避免同一 approval/sequence 或同一时间地点重复显示
+    const uniqueVisits = deduplicateVisits(visits);
 
-    const path = visits.map((v) => [v.lng, v.lat]);
+    if (uniqueVisits.length === 0) return;
+
+    const path = uniqueVisits.map((v) => [v.lng, v.lat]);
 
     routes.forEach((r) => {
       const pts = r.polyline.split(";").map((pt) => {
@@ -109,7 +124,7 @@ export default function MapContainer({
       polylines.current.push(straightLine);
     }
 
-    visits.forEach((v, idx) => {
+    uniqueVisits.forEach((v, idx) => {
       const marker = new AMap.Marker({
         position: [v.lng, v.lat],
         title: `${dayjs(v.timestamp).format("HH:mm")} ${v.location_name}`,
@@ -183,7 +198,8 @@ export default function MapContainer({
 
   useEffect(() => {
     if (!movingMarker.current || visits.length === 0) return;
-    const path = visits.map((v) => [v.lng, v.lat]);
+    const uniqueVisits = deduplicateVisits(visits);
+    const path = uniqueVisits.map((v) => [v.lng, v.lat]);
     const totalDuration = 10000;
     const segmentDuration = totalDuration / Math.max(1, path.length - 1);
     const currentIndex = Math.min(Math.floor(progress), path.length - 1);
