@@ -1,4 +1,5 @@
 import { persistRiskSummaryCache } from "./riskSummaryService";
+import { isDingTalkConfigured, syncApprovals } from "./dingtalk";
 
 function getMillisecondsUntil(hour: number, minute: number): number {
   const now = new Date();
@@ -13,6 +14,10 @@ function getYesterdayDateStr(): string {
   const d = new Date();
   d.setDate(d.getDate() - 1);
   return d.toISOString().split("T")[0];
+}
+
+function dateToMs(dateStr: string): number {
+  return new Date(dateStr + "T00:00:00+08:00").getTime();
 }
 
 export function startRiskSummaryCacheScheduler(): void {
@@ -36,4 +41,34 @@ export function startRiskSummaryCacheScheduler(): void {
     // 之后每 24 小时运行一次
     setInterval(runCacheJob, 24 * 60 * 60 * 1000);
   }, msUntil2AM);
+}
+
+export function startDingTalkSyncScheduler(): void {
+  if (!isDingTalkConfigured()) {
+    console.log("[Scheduler] DingTalk sync skipped: not configured");
+    return;
+  }
+
+  const runSyncJob = async () => {
+    const yesterday = getYesterdayDateStr();
+    console.log(`[Scheduler] Syncing DingTalk approvals for ${yesterday}`);
+    try {
+      const result = await syncApprovals(dateToMs(yesterday), dateToMs(yesterday));
+      console.log(
+        `[Scheduler] DingTalk sync completed: ${result.totalInstances} instances, ${result.normalizedInserted} visits inserted, ${result.parseFailures} failures`
+      );
+    } catch (err) {
+      console.error(`[Scheduler] Failed to sync DingTalk approvals:`, err);
+    }
+  };
+
+  // 首次运行：等到凌晨 2 点 30 分（在风险摘要缓存之后）
+  const msUntil230AM = getMillisecondsUntil(2, 30);
+  console.log(`[Scheduler] DingTalk sync job will run in ${Math.round(msUntil230AM / 1000 / 60)} minutes`);
+
+  setTimeout(() => {
+    runSyncJob();
+    // 之后每 24 小时运行一次
+    setInterval(runSyncJob, 24 * 60 * 60 * 1000);
+  }, msUntil230AM);
 }

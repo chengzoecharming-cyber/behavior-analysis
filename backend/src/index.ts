@@ -8,7 +8,8 @@ import routesRouter from "./routes/routes";
 import uploadRouter from "./routes/upload";
 import analyticsRouter from "./routes/analytics";
 import riskSummaryRouter from "./routes/riskSummary";
-import { startRiskSummaryCacheScheduler } from "./services/scheduler";
+import dingtalkRouter from "./routes/dingtalk";
+import { startRiskSummaryCacheScheduler, startDingTalkSyncScheduler } from "./services/scheduler";
 
 dotenv.config();
 
@@ -24,6 +25,7 @@ app.use("/routes", routesRouter);
 app.use("/upload-excel", uploadRouter);
 app.use("/analytics", analyticsRouter);
 app.use("/analytics", riskSummaryRouter);
+app.use("/dingtalk", dingtalkRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -32,6 +34,7 @@ app.get("/health", (_req, res) => {
 async function main() {
   await initDB();
   startRiskSummaryCacheScheduler();
+  startDingTalkSyncScheduler();
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

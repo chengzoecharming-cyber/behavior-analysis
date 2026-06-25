@@ -70,14 +70,26 @@
 - `appKey` / `appSecret`
 - 审批模板 ID（`process_code`）
 
-#### 任务
+#### 已搭建框架
 
-- [ ] 钉钉 AccessToken 获取与缓存
-- [ ] 拉取审批实例列表
-- [ ] 解析审批实例详情，写入 `raw_visits`
-- [ ] 增量同步（按更新时间）
-- [ ] 定时任务（每天凌晨同步前一天）
-- [ ] 从钉钉同步用户/部门信息到 `users` 表
+- ✅ AccessToken 获取与内存缓存（`backend/src/services/dingtalk.ts`）
+- ✅ 拉取审批实例列表（`topapi/processinstance/listids`）
+- ✅ 拉取审批实例详情（`topapi/processinstance/get`）
+- ✅ 通用表单解析 + 写入 `raw_visits` / `visits`
+- ✅ 手动同步接口 `POST /dingtalk/sync`
+- ✅ 连接测试接口 `GET /dingtalk/test`
+- ✅ 状态查询接口 `GET /dingtalk/status`
+- ✅ 每日凌晨 2:30 定时同步任务
+- ✅ 前端「数据同步」页面（/sync）
+- ✅ 环境变量模板（`backend/.env.example`）
+
+#### 待完成
+
+- [ ] 用户提供 `DINGTALK_APP_KEY` / `DINGTALK_APP_SECRET` / `DINGTALK_PROCESS_CODE`
+- [ ] 调用 `/dingtalk/test` 验证权限与数据格式
+- [ ] 根据实际审批表单字段名调整 `parseApprovalForm` 映射
+- [ ] 实际同步测试并确认数据写入
+- [ ] 从钉钉同步用户/部门信息到 `users` 表（可选）
 
 ---
 

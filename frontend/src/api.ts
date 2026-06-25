@@ -198,3 +198,44 @@ export async function uploadExcel(file: File): Promise<{
   });
   return res.data;
 }
+
+export interface DingTalkStatus {
+  configured: boolean;
+  appKey: string | null;
+  processCode: string | null;
+  tokenValid: boolean;
+  tokenError: string | null;
+}
+
+export interface DingTalkSyncResult {
+  success: boolean;
+  startDate: string;
+  endDate: string;
+  totalInstances: number;
+  parsedVisits: number;
+  parseFailures: number;
+  rawInserted: number;
+  normalizedInserted: number;
+  skipped: number;
+  totalDistanceKm: number;
+  geocodeFailures: { row: number; location: string; user: string }[];
+  error?: string;
+}
+
+export async function fetchDingTalkStatus(): Promise<DingTalkStatus> {
+  const res = await api.get("/dingtalk/status");
+  return res.data;
+}
+
+export async function testDingTalkConnection(): Promise<any> {
+  const res = await api.get("/dingtalk/test");
+  return res.data;
+}
+
+export async function syncDingTalk(
+  startDate: string,
+  endDate: string
+): Promise<DingTalkSyncResult> {
+  const res = await api.post("/dingtalk/sync", { startDate, endDate });
+  return res.data;
+}
