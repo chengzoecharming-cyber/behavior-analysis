@@ -367,7 +367,8 @@ export async function getRiskSummary(dateStr: string): Promise<RiskSummaryResult
 function eachDate(startStr: string, endStr: string): string[] {
   const dates: string[] = [];
   const parse = (s: string) => {
-    const [y, m, d] = s.split("-").map(Number);
+    const datePart = s.slice(0, 10); // 兼容 "YYYY-MM-DDTHH:mm:ss"
+    const [y, m, d] = datePart.split("-").map(Number);
     return new Date(y, m - 1, d);
   };
   const start = parse(startStr);

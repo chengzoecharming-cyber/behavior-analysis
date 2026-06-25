@@ -19,7 +19,7 @@ function Dashboard() {
   const [users, setUsers] = useState<User[]>([]);
   const [userId, setUserId] = useState<string>();
   const [availableDates, setAvailableDates] = useState<string[]>([]);
-  const [dateRange, setDateRange] = useState<[Dayjs, Dayjs] | null>(null);
+  const [date, setDate] = useState<Dayjs | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
   const [routes, setRoutes] = useState<Route[]>([]);
@@ -45,14 +45,9 @@ function Dashboard() {
   useEffect(() => {
     const userFromUrl = searchParams.get("user");
     const dateFromUrl = searchParams.get("date");
-    const startFromUrl = searchParams.get("start");
-    const endFromUrl = searchParams.get("end");
     if (userFromUrl) setUserId(userFromUrl);
-    if (startFromUrl && endFromUrl) {
-      setDateRange([dayjs(startFromUrl), dayjs(endFromUrl)]);
-    } else if (dateFromUrl) {
-      const d = dayjs(dateFromUrl);
-      setDateRange([d, d]);
+    if (dateFromUrl) {
+      setDate(dayjs(dateFromUrl));
     }
   }, [searchParams]);
 
@@ -63,16 +58,17 @@ function Dashboard() {
     }
     fetchAvailableDates(userId).then((dates) => {
       setAvailableDates(dates);
-      // 如果当前没有选日期范围，自动填充昨天单日（不自动加载）
-      setDateRange((prev) => {
+      // 如果当前没有选日期，自动填充第一个可用日期（不自动加载）
+      setDate((prev) => {
         if (prev) return prev;
-        const yesterday = dayjs().subtract(1, "day");
-        const params = new URLSearchParams(searchParams);
-        params.set("start", yesterday.format("YYYY-MM-DD"));
-        params.set("end", yesterday.format("YYYY-MM-DD"));
-        params.delete("date");
-        setSearchParams(params);
-        return [yesterday, yesterday];
+        if (dates.length > 0) {
+          const d = dayjs(dates[0]);
+          const params = new URLSearchParams(searchParams);
+          params.set("date", d.format("YYYY-MM-DD"));
+          setSearchParams(params);
+          return d;
+        }
+        return null;
       });
     });
   }, [userId]);
@@ -82,34 +78,29 @@ function Dashboard() {
     if (initialLoaded) return;
     const userFromUrl = searchParams.get("user");
     const dateFromUrl = searchParams.get("date");
-    const startFromUrl = searchParams.get("start");
-    const endFromUrl = searchParams.get("end");
-    if (userFromUrl && (dateFromUrl || (startFromUrl && endFromUrl))) {
+    if (userFromUrl && dateFromUrl) {
       setInitialLoaded(true);
       setUserId(userFromUrl);
-      const start = dayjs(startFromUrl || dateFromUrl);
-      const end = dayjs(endFromUrl || dateFromUrl);
-      setDateRange([start, end]);
+      setDate(dayjs(dateFromUrl));
       setTimeout(() => {
-        loadDataFor(userFromUrl, [start, end]);
+        loadDataFor(userFromUrl, dayjs(dateFromUrl));
       }, 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
-  const loadDataFor = async (targetUserId: string, targetRange: [Dayjs, Dayjs]) => {
+  const loadDataFor = async (targetUserId: string, targetDate: Dayjs) => {
     setLoading(true);
     try {
-      const start = targetRange[0].format("YYYY-MM-DD");
-      const end = targetRange[1].format("YYYY-MM-DD");
-      const startTime = `${start}T00:00:00`;
-      const endTime = `${end}T23:59:59`;
+      const dateStr = targetDate.format("YYYY-MM-DD");
+      const start = `${dateStr}T00:00:00`;
+      const end = `${dateStr}T23:59:59`;
       const [v, s, r, m, a] = await Promise.all([
-        fetchVisits(targetUserId, startTime, endTime),
-        fetchStops(targetUserId, startTime, endTime),
-        fetchRoutes(targetUserId, startTime, endTime),
-        fetchMileage(targetUserId, startTime, endTime),
-        fetchAnomalies(targetUserId, startTime, endTime),
+        fetchVisits(targetUserId, start, end),
+        fetchStops(targetUserId, start, end),
+        fetchRoutes(targetUserId, start, end),
+        fetchMileage(targetUserId, start, end),
+        fetchAnomalies(targetUserId, start, end),
       ]);
       setVisits(v);
       setStops(s);
@@ -124,8 +115,8 @@ function Dashboard() {
   };
 
   const loadData = async () => {
-    if (!userId || !dateRange) return;
-    await loadDataFor(userId, dateRange);
+    if (!userId || !date) return;
+    await loadDataFor(userId, date);
   };
 
   const totalDistance = useMemo(() => {
@@ -140,6 +131,12 @@ function Dashboard() {
     }
     return total.toFixed(2);
   }, [visits]);
+
+  const disabledDate = (current: Dayjs) => {
+    if (availableDates.length === 0) return true;
+    const dateStr = current.format("YYYY-MM-DD");
+    return !availableDates.includes(dateStr);
+  };
 
   const statStyle: React.CSSProperties = {
     padding: 20,
@@ -179,13 +176,11 @@ function Dashboard() {
                 setRoutes([]);
                 setAnomalies([]);
                 setMileage(null);
-                setDateRange(null);
+                setDate(null);
                 const params = new URLSearchParams(searchParams);
                 if (value) params.set("user", value);
                 else params.delete("user");
                 params.delete("date");
-                params.delete("start");
-                params.delete("end");
                 setSearchParams(params);
               }}
               options={users.map((u) => ({
@@ -195,49 +190,47 @@ function Dashboard() {
             />
           </Col>
           <Col>
-            <DatePicker.RangePicker
-              placeholder={["开始日期", "结束日期"]}
-              value={dateRange}
-              onChange={(range) => {
-                if (range && range[0] && range[1]) {
-                  const newRange: [Dayjs, Dayjs] = [range[0], range[1]];
-                  setDateRange(newRange);
+            <DatePicker
+              placeholder="选择日期"
+              value={date}
+              onChange={(d) => {
+                if (d) {
+                  setDate(d);
                   setVisits([]);
                   setStops([]);
                   setRoutes([]);
                   setAnomalies([]);
                   setMileage(null);
                   const params = new URLSearchParams(searchParams);
-                  params.set("start", newRange[0].format("YYYY-MM-DD"));
-                  params.set("end", newRange[1].format("YYYY-MM-DD"));
-                  params.delete("date");
+                  params.set("date", d.format("YYYY-MM-DD"));
                   setSearchParams(params);
                 }
               }}
               disabled={!userId || availableDates.length === 0}
+              disabledDate={disabledDate}
             />
           </Col>
           <Col>
             <button
               onClick={loadData}
-              disabled={loading || !dateRange}
+              disabled={loading || !date}
               style={{
-                backgroundColor: loading || !dateRange ? "#F3F4F6" : "#EBECED",
+                backgroundColor: loading || !date ? "#F3F4F6" : "#EBECED",
                 color: "#0f1419",
                 border: "none",
                 borderRadius: 8,
                 padding: "6px 16px",
                 fontSize: 14,
                 fontWeight: 500,
-                cursor: loading || !dateRange ? "not-allowed" : "pointer",
-                opacity: loading || !dateRange ? 0.6 : 1,
+                cursor: loading || !date ? "not-allowed" : "pointer",
+                opacity: loading || !date ? 0.6 : 1,
                 transition: "background-color 0.2s",
               }}
               onMouseEnter={(e) => {
-                if (!loading && dateRange) e.currentTarget.style.backgroundColor = "#E6E7E8";
+                if (!loading && date) e.currentTarget.style.backgroundColor = "#E6E7E8";
               }}
               onMouseLeave={(e) => {
-                e.currentTarget.style.backgroundColor = loading || !dateRange ? "#F3F4F6" : "#EBECED";
+                e.currentTarget.style.backgroundColor = loading || !date ? "#F3F4F6" : "#EBECED";
               }}
             >
               {loading ? "查询中..." : "查询"}

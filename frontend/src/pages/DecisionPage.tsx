@@ -233,11 +233,12 @@ function DecisionPage() {
       <div
         key={emp.user_id}
         onClick={() => {
-          const { start, end, isRange } = currentRange;
-          const url = isRange
-            ? `/dashboard?user=${emp.user_id}&start=${start}&end=${end}`
-            : `/dashboard?user=${emp.user_id}&date=${start}`;
-          window.open(url, "_blank");
+          // 下钻到控制台统一使用单日视图，范围为选中的最后一天
+          const drillDate = currentRange.end;
+          window.open(
+            `/dashboard?user=${emp.user_id}&date=${drillDate}`,
+            "_blank"
+          );
         }}
         style={{
           backgroundColor: "#fff",
@@ -398,33 +399,6 @@ function DecisionPage() {
               </Button>
             );
           })}
-          <Button
-            icon={<IconSearch />}
-            onClick={loadData}
-            loading={loading}
-            theme="light"
-            type="primary"
-          >
-            查询
-          </Button>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-4" style={{ marginBottom: 12 }}>
-          {(mode === "today" || mode === "yesterday") && (
-            <DatePicker
-              value={date}
-              onChange={(d) => {
-                if (d) {
-                  const newDate = d as Date;
-                  setDate(newDate);
-                  const params = new URLSearchParams(searchParams);
-                  params.set("date", dayjs(newDate).format("YYYY-MM-DD"));
-                  setSearchParams(params);
-                }
-              }}
-              style={{ width: 160 }}
-            />
-          )}
           {mode === "custom" && (
             <DatePicker
               type="dateRange"
@@ -443,6 +417,15 @@ function DecisionPage() {
               style={{ width: 280 }}
             />
           )}
+          <Button
+            icon={<IconSearch />}
+            onClick={loadData}
+            loading={loading}
+            theme="light"
+            type="primary"
+          >
+            查询
+          </Button>
         </div>
 
         {(() => {
