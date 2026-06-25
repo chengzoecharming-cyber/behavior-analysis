@@ -24,9 +24,9 @@ const levelConfig = {
 };
 
 const tagStyleMap: Record<string, React.CSSProperties> = {
-  high: { backgroundColor: "#FFF7F6", color: "#CF1322" },
-  medium: { backgroundColor: "#FFFBEB", color: "#D46B08" },
-  low: { backgroundColor: "#F6FFED", color: "#389E0D" },
+  high: { backgroundColor: "#FFF7F6", color: "#595959" },
+  medium: { backgroundColor: "#FFFBEB", color: "#595959" },
+  low: { backgroundColor: "#F6FFED", color: "#595959" },
 };
 
 const PAGE_SIZE = 12;
