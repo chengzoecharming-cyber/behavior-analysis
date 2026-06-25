@@ -39,12 +39,16 @@ function Dashboard() {
     };
   }, []);
 
-  // 从 URL 参数初始化筛选条件
+  // 从 URL 参数初始化筛选条件，并标记是否需要自动加载
+  const [initialLoaded, setInitialLoaded] = useState(false);
+
   useEffect(() => {
     const userFromUrl = searchParams.get("user");
     const dateFromUrl = searchParams.get("date");
     if (userFromUrl) setUserId(userFromUrl);
-    if (dateFromUrl) setDate(dayjs(dateFromUrl));
+    if (dateFromUrl) {
+      setDate(dayjs(dateFromUrl));
+    }
   }, [searchParams]);
 
   useEffect(() => {
@@ -54,33 +58,39 @@ function Dashboard() {
     }
     fetchAvailableDates(userId).then((dates) => {
       setAvailableDates(dates);
-      if (!date && dates.length > 0) {
-        setDate(dayjs(dates[0]));
-      }
+      // 不要自动设置日期，等待用户选择或点击查询
     });
   }, [userId]);
 
-  // URL 参数或筛选条件变化时自动加载
+  // 首次从 URL 进入时自动加载一次（例如从决策系统跳转）
   useEffect(() => {
-    if (userId && date) {
-      loadData();
+    if (initialLoaded) return;
+    const userFromUrl = searchParams.get("user");
+    const dateFromUrl = searchParams.get("date");
+    if (userFromUrl && dateFromUrl) {
+      setInitialLoaded(true);
+      setUserId(userFromUrl);
+      setDate(dayjs(dateFromUrl));
+      // 延迟执行 loadData，确保 state 已更新
+      setTimeout(() => {
+        loadDataFor(userFromUrl, dayjs(dateFromUrl));
+      }, 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, date]);
+  }, [searchParams]);
 
-  const loadData = async () => {
-    if (!userId || !date) return;
+  const loadDataFor = async (targetUserId: string, targetDate: Dayjs) => {
     setLoading(true);
     try {
-      const dateStr = date.format("YYYY-MM-DD");
+      const dateStr = targetDate.format("YYYY-MM-DD");
       const start = `${dateStr}T00:00:00`;
       const end = `${dateStr}T23:59:59`;
       const [v, s, r, m, a] = await Promise.all([
-        fetchVisits(userId, start, end),
-        fetchStops(userId, dateStr),
-        fetchRoutes(userId, dateStr),
-        fetchMileage(userId, dateStr),
-        fetchAnomalies(userId, dateStr),
+        fetchVisits(targetUserId, start, end),
+        fetchStops(targetUserId, dateStr),
+        fetchRoutes(targetUserId, dateStr),
+        fetchMileage(targetUserId, dateStr),
+        fetchAnomalies(targetUserId, dateStr),
       ]);
       setVisits(v);
       setStops(s);
@@ -92,6 +102,11 @@ function Dashboard() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const loadData = async () => {
+    if (!userId || !date) return;
+    await loadDataFor(userId, date);
   };
 
   const totalDistance = useMemo(() => {
@@ -152,9 +167,16 @@ function Dashboard() {
               value={userId}
               onChange={(value) => {
                 setUserId(value);
+                setVisits([]);
+                setStops([]);
+                setRoutes([]);
+                setAnomalies([]);
+                setMileage(null);
+                setDate(null);
                 const params = new URLSearchParams(searchParams);
                 if (value) params.set("user", value);
                 else params.delete("user");
+                params.delete("date");
                 setSearchParams(params);
               }}
               options={users.map((u) => ({
@@ -170,6 +192,11 @@ function Dashboard() {
               onChange={(d) => {
                 if (d) {
                   setDate(d);
+                  setVisits([]);
+                  setStops([]);
+                  setRoutes([]);
+                  setAnomalies([]);
+                  setMileage(null);
                   const params = new URLSearchParams(searchParams);
                   params.set("date", d.format("YYYY-MM-DD"));
                   setSearchParams(params);

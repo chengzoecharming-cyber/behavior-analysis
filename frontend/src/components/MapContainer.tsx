@@ -93,9 +93,14 @@ export default function MapContainer({
     // 防御性去重：避免同一 approval/sequence 或同一时间地点重复显示
     const uniqueVisits = deduplicateVisits(visits);
 
-    if (uniqueVisits.length === 0) return;
+    // 过滤掉无效坐标
+    const validVisits = uniqueVisits.filter(
+      (v) => v.lat != null && v.lng != null && (v.lat !== 0 || v.lng !== 0)
+    );
 
-    const path = uniqueVisits.map((v) => [v.lng, v.lat]);
+    if (validVisits.length === 0) return;
+
+    const path = validVisits.map((v) => [v.lng, v.lat]);
 
     routes.forEach((r) => {
       const pts = r.polyline.split(";").map((pt) => {
@@ -124,7 +129,7 @@ export default function MapContainer({
       polylines.current.push(straightLine);
     }
 
-    uniqueVisits.forEach((v, idx) => {
+    validVisits.forEach((v, idx) => {
       const marker = new AMap.Marker({
         position: [v.lng, v.lat],
         title: `${dayjs(v.timestamp).format("HH:mm")} ${v.location_name}`,
@@ -199,7 +204,11 @@ export default function MapContainer({
   useEffect(() => {
     if (!movingMarker.current || visits.length === 0) return;
     const uniqueVisits = deduplicateVisits(visits);
-    const path = uniqueVisits.map((v) => [v.lng, v.lat]);
+    const validVisits = uniqueVisits.filter(
+      (v) => v.lat != null && v.lng != null && (v.lat !== 0 || v.lng !== 0)
+    );
+    if (validVisits.length === 0) return;
+    const path = validVisits.map((v) => [v.lng, v.lat]);
     const totalDuration = 10000;
     const segmentDuration = totalDuration / Math.max(1, path.length - 1);
     const currentIndex = Math.min(Math.floor(progress), path.length - 1);
