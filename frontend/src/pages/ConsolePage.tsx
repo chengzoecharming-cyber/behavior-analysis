@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { DatePicker, Select, Row, Col, List, Tag } from "antd";
+import { PlayCircleOutlined, PauseCircleOutlined, RedoOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
 import {
   fetchUsers,
@@ -27,7 +28,7 @@ function ConsolePage() {
   const [mileage, setMileage] = useState<MileageStats | null>(null);
   const [loading, setLoading] = useState(false);
   const [mapPlaying, setMapPlaying] = useState(false);
-  const [mapProgress, setMapProgress] = useState(0);
+  const [mapProgress, setMapProgress] = useState(1);
 
   useEffect(() => {
     let cancelled = false;
@@ -47,7 +48,7 @@ function ConsolePage() {
     const dateFromUrl = searchParams.get("date");
     if (userFromUrl) setUserId(userFromUrl);
     if (dateFromUrl) {
-      setDate(dayjs(dateFromUrl));
+      setDate(dayjs.tz(dateFromUrl));
     }
   }, [searchParams]);
 
@@ -62,7 +63,7 @@ function ConsolePage() {
       setDate((prev) => {
         if (prev) return prev;
         if (dates.length > 0) {
-          const d = dayjs(dates[0]);
+          const d = dayjs.tz(dates[0]);
           const params = new URLSearchParams(searchParams);
           params.set("date", d.format("YYYY-MM-DD"));
           setSearchParams(params);
@@ -81,9 +82,9 @@ function ConsolePage() {
     if (userFromUrl && dateFromUrl) {
       setInitialLoaded(true);
       setUserId(userFromUrl);
-      setDate(dayjs(dateFromUrl));
+      setDate(dayjs.tz(dateFromUrl));
       setTimeout(() => {
-        loadDataFor(userFromUrl, dayjs(dateFromUrl));
+        loadDataFor(userFromUrl, dayjs.tz(dateFromUrl));
       }, 0);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -107,7 +108,7 @@ function ConsolePage() {
       setRoutes(r);
       setMileage(m);
       setAnomalies(a);
-      setMapProgress(0);
+      setMapProgress(1);
       setMapPlaying(false);
     } finally {
       setLoading(false);
@@ -137,6 +138,34 @@ function ConsolePage() {
     const dateStr = current.format("YYYY-MM-DD");
     return !availableDates.includes(dateStr);
   };
+
+  const progressRef = useRef(mapProgress);
+  progressRef.current = mapProgress;
+
+  useEffect(() => {
+    if (!mapPlaying) return;
+
+    let startTime: number | null = null;
+    const startProgress = progressRef.current >= 1 ? 0 : progressRef.current;
+    let animationFrameId: number;
+
+    const animate = (timestamp: number) => {
+      if (startTime === null) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const newProgress = Math.min(1, startProgress + elapsed / 10000);
+
+      setMapProgress(newProgress);
+
+      if (newProgress < 1) {
+        animationFrameId = requestAnimationFrame(animate);
+      } else {
+        setMapPlaying(false);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [mapPlaying]);
 
   const statStyle: React.CSSProperties = {
     padding: 20,
@@ -344,16 +373,67 @@ function ConsolePage() {
             <div style={{ fontSize: 15, fontWeight: 600, color: "#0f1419", marginBottom: 8 }}>
               轨迹地图
             </div>
-            <div style={{ flex: 1, minHeight: 0 }}>
+            <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
               <MapContainer
                 visits={visits}
                 stops={stops}
                 routes={routes}
                 anomalies={anomalies}
-                playing={mapPlaying}
                 progress={mapProgress}
-                onProgressChange={setMapProgress}
               />
+              {visits.length > 0 && routes.length > 0 && (
+                <div
+                  style={{
+                    position: "absolute",
+                    top: 12,
+                    left: 12,
+                    zIndex: 10,
+                    display: "flex",
+                    gap: 8,
+                    alignItems: "center",
+                    backgroundColor: "rgba(255, 255, 255, 0.92)",
+                    padding: "6px 12px",
+                    borderRadius: 20,
+                    boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
+                  }}
+                >
+                  <button
+                    onClick={() => setMapPlaying((p) => !p)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: 18,
+                      color: "#0f1419",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: 0,
+                    }}
+                    title={mapPlaying ? "暂停" : "播放"}
+                  >
+                    {mapPlaying ? <PauseCircleOutlined /> : <PlayCircleOutlined />}
+                  </button>
+                  <button
+                    onClick={() => {
+                      setMapProgress(0);
+                      setMapPlaying(true);
+                    }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      fontSize: 16,
+                      color: "#0f1419",
+                      display: "flex",
+                      alignItems: "center",
+                      padding: 0,
+                    }}
+                    title="重放"
+                  >
+                    <RedoOutlined />
+                  </button>
+                </div>
+              )}
             </div>
           </div>
         </Col>

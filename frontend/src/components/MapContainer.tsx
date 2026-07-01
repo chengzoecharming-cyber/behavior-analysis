@@ -9,9 +9,7 @@ interface MapContainerProps {
   stops: Stop[];
   routes: Route[];
   anomalies?: Anomaly[];
-  playing: boolean;
   progress: number;
-  onProgressChange: (value: number) => void;
 }
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "YOUR_AMAP_KEY";
@@ -28,20 +26,37 @@ function deduplicateVisits(visits: Visit[]): Visit[] {
   });
 }
 
+function getPassedPath(fullPath: [number, number][], progress: number): [number, number][] {
+  if (fullPath.length === 0) return [];
+  if (progress <= 0) return [fullPath[0]];
+  if (progress >= 1) return fullPath;
+
+  const targetIndex = progress * (fullPath.length - 1);
+  const currentIndex = Math.floor(targetIndex);
+  const ratio = targetIndex - currentIndex;
+  const start = fullPath[currentIndex];
+  const end = fullPath[Math.min(currentIndex + 1, fullPath.length - 1)];
+  const currentPos: [number, number] = [
+    start[0] + (end[0] - start[0]) * ratio,
+    start[1] + (end[1] - start[1]) * ratio,
+  ];
+  return [...fullPath.slice(0, currentIndex + 1), currentPos];
+}
+
 export default function MapContainer({
   visits,
   stops,
   routes,
   anomalies = [],
-  playing,
   progress,
-  onProgressChange,
 }: MapContainerProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
   const markers = useRef<any[]>([]);
   const polylines = useRef<any[]>([]);
-  const movingMarker = useRef<any>(null);
+  const fullPathRef = useRef<[number, number][]>([]);
+  const grayPolylineRef = useRef<any>(null);
+  const bluePolylineRef = useRef<any>(null);
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
@@ -83,10 +98,14 @@ export default function MapContainer({
     polylines.current.forEach((p) => p.setMap(null));
     markers.current = [];
     polylines.current = [];
-    if (movingMarker.current) {
-      movingMarker.current.stopMove();
-      movingMarker.current.setMap(null);
-      movingMarker.current = null;
+    fullPathRef.current = [];
+    if (grayPolylineRef.current) {
+      grayPolylineRef.current.setMap(null);
+      grayPolylineRef.current = null;
+    }
+    if (bluePolylineRef.current) {
+      bluePolylineRef.current.setMap(null);
+      bluePolylineRef.current = null;
     }
     setSelectedVisit(null);
 
@@ -100,33 +119,66 @@ export default function MapContainer({
 
     if (validVisits.length === 0) return;
 
-    const path = validVisits.map((v) => [v.lng, v.lat]);
+    const visitPath = validVisits.map((v) => [v.lng, v.lat] as [number, number]);
 
-    routes.forEach((r) => {
-      const pts = r.polyline.split(";").map((pt) => {
-        const [lng, lat] = pt.split(",").map(Number);
-        return [lng, lat];
+    // 拼接真实道路路径
+    let fullPath: [number, number][] = [];
+    if (routes.length > 0) {
+      routes.forEach((r, idx) => {
+        const pts = r.polyline.split(";").map((pt) => {
+          const [lng, lat] = pt.split(",").map(Number);
+          return [lng, lat] as [number, number];
+        });
+        if (idx === 0) {
+          fullPath = pts;
+        } else {
+          const last = fullPath[fullPath.length - 1];
+          const first = pts[0];
+          if (last && first && last[0] === first[0] && last[1] === first[1]) {
+            fullPath.push(...pts.slice(1));
+          } else {
+            fullPath.push(...pts);
+          }
+        }
       });
-      const polyline = new AMap.Polyline({
-        path: pts,
-        strokeColor: "#1890ff",
-        strokeWeight: 5,
-        strokeOpacity: 0.8,
-        showDir: true,
-      });
-      polyline.setMap(mapInstance.current);
-      polylines.current.push(polyline);
-    });
+    } else {
+      fullPath = visitPath;
+    }
+    fullPathRef.current = fullPath;
 
     if (routes.length === 0) {
-      const straightLine = new AMap.Polyline({
-        path,
-        strokeColor: "#999",
-        strokeWeight: 3,
-        strokeDasharray: [5, 5],
+      // 无真实道路数据：只显示灰色静态路线，无动画
+      const staticLine = new AMap.Polyline({
+        path: fullPath,
+        strokeColor: "#d9d9d9",
+        strokeWeight: 5,
+        strokeOpacity: 0.9,
       });
-      straightLine.setMap(mapInstance.current);
-      polylines.current.push(straightLine);
+      staticLine.setMap(mapInstance.current);
+      polylines.current.push(staticLine);
+      grayPolylineRef.current = staticLine;
+    } else {
+      // 有真实道路数据：灰色底线 + 蓝色已走过路线
+      const grayLine = new AMap.Polyline({
+        path: fullPath,
+        strokeColor: "#d9d9d9",
+        strokeWeight: 5,
+        strokeOpacity: 0.9,
+      });
+      grayLine.setMap(mapInstance.current);
+      grayPolylineRef.current = grayLine;
+      polylines.current.push(grayLine);
+
+      const blueLine = new AMap.Polyline({
+        path: fullPath,
+        strokeColor: "#1890ff",
+        strokeWeight: 5,
+        strokeOpacity: 0.9,
+        showDir: true,
+      });
+      blueLine.setMap(mapInstance.current);
+      bluePolylineRef.current = blueLine;
+      polylines.current.push(blueLine);
     }
 
     validVisits.forEach((v, idx) => {
@@ -191,53 +243,13 @@ export default function MapContainer({
     });
 
     mapInstance.current.setFitView();
-
-    movingMarker.current = new AMap.Marker({
-      position: path[0],
-      icon: "https://webapi.amap.com/images/car.png",
-      offset: new AMap.Pixel(-13, -13),
-      autoRotation: true,
-    });
-    movingMarker.current.setMap(mapInstance.current);
   }, [visits, stops, routes, anomalies, loaded]);
 
   useEffect(() => {
-    if (!movingMarker.current || visits.length === 0) return;
-    const uniqueVisits = deduplicateVisits(visits);
-    const validVisits = uniqueVisits.filter(
-      (v) => v.lat != null && v.lng != null && (v.lat !== 0 || v.lng !== 0)
-    );
-    if (validVisits.length === 0) return;
-    const path = validVisits.map((v) => [v.lng, v.lat]);
-    const totalDuration = 10000;
-    const segmentDuration = totalDuration / Math.max(1, path.length - 1);
-    const currentIndex = Math.min(Math.floor(progress), path.length - 1);
-    const nextIndex = Math.min(currentIndex + 1, path.length - 1);
-    const ratio = progress - currentIndex;
-
-    const start = path[currentIndex];
-    const end = path[nextIndex];
-    const lng = start[0] + (end[0] - start[0]) * ratio;
-    const lat = start[1] + (end[1] - start[1]) * ratio;
-    movingMarker.current.setPosition([lng, lat]);
-
-    if (playing) {
-      movingMarker.current.moveAlong(path, {
-        duration: segmentDuration,
-        autoRotation: true,
-      });
-      const timeout = setTimeout(() => {
-        if (progress < path.length - 1) {
-          onProgressChange(progress + 1);
-        } else {
-          onProgressChange(0);
-        }
-      }, segmentDuration);
-      return () => clearTimeout(timeout);
-    } else {
-      movingMarker.current.pauseMove();
-    }
-  }, [playing, progress, visits, onProgressChange]);
+    if (!bluePolylineRef.current || fullPathRef.current.length === 0) return;
+    const passedPath = getPassedPath(fullPathRef.current, progress);
+    bluePolylineRef.current.setPath(passedPath);
+  }, [progress]);
 
   return (
     <div

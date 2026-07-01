@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { DatePicker, Select, Slider, Row, Col } from "antd";
 import { PlayCircleOutlined, PauseCircleOutlined } from "@ant-design/icons";
 import dayjs, { Dayjs } from "dayjs";
@@ -26,6 +26,36 @@ function MapPage() {
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
 
+  const progressRef = useRef(progress);
+  progressRef.current = progress;
+
+  useEffect(() => {
+    if (!playing) return;
+
+    let startTime: number | null = null;
+    const maxProgress = Math.max(0, visits.length - 1);
+    const startProgress = progressRef.current >= maxProgress ? 0 : progressRef.current;
+    let animationFrameId: number;
+
+    const animate = (timestamp: number) => {
+      if (startTime === null) startTime = timestamp;
+      const elapsed = timestamp - startTime;
+      const duration = 10000;
+      const newProgress = Math.min(maxProgress, startProgress + (elapsed / duration) * maxProgress);
+
+      setProgress(newProgress);
+
+      if (newProgress < maxProgress) {
+        animationFrameId = requestAnimationFrame(animate);
+      } else {
+        setPlaying(false);
+      }
+    };
+
+    animationFrameId = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(animationFrameId);
+  }, [playing, visits.length]);
+
   useEffect(() => {
     fetchUsers().then(setUsers);
   }, []);
@@ -39,7 +69,7 @@ function MapPage() {
     fetchAvailableDates(userId).then((dates) => {
       setAvailableDates(dates);
       if (dates.length > 0) {
-        setDate(dayjs(dates[0]));
+        setDate(dayjs.tz(dates[0]));
       } else {
         setDate(null);
       }
@@ -151,9 +181,7 @@ function MapPage() {
             stops={stops}
             routes={routes}
             anomalies={anomalies}
-            playing={playing}
-            progress={progress}
-            onProgressChange={setProgress}
+            progress={progress / Math.max(1, visits.length - 1)}
           />
         </div>
 
@@ -191,7 +219,7 @@ function MapPage() {
             </button>
             <span style={{ fontSize: 14, color: "#333" }}>
               {visits[Math.min(progress, visits.length - 1)]
-                ? dayjs(
+                ? dayjs.tz(
                     visits[Math.min(progress, visits.length - 1)].timestamp
                   ).format("HH:mm")
                 : "--:--"}
@@ -209,7 +237,7 @@ function MapPage() {
             disabled={visits.length === 0}
             tooltip={{ formatter: (v) =>
               visits[Math.min(Math.floor(v as number), visits.length - 1)]
-                ? dayjs(
+                ? dayjs.tz(
                     visits[Math.min(Math.floor(v as number), visits.length - 1)]
                       .timestamp
                   ).format("HH:mm")
