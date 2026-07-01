@@ -5,3 +5,4 @@ dist
 .DS_Store
 uploads
 *.log
+backend/clean-report-*.json

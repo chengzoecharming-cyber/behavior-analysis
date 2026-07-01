@@ -13,7 +13,7 @@ import {
   syncContacts,
   getUserDetail,
 } from "../services/dingtalk";
-import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate } from "../utils/timezone";
+import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getYesterdayBeijing } from "../utils/timezone";
 
 const router = Router();
 
@@ -169,10 +169,9 @@ router.post("/sync", async (req: Request, res: Response) => {
   }
 
   const { startDate, endDate } = req.body || {};
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterday = getYesterdayBeijing();
 
-  const startStr = startDate || formatBeijingDate(yesterday);
+  const startStr = startDate || yesterday;
   const endStr = endDate || startStr;
 
   try {

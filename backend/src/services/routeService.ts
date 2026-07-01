@@ -27,8 +27,11 @@ export async function computeAndPersistRoutes(
     [userId, start, end]
   );
 
+  const visitMap = new Map(visits.map((v) => [v.id, v]));
   const persisted: Route[] = [];
   for (const route of routePlans) {
+    const fromVisit = visitMap.get(route.from_visit_id);
+    const businessDate = fromVisit?.business_date;
     const r = await pool.query(
       `INSERT INTO routes
        (user_id, from_visit_id, to_visit_id, distance_km, duration_min, polyline, business_date)
@@ -41,7 +44,7 @@ export async function computeAndPersistRoutes(
         route.distance_km,
         route.duration_min,
         route.polyline,
-        route.business_date,
+        businessDate,
       ]
     );
     persisted.push(r.rows[0]);

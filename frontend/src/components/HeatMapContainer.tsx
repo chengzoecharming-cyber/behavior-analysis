@@ -17,6 +17,27 @@ export default function HeatMapContainer({ points }: HeatMapContainerProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
   const heatmapInstance = useRef<any>(null);
+  // 用 ref 保存最新 points，避免异步初始化时读到旧值
+  const pointsRef = useRef<HeatMapPoint[]>(points);
+
+  useEffect(() => {
+    pointsRef.current = points;
+  }, [points]);
+
+  const applyHeatmapData = (heatmap: any, map: any, currentPoints: HeatMapPoint[]) => {
+    if (currentPoints.length === 0) {
+      heatmap.setDataSet({ data: [], max: 1 });
+      return;
+    }
+    const data = currentPoints.map((p) => ({
+      lng: p.lng,
+      lat: p.lat,
+      count: p.count,
+    }));
+    const max = Math.max(...currentPoints.map((p) => p.count), 1);
+    heatmap.setDataSet({ data, max });
+    map.setFitView();
+  };
 
   useEffect(() => {
     if (!mapRef.current || mapInstance.current) return;
@@ -33,6 +54,7 @@ export default function HeatMapContainer({ points }: HeatMapContainerProps) {
         });
         map.addControl(new AMap.ToolBar());
         map.addControl(new AMap.Scale());
+        mapInstance.current = map;
 
         map.plugin(["AMap.HeatMap"], () => {
           const heatmap = new AMap.HeatMap(map, {
@@ -47,18 +69,8 @@ export default function HeatMapContainer({ points }: HeatMapContainerProps) {
             },
           });
           heatmapInstance.current = heatmap;
-          mapInstance.current = map;
-
-          if (points.length > 0) {
-            const data = points.map((p) => ({
-              lng: p.lng,
-              lat: p.lat,
-              count: p.count,
-            }));
-            const max = Math.max(...points.map((p) => p.count), 1);
-            heatmap.setDataSet({ data, max });
-            map.setFitView();
-          }
+          // 初始化时使用最新的 points（可能已经加载完成）
+          applyHeatmapData(heatmap, map, pointsRef.current);
         });
       })
       .catch((err: any) => {
@@ -74,20 +86,7 @@ export default function HeatMapContainer({ points }: HeatMapContainerProps) {
 
   useEffect(() => {
     if (!heatmapInstance.current || !mapInstance.current) return;
-
-    if (points.length === 0) {
-      heatmapInstance.current.setDataSet({ data: [], max: 1 });
-      return;
-    }
-
-    const data = points.map((p) => ({
-      lng: p.lng,
-      lat: p.lat,
-      count: p.count,
-    }));
-    const max = Math.max(...points.map((p) => p.count), 1);
-    heatmapInstance.current.setDataSet({ data, max });
-    mapInstance.current.setFitView();
+    applyHeatmapData(heatmapInstance.current, mapInstance.current, points);
   }, [points]);
 
   return (

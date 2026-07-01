@@ -2,11 +2,23 @@ import { persistRiskSummaryCache } from "./riskSummaryService";
 import { isDingTalkConfigured, syncApprovals } from "./dingtalk";
 import { getYesterdayBeijing, toBeijingDayStart } from "../utils/timezone";
 
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
 function getMillisecondsUntil(hour: number, minute: number): number {
   const now = new Date();
-  const target = new Date(now.getFullYear(), now.getMonth(), now.getDate(), hour, minute, 0, 0);
+  // 按北京时间计算目标时刻，避免服务器本地时区影响
+  const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const year = beijingNow.getUTCFullYear();
+  const month = pad2(beijingNow.getUTCMonth() + 1);
+  const date = pad2(beijingNow.getUTCDate());
+  const hourStr = pad2(hour);
+  const minuteStr = pad2(minute);
+
+  let target = new Date(`${year}-${month}-${date}T${hourStr}:${minuteStr}:00+08:00`);
   if (target.getTime() <= now.getTime()) {
-    target.setDate(target.getDate() + 1);
+    target = new Date(target.getTime() + 24 * 60 * 60 * 1000);
   }
   return target.getTime() - now.getTime();
 }

@@ -2,6 +2,13 @@ import { Visit, Stop, Route, Anomaly } from "../types";
 import { haversineDistance } from "./distance";
 import { computeMileageSegments } from "./mileageAnalysis";
 import { getEnabledAnomalyWeights, AnomalyWeight } from "./anomalyWeights";
+import {
+  getBeijingWeekday,
+  parseDateTimeAsBeijing,
+  toBeijingDayStart,
+  toBeijingDayEnd,
+  formatBeijingDate,
+} from "../utils/timezone";
 
 export interface AnomalyDetectionContext {
   userId: string;
@@ -19,12 +26,12 @@ function getThreshold(config: AnomalyWeight | undefined, defaultValue: number): 
 }
 
 function isWorkday(date: Date): boolean {
-  const day = date.getDay();
+  const day = getBeijingWeekday(date);
   return day !== 0 && day !== 6;
 }
 
 function formatBeijingTime(date: Date | string): string {
-  const d = typeof date === "string" ? new Date(date) : date;
+  const d = typeof date === "string" ? parseDateTimeAsBeijing(date) : date;
   const parts = new Intl.DateTimeFormat("zh-CN", {
     timeZone: "Asia/Shanghai",
     year: "numeric",
@@ -38,20 +45,20 @@ function formatBeijingTime(date: Date | string): string {
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
 }
 
-// 计算包含 endDate 当天在内的最近 N 个工作日起始日期
+// 计算包含 endDate 当天在内的最近 N 个工作日起始日期（按北京时间）
 function getPastNWorkdaysStart(n: number, endDate: Date): Date {
+  // 以北京日期的 00:00 作为起点，避免服务器本地时区影响
+  let current = new Date(toBeijingDayStart(formatBeijingDate(endDate)));
   let count = 0;
-  const d = new Date(endDate);
   while (count < n) {
-    if (isWorkday(d)) {
+    if (isWorkday(current)) {
       count++;
     }
     if (count < n) {
-      d.setDate(d.getDate() - 1);
+      current = new Date(current.getTime() - 24 * 60 * 60 * 1000);
     }
   }
-  d.setHours(0, 0, 0, 0);
-  return d;
+  return current;
 }
 
 export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Anomaly[]> {
@@ -60,17 +67,20 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
 
   const { analysisDate, visitsToday, stopsToday, routesToday, visitsPast5Workdays, visitsPast2Weeks } = ctx;
 
+  // 统一按北京时间计算 analysisDate 当天的起止时间
+  const analysisDateStr = formatBeijingDate(analysisDate);
+  const dayStart = new Date(toBeijingDayStart(analysisDateStr));
+  const dayEnd = new Date(toBeijingDayEnd(analysisDateStr));
+
   // 1. 拜访量不足：过去5个工作日累计签到<阈值
   const lowVisitConfig = weights["low_visit_count"];
   if (lowVisitConfig && visitsPast5Workdays) {
     const threshold = getThreshold(lowVisitConfig, 15);
     // 只统计工作日签到（包含 analysisDate 当天）
-    const endDate = new Date(analysisDate);
-    endDate.setHours(23, 59, 59, 999);
-    const startDate = getPastNWorkdaysStart(5, endDate);
+    const startDate = getPastNWorkdaysStart(5, dayEnd);
     const workdayVisits = visitsPast5Workdays.filter((v) => {
       const d = new Date(v.timestamp);
-      return d >= startDate && d <= endDate && isWorkday(d);
+      return d >= startDate && d <= dayEnd && isWorkday(d);
     });
     if (workdayVisits.length < threshold) {
       anomalies.push({
@@ -94,18 +104,16 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
   const duplicateConfig = weights["duplicate_location"];
   if (duplicateConfig && visitsPast2Weeks) {
     const threshold = getThreshold(duplicateConfig, 7);
-    const endDate = new Date(analysisDate);
-    endDate.setHours(23, 59, 59, 999);
-    const startDate = new Date(endDate);
-    startDate.setDate(startDate.getDate() - 14);
-    startDate.setHours(0, 0, 0, 0);
+    const startDate = new Date(dayStart);
+    startDate.setTime(startDate.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-    const locationCounts: Record<string, { count: number; lat: number; lng: number; name: string; visitIds: number[] }> = {};
+    const locationCounts: Record<string, { count: number; lat: number | null; lng: number | null; name: string; visitIds: number[] }> = {};
     for (const v of visitsPast2Weeks) {
       const d = new Date(v.timestamp);
-      if (d < startDate || d > endDate) continue;
-      // 用 location_name + 地址聚合，若缺失则用坐标聚合（150m 内算同一地点）
-      const key = v.location_name?.trim() || v.address?.trim() || `${Math.round(v.lat * 1000)}-${Math.round(v.lng * 1000)}`;
+      if (d < startDate || d > dayEnd) continue;
+      // 用 location_name + 地址聚合；坐标缺失时不能作为 key
+      const key = v.location_name?.trim() || v.address?.trim();
+      if (!key) continue;
       if (!locationCounts[key]) {
         locationCounts[key] = { count: 0, lat: v.lat, lng: v.lng, name: v.location_name || v.address || "未知地点", visitIds: [] };
       }
@@ -201,6 +209,9 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
       const to = visitsToday.find((v) => v.id === route.to_visit_id);
       if (!from || !to) continue;
 
+      if (from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
+        continue;
+      }
       const straightKm = haversineDistance(from.lat, from.lng, to.lat, to.lng);
       if (straightKm > 0.5 && route.distance_km > straightKm * threshold) {
         anomalies.push({

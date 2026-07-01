@@ -82,9 +82,15 @@ export function formatBeijingDate(d: Date): string {
     .split("T")[0];
 }
 
+/** 按北京时间获取 Date 对应的星期几（0=周日，6=周六） */
+export function getBeijingWeekday(date: Date): number {
+  // 将 UTC 时间戳转换为北京时间对应的本地时间表示
+  const beijingTime = new Date(date.getTime() + 8 * 60 * 60 * 1000);
+  return beijingTime.getUTCDay();
+}
+
 /** 获取“昨天”的北京日期字符串 */
 export function getYesterdayBeijing(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return formatBeijingDate(d);
+  const yesterdayUtc = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  return formatBeijingDate(yesterdayUtc);
 }

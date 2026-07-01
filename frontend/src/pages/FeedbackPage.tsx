@@ -40,8 +40,8 @@ export default function FeedbackPage() {
   const [submitting, setSubmitting] = useState(false);
   const [modalVisible, setModalVisible] = useState(false);
   const [range, setRange] = useState<Date[]>([
-    dayjs().subtract(1, "day").toDate(),
-    dayjs().toDate(),
+    dayjs.tz().subtract(1, "day").toDate(),
+    dayjs.tz().toDate(),
   ]);
   const [description, setDescription] = useState("");
 
@@ -71,7 +71,7 @@ export default function FeedbackPage() {
   }, []);
 
   const openSubmitModal = () => {
-    setRange([dayjs().subtract(1, "day").toDate(), dayjs().toDate()]);
+    setRange([dayjs.tz().subtract(1, "day").toDate(), dayjs.tz().toDate()]);
     setDescription("");
     setModalVisible(true);
   };
@@ -84,8 +84,8 @@ export default function FeedbackPage() {
     setSubmitting(true);
     try {
       await createFeedback({
-        start_date: dayjs(range[0]).format("YYYY-MM-DD"),
-        end_date: dayjs(range[1]).format("YYYY-MM-DD"),
+        start_date: dayjs.tz(range[0]).format("YYYY-MM-DD"),
+        end_date: dayjs.tz(range[1]).format("YYYY-MM-DD"),
         description: description.trim(),
       });
       Toast.success("提交成功");
@@ -131,7 +131,7 @@ export default function FeedbackPage() {
     {
       title: "申诉日期范围",
       render: (_text: any, record: FeedbackItem) =>
-        `${dayjs(record.start_date).format("YYYY-MM-DD")} ~ ${dayjs(
+        `${dayjs.tz(record.start_date).format("YYYY-MM-DD")} ~ ${dayjs.tz(
           record.end_date
         ).format("YYYY-MM-DD")}`,
     },
@@ -285,8 +285,8 @@ export default function FeedbackPage() {
             <div>
               <Text type="tertiary">日期范围：</Text>
               <Text>
-                {dayjs(reviewItem.start_date).format("YYYY-MM-DD")} ~{" "}
-                {dayjs(reviewItem.end_date).format("YYYY-MM-DD")}
+                {dayjs.tz(reviewItem.start_date).format("YYYY-MM-DD")} ~{" "}
+                {dayjs.tz(reviewItem.end_date).format("YYYY-MM-DD")}
               </Text>
             </div>
             <div>

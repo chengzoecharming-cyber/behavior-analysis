@@ -20,8 +20,8 @@ function DataSyncPage() {
   const [testResult, setTestResult] = useState<any>(null);
   const [syncResult, setSyncResult] = useState<DingTalkSyncResult | null>(null);
   const [syncRange, setSyncRange] = useState<[Dayjs, Dayjs] | null>([
-    dayjs().subtract(1, "day"),
-    dayjs().subtract(1, "day"),
+    dayjs.tz().subtract(1, "day"),
+    dayjs.tz().subtract(1, "day"),
   ]);
 
   const loadStatus = async () => {

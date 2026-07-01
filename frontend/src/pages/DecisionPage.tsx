@@ -32,7 +32,7 @@ type RiskLevel = "high" | "medium" | "low";
 type DateRangeMode = "today" | "yesterday" | "week" | "month" | "custom";
 
 function getWeekRange(): { start: string; end: string } {
-  const today = dayjs();
+  const today = dayjs.tz();
   // 计算本周一（中国习惯）
   const day = today.day(); // 0=周日, 1=周一, ...
   const mondayOffset = day === 0 ? -6 : 1 - day;
@@ -45,7 +45,7 @@ function getWeekRange(): { start: string; end: string } {
 }
 
 function getMonthRange(): { start: string; end: string } {
-  const today = dayjs();
+  const today = dayjs.tz();
   const firstDay = today.startOf("month");
   const yesterday = today.subtract(1, "day");
   return { start: firstDay.format("YYYY-MM-DD"), end: yesterday.format("YYYY-MM-DD") };
@@ -95,7 +95,7 @@ function DecisionPage() {
     if (initialStart && initialEnd) {
       return [new Date(initialStart), new Date(initialEnd)];
     }
-    const yesterday = dayjs().subtract(1, "day").toDate();
+    const yesterday = dayjs.tz().subtract(1, "day").toDate();
     return [yesterday, yesterday];
   });
 
@@ -111,7 +111,7 @@ function DecisionPage() {
   const [regionalLoading, setRegionalLoading] = useState(false);
   const [regionalDepartment, setRegionalDepartment] = useState<string>("all");
   const [regionalRange, setRegionalRange] = useState<Date[]>(() => {
-    const yesterday = dayjs().subtract(1, "day").toDate();
+    const yesterday = dayjs.tz().subtract(1, "day").toDate();
     return [yesterday, yesterday];
   });
   const [allDepartments, setAllDepartments] = useState<string[]>([]);
@@ -119,11 +119,11 @@ function DecisionPage() {
   // 当前生效的查询范围
   const currentRange = useMemo<{ start: string; end: string; isRange: boolean }>(() => {
     if (mode === "today") {
-      const d = dayjs(date).format("YYYY-MM-DD");
+      const d = dayjs.tz(date).format("YYYY-MM-DD");
       return { start: d, end: d, isRange: false };
     }
     if (mode === "yesterday") {
-      const d = dayjs(date).format("YYYY-MM-DD");
+      const d = dayjs.tz(date).format("YYYY-MM-DD");
       return { start: d, end: d, isRange: false };
     }
     if (mode === "week") {
@@ -134,12 +134,12 @@ function DecisionPage() {
     }
     if (customRange.length === 2) {
       return {
-        start: dayjs(customRange[0]).format("YYYY-MM-DD"),
-        end: dayjs(customRange[1]).format("YYYY-MM-DD"),
+        start: dayjs.tz(customRange[0]).format("YYYY-MM-DD"),
+        end: dayjs.tz(customRange[1]).format("YYYY-MM-DD"),
         isRange: true,
       };
     }
-    const d = dayjs(date).format("YYYY-MM-DD");
+    const d = dayjs.tz(date).format("YYYY-MM-DD");
     return { start: d, end: d, isRange: false };
   }, [mode, date, customRange]);
 
@@ -183,8 +183,8 @@ function DecisionPage() {
     if (regionalRange.length !== 2) return;
     setRegionalLoading(true);
     try {
-      const start = dayjs(regionalRange[0]).format("YYYY-MM-DD");
-      const end = dayjs(regionalRange[1]).format("YYYY-MM-DD");
+      const start = dayjs.tz(regionalRange[0]).format("YYYY-MM-DD");
+      const end = dayjs.tz(regionalRange[1]).format("YYYY-MM-DD");
       const res = await fetchRegionalOverview(
         start,
         end,
@@ -410,15 +410,15 @@ function DecisionPage() {
                   params.set("mode", newMode);
 
                   if (newMode === "today") {
-                    const d = dayjs().toDate();
+                    const d = dayjs.tz().toDate();
                     setDate(d);
-                    params.set("date", dayjs(d).format("YYYY-MM-DD"));
+                    params.set("date", dayjs.tz(d).format("YYYY-MM-DD"));
                     params.delete("start");
                     params.delete("end");
                   } else if (newMode === "yesterday") {
-                    const d = dayjs().subtract(1, "day").toDate();
+                    const d = dayjs.tz().subtract(1, "day").toDate();
                     setDate(d);
-                    params.set("date", dayjs(d).format("YYYY-MM-DD"));
+                    params.set("date", dayjs.tz(d).format("YYYY-MM-DD"));
                     params.delete("start");
                     params.delete("end");
                   } else if (newMode === "week") {
@@ -432,8 +432,8 @@ function DecisionPage() {
                     params.set("end", end);
                     params.delete("date");
                   } else if (newMode === "custom" && customRange.length === 2) {
-                    params.set("start", dayjs(customRange[0]).format("YYYY-MM-DD"));
-                    params.set("end", dayjs(customRange[1]).format("YYYY-MM-DD"));
+                    params.set("start", dayjs.tz(customRange[0]).format("YYYY-MM-DD"));
+                    params.set("end", dayjs.tz(customRange[1]).format("YYYY-MM-DD"));
                     params.delete("date");
                   }
                   setSearchParams(params);
@@ -452,8 +452,8 @@ function DecisionPage() {
                 if (r && r[0] && r[1]) {
                   setCustomRange([r[0], r[1]]);
                   const params = new URLSearchParams(searchParams);
-                  params.set("start", dayjs(r[0]).format("YYYY-MM-DD"));
-                  params.set("end", dayjs(r[1]).format("YYYY-MM-DD"));
+                  params.set("start", dayjs.tz(r[0]).format("YYYY-MM-DD"));
+                  params.set("end", dayjs.tz(r[1]).format("YYYY-MM-DD"));
                   params.delete("date");
                   setSearchParams(params);
                 }
@@ -488,8 +488,8 @@ function DecisionPage() {
             );
           }
           if (mode === "custom" && customRange.length === 2) {
-            const today = dayjs().startOf("day");
-            const end = dayjs(customRange[1]).startOf("day");
+            const today = dayjs.tz().startOf("day");
+            const end = dayjs.tz(customRange[1]).startOf("day");
             if (end.isSame(today) || end.isAfter(today)) {
               return (
                 <div style={{ fontSize: 13, color: "#F7A046" }}>
