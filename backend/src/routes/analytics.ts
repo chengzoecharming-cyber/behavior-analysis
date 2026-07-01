@@ -19,16 +19,10 @@ import {
   toBeijingDayStart,
   toBeijingDayEnd,
   formatBeijingDate,
+  parseDateTimeAsBeijing,
 } from "../utils/timezone";
 
 const router = Router();
-
-function formatLocalDate(d: Date): string {
-  const year = d.getFullYear();
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const day = String(d.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 function eachDate(startStr: string, endStr: string): string[] {
   const dates: string[] = [];
@@ -79,9 +73,8 @@ router.get("/mileage", async (req: Request, res: Response) => {
     let routesResult = await pool.query(
       `SELECT * FROM routes
        WHERE user_id = $1
-         AND from_visit_id IN (
-           SELECT id FROM visits WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
-         )`,
+         AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`,
       [user, rangeStart, rangeEnd]
     );
 
@@ -113,7 +106,9 @@ router.get("/mileage", async (req: Request, res: Response) => {
     const visitsResult = await pool.query(
       `SELECT reported_distance_km
        FROM visits
-       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3`,
+       WHERE user_id = $1
+        AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+        AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`,
       [user, rangeStart, rangeEnd]
     );
     const reportedDistanceKm = visitsResult.rows.reduce(
@@ -174,9 +169,9 @@ router.get("/anomaly", async (req: Request, res: Response) => {
 
     const visitsResult = await pool.query(
       `SELECT * FROM visits
-       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+       WHERE user_id = $1 AND business_date = $2::date
        ORDER BY timestamp ASC`,
-      [user, dayStart, dayEnd]
+      [user, date]
     );
     const visits: Visit[] = visitsResult.rows;
 
@@ -189,16 +184,16 @@ router.get("/anomaly", async (req: Request, res: Response) => {
 
     const anomalies = await detectAnomalies({
       userId: user as string,
-      analysisDate: new Date(date as string),
+      analysisDate: parseDateTimeAsBeijing(date as string),
       visitsToday: visits,
       stopsToday: stops,
       routesToday: routes,
     });
 
-    // 持久化异常事件
+    // 持久化异常事件：按业务日期删除旧记录，避免历史日期重算时残留
     await pool.query(
-      `DELETE FROM anomalies WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3`,
-      [user, dayStart, dayEnd]
+      `DELETE FROM anomalies WHERE user_id = $1 AND anomaly_date = $2::date`,
+      [user, date]
     );
 
     const persisted: Anomaly[] = [];
@@ -255,7 +250,8 @@ router.get("/mileage-distribution", async (req: Request, res: Response) => {
     const rangeEnd = ensureBeijingTimestamp(end as string);
     const visitsResult = await pool.query(
       `SELECT * FROM visits
-       WHERE timestamp >= $1 AND timestamp <= $2
+       WHERE business_date >= ($1::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         AND business_date <= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
        ORDER BY user_id, timestamp ASC`,
       [rangeStart, rangeEnd]
     );
@@ -340,7 +336,7 @@ router.get("/risk-score", async (req: Request, res: Response) => {
 
     const anomalies = await detectAnomalies({
       userId: user_id as string,
-      analysisDate: new Date(date as string),
+      analysisDate: parseDateTimeAsBeijing(date as string),
       visitsToday: visits,
       stopsToday: stops,
       routesToday: routes,

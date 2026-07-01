@@ -5,9 +5,13 @@ const STOP_DISTANCE_METERS = 150;
 const STOP_DURATION_MINUTES = 10;
 
 export function detectStops(visits: Visit[]): Stop[] {
-  if (visits.length === 0) return [];
+  // 只使用有有效坐标的拜访点计算停留点
+  const validVisits = visits.filter(
+    (v) => v.lat != null && v.lng != null
+  );
+  if (validVisits.length === 0) return [];
 
-  const sorted = [...visits].sort(
+  const sorted = [...validVisits].sort(
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
@@ -18,10 +22,10 @@ export function detectStops(visits: Visit[]): Stop[] {
     const visit = sorted[i];
     const anchor = currentGroup[0];
     const distance = haversineDistance(
-      anchor.lat,
-      anchor.lng,
-      visit.lat,
-      visit.lng
+      anchor.lat!,
+      anchor.lng!,
+      visit.lat!,
+      visit.lng!
     );
 
     if (distance * 1000 <= STOP_DISTANCE_METERS) {
@@ -55,10 +59,11 @@ function buildStop(group: Visit[]): Stop | null {
     start_time: start.timestamp,
     end_time: end.timestamp,
     duration_minutes: durationMinutes,
-    lat: start.lat,
-    lng: start.lng,
+    lat: start.lat!,
+    lng: start.lng!,
     location_name: start.location_name,
     visit_ids: group.map((v) => v.id),
+    business_date: start.business_date,
     created_at: new Date(),
   };
 }

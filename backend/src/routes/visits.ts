@@ -59,7 +59,7 @@ router.get("/", async (req: Request, res: Response) => {
       : { start: ensureBeijingTimestamp(start as string), end: ensureBeijingTimestamp(end as string) };
     const result = await pool.query(
       `SELECT * FROM visits
-       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+       WHERE user_id = $1 AND business_date >= $2::date AND business_date <= $3::date
        ORDER BY timestamp ASC`,
       [user, rangeStart, rangeEnd]
     );
@@ -111,9 +111,9 @@ router.get("/available-dates", async (req: Request, res: Response) => {
 
   try {
     const result = await pool.query(
-      `SELECT DISTINCT DATE(timestamp AT TIME ZONE 'Asia/Shanghai') as date
+      `SELECT DISTINCT business_date as date
        FROM visits
-       WHERE user_id = $1
+       WHERE user_id = $1 AND business_date IS NOT NULL
        ORDER BY date DESC`,
       [user]
     );

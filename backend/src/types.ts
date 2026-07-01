@@ -18,8 +18,8 @@ export interface Visit {
   user_name: string;
   department: string;
   timestamp: Date;
-  lat: number;
-  lng: number;
+  lat: number | null;
+  lng: number | null;
   location_name: string;
   address: string;
   customer_name: string;
@@ -37,6 +37,7 @@ export interface Visit {
   special_sign_reason?: string;
   geocode_status?: string;
   source_detail?: string;
+  business_date?: string;
 }
 
 export interface Stop {
@@ -49,6 +50,7 @@ export interface Stop {
   lng: number;
   location_name: string;
   visit_ids: number[];
+  business_date?: string;
   created_at: Date;
 }
 
@@ -60,6 +62,7 @@ export interface Route {
   distance_km: number;
   duration_min: number;
   polyline: string;
+  business_date?: string;
   created_at: Date;
 }
 
@@ -83,8 +86,8 @@ export interface RawVisitRow {
   time: string | number | Date;
   location_name: string;
   address: string;
-  lat: number;
-  lng: number;
+  lat: number | null;
+  lng: number | null;
   customer_name: string;
 }
 

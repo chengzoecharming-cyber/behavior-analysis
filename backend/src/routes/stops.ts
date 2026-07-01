@@ -22,15 +22,11 @@ router.get("/", async (req: Request, res: Response) => {
   // 范围模式：直接查询已持久化的 stops
   if (start && end) {
     try {
-      const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(start as string);
-      const { start: rangeStart, end: rangeEnd } = isDateOnly
-        ? toBeijingRange(start as string, end as string)
-        : { start: ensureBeijingTimestamp(start as string), end: ensureBeijingTimestamp(end as string) };
       const result = await pool.query(
         `SELECT * FROM stops
-         WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+         WHERE user_id = $1 AND business_date >= $2::date AND business_date <= $3::date
          ORDER BY start_time ASC`,
-        [user, rangeStart, rangeEnd]
+        [user, start, end]
       );
       res.json(result.rows);
       return;
@@ -46,15 +42,12 @@ router.get("/", async (req: Request, res: Response) => {
     return;
   }
 
-  const dayStart = toBeijingDayStart(date as string);
-  const dayEnd = toBeijingDayEnd(date as string);
-
   try {
     const result = await pool.query(
       `SELECT * FROM visits
-       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+       WHERE user_id = $1 AND business_date = $2::date
        ORDER BY timestamp ASC`,
-      [user, dayStart, dayEnd]
+      [user, date]
     );
 
     const visits: Visit[] = result.rows;
@@ -62,16 +55,16 @@ router.get("/", async (req: Request, res: Response) => {
 
     // 持久化到 DERIVED 层（先删除旧数据避免重复）
     await pool.query(
-      `DELETE FROM stops WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3`,
-      [user, dayStart, dayEnd]
+      `DELETE FROM stops WHERE user_id = $1 AND business_date = $2::date`,
+      [user, date]
     );
 
     const persisted: Stop[] = [];
     for (const stop of stops) {
       const r = await pool.query(
         `INSERT INTO stops
-         (user_id, start_time, end_time, duration_minutes, lat, lng, location_name, visit_ids)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         (user_id, start_time, end_time, duration_minutes, lat, lng, location_name, visit_ids, business_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
         [
           stop.user_id,
@@ -82,6 +75,7 @@ router.get("/", async (req: Request, res: Response) => {
           stop.lng,
           stop.location_name,
           stop.visit_ids,
+          stop.business_date ?? date,
         ]
       );
       persisted.push(r.rows[0]);

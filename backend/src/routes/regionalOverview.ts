@@ -56,16 +56,8 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
   }
 
   try {
-    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(start as string);
-    const { start: rangeStart, end: rangeEnd } = isDateOnly
-      ? toBeijingRange(start as string, end as string)
-      : {
-          start: ensureBeijingTimestamp(start as string),
-          end: ensureBeijingTimestamp(end as string),
-        };
-
-    // 基础过滤条件：时间范围 + 有效坐标
-    const baseParams: any[] = [rangeStart, rangeEnd];
+    // 基础过滤条件：业务日期范围 + 有效坐标
+    const baseParams: any[] = [start, end];
     let departmentFilter = "";
     if (department && department !== "all") {
       departmentFilter = "AND department ILIKE $3";
@@ -79,7 +71,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
          COUNT(DISTINCT user_id) AS total_employees,
          COUNT(DISTINCT CONCAT(ROUND(lat::numeric, 5), ',', ROUND(lng::numeric, 5))) AS total_locations
        FROM visits
-       WHERE timestamp >= $1 AND timestamp <= $2
+       WHERE business_date >= $1::date AND business_date <= $2::date
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
          ${departmentFilter}`,
@@ -93,7 +85,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
          COUNT(*) AS visit_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
-       WHERE timestamp >= $1 AND timestamp <= $2
+       WHERE business_date >= $1::date AND business_date <= $2::date
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
          ${departmentFilter}
@@ -113,7 +105,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
          STRING_AGG(DISTINCT address, '; ' ORDER BY address) AS addresses,
          MIN(timestamp) AS first_timestamp
        FROM visits
-       WHERE timestamp >= $1 AND timestamp <= $2
+       WHERE business_date >= $1::date AND business_date <= $2::date
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
          ${departmentFilter}

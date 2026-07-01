@@ -58,8 +58,8 @@ export async function initDB(): Promise<void> {
         user_name VARCHAR(128) NOT NULL,
         department VARCHAR(128),
         timestamp TIMESTAMPTZ NOT NULL,
-        lat DOUBLE PRECISION NOT NULL,
-        lng DOUBLE PRECISION NOT NULL,
+        lat DOUBLE PRECISION,
+        lng DOUBLE PRECISION,
         location_name VARCHAR(255),
         address TEXT,
         customer_name VARCHAR(255),
@@ -79,9 +79,30 @@ export async function initDB(): Promise<void> {
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS special_sign_reason TEXT;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS geocode_status VARCHAR(16) DEFAULT 'pending';
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS source_detail VARCHAR(64);
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS business_date DATE;
+
+      -- 坐标失败后允许为 NULL，不再写入 0,0
+      ALTER TABLE visits ALTER COLUMN lat DROP NOT NULL;
+      ALTER TABLE visits ALTER COLUMN lng DROP NOT NULL;
+
+      -- 常见地址兜底坐标表（用于高德解析失败的简称/惯用地址）
+      CREATE TABLE IF NOT EXISTS address_fallback_coordinates (
+        id SERIAL PRIMARY KEY,
+        address VARCHAR(255) UNIQUE NOT NULL,
+        lat DOUBLE PRECISION NOT NULL,
+        lng DOUBLE PRECISION NOT NULL,
+        note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_address_fallback_address
+        ON address_fallback_coordinates(address);
 
       CREATE INDEX IF NOT EXISTS idx_visits_user_time
         ON visits(user_id, timestamp);
+      CREATE INDEX IF NOT EXISTS idx_visits_user_business_date
+        ON visits(user_id, business_date);
       CREATE INDEX IF NOT EXISTS idx_visits_approval
         ON visits(approval_id, sequence);
 
@@ -99,8 +120,12 @@ export async function initDB(): Promise<void> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      ALTER TABLE stops ADD COLUMN IF NOT EXISTS business_date DATE;
+
       CREATE INDEX IF NOT EXISTS idx_stops_user
         ON stops(user_id, start_time);
+      CREATE INDEX IF NOT EXISTS idx_stops_user_business_date
+        ON stops(user_id, business_date);
 
       -- DERIVED 层：路径/segment 分析
       CREATE TABLE IF NOT EXISTS routes (
@@ -114,8 +139,12 @@ export async function initDB(): Promise<void> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      ALTER TABLE routes ADD COLUMN IF NOT EXISTS business_date DATE;
+
       CREATE INDEX IF NOT EXISTS idx_routes_user
         ON routes(user_id, from_visit_id, to_visit_id);
+      CREATE INDEX IF NOT EXISTS idx_routes_user_business_date
+        ON routes(user_id, business_date);
 
       -- DERIVED 层：异常事件（P1 基础版可持久化，也可按需计算）
       CREATE TABLE IF NOT EXISTS anomalies (

@@ -2,7 +2,7 @@ import * as XLSX from "xlsx";
 import { pool } from "../db";
 import { ParsedVisit } from "../types";
 import { totalDistanceKm } from "./distance";
-import { parseDateTimeAsBeijing } from "../utils/timezone";
+import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
 
 export interface GeocodeFailure {
   row: number;
@@ -22,12 +22,36 @@ export function normalizeUserId(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
+interface XlsxDateParts {
+  y: number;
+  m: number;
+  d: number;
+  H: number;
+  M: number;
+  S: number;
+}
+
+function pad2(n: number): string {
+  return String(n).padStart(2, "0");
+}
+
 export function normalizeTimestamp(value: string | number | Date): Date {
   if (value instanceof Date) return value;
   if (typeof value === "number") {
-    return XLSX.SSF.parse_date_code(value);
+    // Excel 日期序列号解析为 {y, m, d, H, M, S} 对象，月份从 1 开始
+    const parsed = XLSX.SSF.parse_date_code(value) as XlsxDateParts;
+    const beijingStr = `${parsed.y}-${pad2(parsed.m)}-${pad2(parsed.d)}T${pad2(parsed.H)}:${pad2(parsed.M)}:${pad2(parsed.S)}`;
+    return parseDateTimeAsBeijing(beijingStr);
   }
   return parseDateTimeAsBeijing(value);
+}
+
+/** 校验坐标是否有效，无效时返回 null */
+export function normalizeCoordinate(value: unknown): number | null {
+  if (value == null) return null;
+  const num = typeof value === "number" ? value : parseFloat(String(value));
+  if (!Number.isFinite(num)) return null;
+  return num;
 }
 
 export async function checkDuplicateVisit(
@@ -60,6 +84,63 @@ export async function checkDuplicateVisit(
   return result.rows.length > 0;
 }
 
+async function computeBusinessDates(
+  parsedVisits: ParsedVisit[],
+  source: "excel" | "dingtalk"
+): Promise<string[]> {
+  const result: string[] = [];
+
+  if (source !== "dingtalk") {
+    for (const visit of parsedVisits) {
+      const ts = normalizeTimestamp(visit.time);
+      result.push(formatBeijingDate(ts));
+    }
+    return result;
+  }
+
+  // 钉钉数据：按 approval_id 分组，取审批发起时间（fallback 最早签到时间）作为业务日期
+  const groups = new Map<string, ParsedVisit[]>();
+  for (let i = 0; i < parsedVisits.length; i++) {
+    const visit = parsedVisits[i];
+    const approvalId = visit.approval_id || "_no_approval";
+    if (!groups.has(approvalId)) groups.set(approvalId, []);
+    groups.get(approvalId)!.push(visit);
+  }
+
+  const dateByVisit = new Map<ParsedVisit, string>();
+  for (const [approvalId, visits] of groups) {
+    if (approvalId === "_no_approval") {
+      for (const visit of visits) {
+        dateByVisit.set(visit, formatBeijingDate(normalizeTimestamp(visit.time)));
+      }
+      continue;
+    }
+
+    const approvalResult = await pool.query(
+      `SELECT create_time FROM raw_approvals WHERE approval_id = $1 LIMIT 1`,
+      [approvalId]
+    );
+
+    let businessDate: string;
+    if (approvalResult.rows.length > 0 && approvalResult.rows[0].create_time) {
+      businessDate = formatBeijingDate(approvalResult.rows[0].create_time);
+    } else {
+      const timestamps = visits.map((v) => normalizeTimestamp(v.time).getTime());
+      businessDate = formatBeijingDate(new Date(Math.min(...timestamps)));
+    }
+
+    for (const visit of visits) {
+      dateByVisit.set(visit, businessDate);
+    }
+  }
+
+  for (const visit of parsedVisits) {
+    result.push(dateByVisit.get(visit)!);
+  }
+
+  return result;
+}
+
 export async function processParsedVisits(
   parsedVisits: ParsedVisit[],
   source: "excel" | "dingtalk"
@@ -69,13 +150,15 @@ export async function processParsedVisits(
   let skippedCount = 0;
   const userPointsMap: Record<string, { lat: number; lng: number }[]> = {};
   const geocodeFailures: GeocodeFailure[] = [];
+  const businessDates = await computeBusinessDates(parsedVisits, source);
 
   for (let i = 0; i < parsedVisits.length; i++) {
     const visit = parsedVisits[i];
     const userId = normalizeUserId(visit.user_name);
     const timestamp = normalizeTimestamp(visit.time);
-    const geocodeStatus =
-      visit.lat == null || visit.lng == null ? "failed" : "success";
+    const lat = normalizeCoordinate(visit.lat);
+    const lng = normalizeCoordinate(visit.lng);
+    const geocodeStatus = lat == null || lng == null ? "failed" : "success";
 
     if (geocodeStatus === "failed") {
       geocodeFailures.push({
@@ -122,9 +205,10 @@ export async function processParsedVisits(
        (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
         location_name, address, customer_name, source,
         approval_id, sequence, trip_type, vehicle, start_odometer, end_odometer,
-        reported_distance_km, visit_note, special_sign_reason, geocode_status, source_detail)
+        reported_distance_km, visit_note, special_sign_reason, geocode_status, source_detail,
+        business_date)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22)
+               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
        RETURNING id`,
       [
         rawVisitId,
@@ -132,8 +216,8 @@ export async function processParsedVisits(
         visit.user_name,
         visit.department,
         timestamp,
-        visit.lat ?? 0,
-        visit.lng ?? 0,
+        lat,
+        lng,
         visit.location_name,
         visit.address,
         visit.customer_name,
@@ -149,13 +233,14 @@ export async function processParsedVisits(
         visit.special_sign_reason ?? null,
         geocodeStatus,
         visit.source_detail ?? null,
+        businessDates[i],
       ]
     );
     insertedNormalized.push(visitResult.rows[0].id);
 
     if (!userPointsMap[userId]) userPointsMap[userId] = [];
-    if (visit.lat && visit.lng) {
-      userPointsMap[userId].push({ lat: visit.lat, lng: visit.lng });
+    if (lat != null && lng != null) {
+      userPointsMap[userId].push({ lat, lng });
     }
   }
 

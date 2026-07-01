@@ -8,6 +8,8 @@ import {
   toBeijingDayStart,
   toBeijingDayEnd,
   formatBeijingDate,
+  getBeijingWeekday,
+  parseDateTimeAsBeijing,
 } from "../utils/timezone";
 
 export interface EmployeeRiskSummary {
@@ -56,21 +58,21 @@ function generateSummaryText(
   return `${userName} 今日完成 ${visitCount} 次拜访，行程正常，无显著风险。`;
 }
 
-// 计算包含 endDate 当天在内的最近 N 个工作日范围
+// 计算包含 endDate 当天在内的最近 N 个工作日范围（按北京时间）
 function getPastWorkdaysRange(n: number, endDateStr: string): { start: string; end: string } {
   const end = new Date(toBeijingDayEnd(endDateStr));
   let count = 0;
   const start = new Date(end);
   while (count < n) {
-    const day = start.getDay();
+    const day = getBeijingWeekday(start);
     if (day !== 0 && day !== 6) {
       count++;
     }
     if (count < n) {
-      start.setDate(start.getDate() - 1);
+      start.setTime(start.getTime() - 24 * 60 * 60 * 1000);
     }
   }
-  start.setHours(0, 0, 0, 0);
+  // start 已经对齐到北京时间 00:00，无需再调 setHours
   return {
     start: start.toISOString(),
     end: end.toISOString(),
@@ -94,15 +96,12 @@ export async function computeEmployeeRiskSummary(
   department: string,
   dateStr: string
 ): Promise<EmployeeRiskSummary> {
-  const start = toBeijingDayStart(dateStr);
-  const end = toBeijingDayEnd(dateStr);
-
   // 当天拜访记录
   const visitsResult = await pool.query(
     `SELECT * FROM visits
-     WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+     WHERE user_id = $1 AND business_date = $2::date
      ORDER BY timestamp ASC`,
-    [userId, start, end]
+    [userId, dateStr]
   );
   const visitsToday: Visit[] = visitsResult.rows;
 
@@ -112,7 +111,9 @@ export async function computeEmployeeRiskSummary(
 
   const past5WorkdaysResult = await pool.query(
     `SELECT * FROM visits
-     WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+     WHERE user_id = $1
+       AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+       AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
      ORDER BY timestamp ASC`,
     [userId, past5Workdays.start, past5Workdays.end]
   );
@@ -120,7 +121,9 @@ export async function computeEmployeeRiskSummary(
 
   const past2WeeksResult = await pool.query(
     `SELECT * FROM visits
-     WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+     WHERE user_id = $1
+       AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+       AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
      ORDER BY timestamp ASC`,
     [userId, past2Weeks.start, past2Weeks.end]
   );
@@ -129,9 +132,9 @@ export async function computeEmployeeRiskSummary(
   // 停留点
   const stopsResult = await pool.query(
     `SELECT * FROM stops
-     WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
+     WHERE user_id = $1 AND business_date = $2::date
      ORDER BY start_time ASC`,
-    [userId, start, end]
+    [userId, dateStr]
   );
   const stops: Stop[] = stopsResult.rows;
 
@@ -207,7 +210,7 @@ export async function computeEmployeeRiskSummary(
   // 检测异常
   const anomalies = await detectAnomalies({
     userId,
-    analysisDate: new Date(dateStr),
+    analysisDate: parseDateTimeAsBeijing(dateStr),
     visitsToday,
     stopsToday: stops,
     routesToday: routes,
@@ -261,15 +264,12 @@ export async function computeEmployeeRiskSummary(
 }
 
 export async function computeRiskSummaryForDate(dateStr: string): Promise<RiskSummaryResult> {
-  const start = toBeijingDayStart(dateStr);
-  const end = toBeijingDayEnd(dateStr);
-
   const usersResult = await pool.query(
     `SELECT DISTINCT user_id, user_name, department
      FROM visits
-     WHERE timestamp >= $1 AND timestamp <= $2
+     WHERE business_date = $1::date
      ORDER BY department, user_name`,
-    [start, end]
+    [dateStr]
   );
 
   // 并行计算所有员工的风险摘要
