@@ -16,6 +16,13 @@ import {
 
 const router = Router();
 
+function formatLocalDate(d: Date): string {
+  const year = d.getFullYear();
+  const month = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
 function eachDate(startStr: string, endStr: string): string[] {
   const dates: string[] = [];
   const parse = (s: string) => {
@@ -130,12 +137,17 @@ router.get("/anomaly", async (req: Request, res: Response) => {
   }
 
   try {
-    // 范围模式：直接查询已持久化的 anomalies
+    // 范围模式：直接查询已持久化的 anomalies，并排除已批准的申诉豁免
     if (start && end) {
       const result = await pool.query(
-        `SELECT * FROM anomalies
-         WHERE user_id = $1 AND created_at >= $2 AND created_at <= $3
-         ORDER BY created_at ASC`,
+        `SELECT a.* FROM anomalies a
+         WHERE a.user_id = $1 AND a.anomaly_date >= $2::date AND a.anomaly_date <= $3::date
+           AND NOT EXISTS (
+             SELECT 1 FROM anomaly_exceptions e
+             WHERE e.user_id = a.user_id
+               AND a.anomaly_date BETWEEN e.start_date AND e.end_date
+           )
+         ORDER BY a.created_at ASC`,
         [user, start, end]
       );
       res.json(result.rows);
@@ -183,8 +195,8 @@ router.get("/anomaly", async (req: Request, res: Response) => {
     for (const a of anomalies) {
       const r = await pool.query(
         `INSERT INTO anomalies
-         (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+         (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata, anomaly_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          RETURNING *`,
         [
           a.user_id,
@@ -197,12 +209,21 @@ router.get("/anomaly", async (req: Request, res: Response) => {
           a.severity,
           a.related_visit_ids,
           a.metadata || {},
+          date,
         ]
       );
       persisted.push(r.rows[0]);
     }
 
-    res.json(persisted);
+    // 排除已批准的申诉豁免区间（单日模式：date 落在任一区间内即全部豁免）
+    const exceptionsResult = await pool.query(
+      `SELECT start_date, end_date FROM anomaly_exceptions
+       WHERE user_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
+      [user, date]
+    );
+    const isExempt = exceptionsResult.rows.length > 0;
+
+    res.json(isExempt ? [] : persisted);
   } catch (err) {
     console.error("Failed to detect anomalies:", err);
     res.status(500).json({ error: "Database error" });

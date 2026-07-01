@@ -1,5 +1,12 @@
-import { useState } from "react";
-import { Routes, Route, Link, useLocation, Navigate } from "react-router-dom";
+import { useEffect, useState } from "react";
+import {
+  Routes,
+  Route,
+  Link,
+  useLocation,
+  Navigate,
+  useNavigate,
+} from "react-router-dom";
 import {
   Home,
   BarChart3,
@@ -10,12 +17,18 @@ import {
   MapPin,
   Settings,
   RefreshCw,
+  MessageSquareText,
+  Users,
+  LogOut,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import Dashboard from "./pages/Dashboard";
 import UploadPage from "./pages/UploadPage";
 import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
+import FeedbackPage from "./pages/FeedbackPage";
+import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
+import { Dropdown } from "@douyinfe/semi-ui";
 
 interface NavItem {
   path: string;
@@ -37,10 +50,73 @@ function cn(...classes: (string | boolean | undefined)[]) {
 
 function App() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [users, setUsers] = useState<AuthUser[]>([]);
+
+  useEffect(() => {
+    // 默认以 admin 登录，方便本地开发
+    if (!localStorage.getItem("user_id")) {
+      localStorage.setItem("user_id", "admin");
+    }
+    loadCurrentUser();
+  }, []);
+
+
+
+  const loadCurrentUser = async () => {
+    try {
+      const user = await fetchCurrentUser();
+      setCurrentUser(user);
+    } catch {
+      setCurrentUser(null);
+    }
+  };
+
+  const openSwitcher = async () => {
+    try {
+      const list = await fetchAuthUsers();
+      setUsers(list);
+    } catch {
+      setUsers([]);
+    }
+    setSwitcherOpen(true);
+  };
+
+  const switchUser = (userId: string) => {
+    localStorage.setItem("user_id", userId);
+    setSwitcherOpen(false);
+    window.location.reload();
+  };
+
+  const logout = () => {
+    localStorage.removeItem("user_id");
+    navigate("/");
+    window.location.reload();
+  };
+
+  const roleText: Record<string, string> = {
+    admin: "管理员",
+    manager: "主管",
+    staff: "员工",
+  };
+
+  const currentUserLabel = (() => {
+    if (!currentUser) return "未登录";
+    const role = roleText[currentUser.role];
+    if (currentUser.role === "staff" || !role) return currentUser.user_name;
+    return `${currentUser.user_name} - ${role}`;
+  })();
+
+  const itemStyle = { height: 48, lineHeight: "48px", paddingTop: 0, paddingBottom: 0 };
 
   return (
-    <div className="flex flex-col min-h-screen" style={{ backgroundColor: "#F6F8FC" }}>
+    <div
+      className="flex flex-col min-h-screen"
+      style={{ backgroundColor: "#F6F8FC" }}
+    >
       {/* Header */}
       <header className="sticky top-0 z-20 h-16 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl">
         <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
@@ -100,12 +176,53 @@ function App() {
               >
                 <Bell className="h-4 w-4" />
               </button>
-              <button
-                className="relative flex h-8 w-8 items-center justify-center rounded-full border-none bg-transparent text-[#536471] transition-colors hover:text-[#0f1419] active:text-[#0f1419]"
-                title="用户"
+
+              <Dropdown
+                trigger="click"
+                position="bottomRight"
+                render={
+                  <Dropdown.Menu>
+                    <Dropdown.Item
+                      disabled
+                      style={itemStyle}
+                    >
+                      <span className="text-sm font-medium text-[#0f1419]">
+                        {currentUserLabel}
+                      </span>
+                    </Dropdown.Item>
+                    <Dropdown.Divider />
+                    <Dropdown.Item
+                      icon={<Users className="h-4 w-4" />}
+                      onClick={openSwitcher}
+                      style={itemStyle}
+                    >
+                      切换用户
+                    </Dropdown.Item>
+                    <Dropdown.Item
+                      icon={<MessageSquareText className="h-4 w-4" />}
+                      style={itemStyle}
+                    >
+                      <Link to="/feedback">反馈与申诉</Link>
+                    </Dropdown.Item>
+                    <Dropdown.Divider />
+                    <Dropdown.Item
+                      icon={<LogOut className="h-4 w-4" />}
+                      type="danger"
+                      onClick={logout}
+                      style={itemStyle}
+                    >
+                      退出登录
+                    </Dropdown.Item>
+                  </Dropdown.Menu>
+                }
               >
-                <User className="h-4 w-4" />
-              </button>
+                <button
+                  className="relative flex h-8 w-8 items-center justify-center rounded-full border-none bg-transparent text-[#536471] transition-colors hover:text-[#0f1419] active:text-[#0f1419]"
+                  title="用户"
+                >
+                  <User className="h-4 w-4" />
+                </button>
+              </Dropdown>
             </div>
           </div>
         </div>
@@ -153,6 +270,64 @@ function App() {
         </div>
       )}
 
+      {/* User Switcher Modal */}
+      {switcherOpen && (
+        <div
+          className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 pt-24"
+          onClick={() => setSwitcherOpen(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="mb-4 text-base font-semibold text-[#0f1419]">
+              切换用户
+            </h3>
+            <div className="max-h-80 overflow-y-auto">
+              {users.length === 0 ? (
+                <div className="py-4 text-center text-sm text-stone-500">
+                  暂无用户
+                </div>
+              ) : (
+                <div className="flex flex-col">
+                  {users.map((u) => (
+                    <button
+                      key={u.user_id}
+                      type="button"
+                      className={cn(
+                        "flex w-full cursor-pointer items-center justify-between border-none px-3 py-2.5 text-sm transition",
+                        currentUser?.user_id === u.user_id
+                          ? "bg-stone-100 font-medium text-[#0f1419]"
+                          : "bg-transparent text-stone-700 hover:bg-stone-50"
+                      )}
+                      onClick={() => switchUser(u.user_id)}
+                    >
+                      <span>
+                        {u.user_name}{" "}
+                        <span className="text-xs text-stone-500">
+                          ({roleText[u.role] || u.role})
+                        </span>
+                      </span>
+                      {currentUser?.user_id === u.user_id && (
+                        <span className="text-xs text-stone-500">当前</span>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 transition hover:bg-stone-100"
+                onClick={() => setSwitcherOpen(false)}
+              >
+                取消
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Content */}
       <main className="flex-1 min-h-0" style={{ padding: 24 }}>
         <Routes>
@@ -162,6 +337,7 @@ function App() {
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/sync" element={<DataSyncPage />} />
           <Route path="/rules" element={<RulesConfigPage />} />
+          <Route path="/feedback" element={<FeedbackPage />} />
         </Routes>
       </main>
     </div>

@@ -110,3 +110,35 @@ export interface ParsedVisit {
   continues_to_next?: boolean;
   source_detail?: string;
 }
+
+export interface User {
+  id: number;
+  user_id: string;
+  user_name: string;
+  department: string | null;
+  role: "admin" | "manager" | "staff";
+  manager_id: number | null;
+  created_at: Date;
+}
+
+export interface Feedback {
+  id: number;
+  user_id: string;
+  start_date: Date;
+  end_date: Date;
+  description: string | null;
+  status: "pending" | "approved" | "denied";
+  reviewer_id: string | null;
+  review_note: string | null;
+  created_at: Date;
+  updated_at: Date;
+}
+
+export interface AnomalyException {
+  id: number;
+  user_id: string;
+  start_date: Date;
+  end_date: Date;
+  feedback_id: number | null;
+  created_at: Date;
+}

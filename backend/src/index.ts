@@ -9,6 +9,8 @@ import uploadRouter from "./routes/upload";
 import analyticsRouter from "./routes/analytics";
 import riskSummaryRouter from "./routes/riskSummary";
 import dingtalkRouter from "./routes/dingtalk";
+import usersRouter from "./routes/users";
+import feedbackRouter from "./routes/feedback";
 import { startRiskSummaryCacheScheduler, startDingTalkSyncScheduler } from "./services/scheduler";
 
 dotenv.config();
@@ -26,6 +28,8 @@ app.use("/upload-excel", uploadRouter);
 app.use("/analytics", analyticsRouter);
 app.use("/analytics", riskSummaryRouter);
 app.use("/dingtalk", dingtalkRouter);
+app.use("/users", usersRouter);
+app.use("/feedback", feedbackRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });

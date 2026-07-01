@@ -13,6 +13,15 @@ const api = axios.create({
   baseURL: "/api",
 });
 
+api.interceptors.request.use((config) => {
+  const userId = localStorage.getItem("user_id");
+  if (userId) {
+    // HTTP header 必须 ASCII，对中文 user_id 做 URL 编码
+    config.headers["X-User-Id"] = encodeURIComponent(userId);
+  }
+  return config;
+});
+
 export async function fetchUsers(): Promise<User[]> {
   const res = await api.get("/visits/users");
   return res.data;
@@ -220,6 +229,62 @@ export interface DingTalkSyncResult {
   totalDistanceKm: number;
   geocodeFailures: { row: number; location: string; user: string }[];
   error?: string;
+}
+
+export interface AuthUser {
+  id: number;
+  user_id: string;
+  user_name: string;
+  department: string | null;
+  role: "admin" | "manager" | "staff";
+  manager_id: number | null;
+  created_at: string;
+}
+
+export interface FeedbackItem {
+  id: number;
+  user_id: string;
+  start_date: string;
+  end_date: string;
+  description: string;
+  status: "pending" | "approved" | "denied";
+  reviewer_id: string | null;
+  review_note: string | null;
+  created_at: string;
+  updated_at: string;
+  submitter_name?: string;
+}
+
+export async function fetchCurrentUser(): Promise<AuthUser> {
+  const res = await api.get("/users/me");
+  return res.data;
+}
+
+export async function fetchAuthUsers(): Promise<AuthUser[]> {
+  const res = await api.get("/users/switchable");
+  return res.data;
+}
+
+export async function createFeedback(payload: {
+  start_date: string;
+  end_date: string;
+  description: string;
+}): Promise<FeedbackItem> {
+  const res = await api.post("/feedback", payload);
+  return res.data;
+}
+
+export async function fetchFeedbackList(): Promise<FeedbackItem[]> {
+  const res = await api.get("/feedback");
+  return res.data;
+}
+
+export async function reviewFeedback(
+  id: number,
+  payload: { status: "approved" | "denied"; review_note?: string }
+): Promise<FeedbackItem> {
+  const res = await api.put(`/feedback/${id}/review`, payload);
+  return res.data;
 }
 
 export async function fetchDingTalkStatus(): Promise<DingTalkStatus> {

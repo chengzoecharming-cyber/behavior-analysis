@@ -1,5 +1,6 @@
 import { ParsedVisit } from "../types";
 import { processParsedVisits, ProcessResult } from "./normalization";
+import { pool } from "../db";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
 
@@ -78,6 +79,35 @@ export async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
+// 通讯录用户信息缓存
+const userNameCache: Record<string, string> = {};
+
+export async function getUserNameById(userid: string): Promise<string | null> {
+  if (!userid) return null;
+  if (userNameCache[userid]) return userNameCache[userid];
+
+  try {
+    const accessToken = await getAccessToken();
+    const data = await httpPost(
+      "/topapi/v2/user/get",
+      { access_token: accessToken },
+      { userid, language: "zh_CN" }
+    );
+
+    if (data.errcode !== 0) {
+      console.warn(`[DingTalk user/get] failed for ${userid}: ${data.errmsg} (${data.errcode})`);
+      return null;
+    }
+
+    const name = data.result?.name || null;
+    if (name) userNameCache[userid] = name;
+    return name;
+  } catch (err: any) {
+    console.warn(`[DingTalk user/get] error for ${userid}:`, err.message);
+    return null;
+  }
+}
+
 export async function getApprovalInstances(
   startTimeMs: number,
   endTimeMs: number,
@@ -104,6 +134,7 @@ export async function getApprovalInstances(
   }
 
   const result = data.result || {};
+  console.log(`[DingTalk listids] process_code=${cfg.processCode}, range=${startTimeMs}-${endTimeMs}, raw_result=`, JSON.stringify(result));
   return {
     list: result.list || [],
     nextCursor: result.next_cursor,
@@ -125,10 +156,30 @@ export async function getApprovalDetail(processInstanceId: string): Promise<any>
   return data.process_instance;
 }
 
+// 根据审批模板名称查找 process_code
+export async function getProcessCodeByName(name: string): Promise<string | null> {
+  const accessToken = await getAccessToken();
+  const data = await httpPost(
+    "/topapi/process/get_by_name",
+    { access_token: accessToken },
+    { name }
+  );
+
+  console.log(`[DingTalk get_by_name] name=${name}, response=`, JSON.stringify(data));
+
+  if (data.errcode !== 0) {
+    throw new Error(`DingTalk get_by_name failed: ${data.errmsg} (${data.errcode})`);
+  }
+
+  return data.result?.process_code || null;
+}
+
 interface FormComponent {
+  id?: string;
   name: string;
   value: string;
   ext_value?: string;
+  component_type?: string;
 }
 
 export function parseApprovalForm(formComponents: FormComponent[]): Partial<ParsedVisit> {
@@ -168,6 +219,239 @@ export function parseApprovalForm(formComponents: FormComponent[]): Partial<Pars
   return visit;
 }
 
+// 解析 TimeAndLocationField 的 value：["时间", 经度, 纬度, "地址", 精度]
+function parseTimeLocationValue(value: string): { time: string; lng: number; lat: number; address: string } | null {
+  try {
+    const arr = JSON.parse(value);
+    if (!Array.isArray(arr) || arr.length < 4) return null;
+    return {
+      time: String(arr[0]),
+      lng: parseFloat(arr[1]),
+      lat: parseFloat(arr[2]),
+      address: String(arr[3] || ""),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// 从 "华南/徐加乐 赣K56927" 或 "浙江/贺鹏程 川A E495Q" 中提取车牌和用户名
+function parseVehicle(value: string): { vehicle: string; plate: string; userName: string } {
+  const vehicle = value.trim();
+  const parts = vehicle.split("/");
+  const region = parts[0] || "";
+  const rest = parts.slice(1).join("/").trim();
+  const namePlateParts = rest.split(/\s+/);
+  const userName = namePlateParts[0] || "";
+  const plate = namePlateParts.slice(1).join(" ") || rest;
+  return { vehicle, plate, userName };
+}
+
+// 判断是否为「用车里程登记&客户签到」这类多段行程表单
+function isMultiStopRouteForm(instance: any): boolean {
+  const title = (instance.title || instance.process_instance_id || "").toString();
+  return /用车里程|客户签到|里程登记|外出签到/.test(title);
+}
+
+// 从表单关联字段、OpenDataField、TableField 等值中提取可读的名称
+function extractReadableName(value: string): string {
+  if (!value || value === "null") return "";
+  try {
+    const parsed = JSON.parse(value);
+    if (typeof parsed === "string") return parsed;
+    if (Array.isArray(parsed)) {
+      return parsed.map((item: any) => item?.name || item?.label || item?.title || "").filter(Boolean).join(", ");
+    }
+    return parsed?.name || parsed?.label || parsed?.title || "";
+  } catch {
+    return value.length > 50 ? "" : value;
+  }
+}
+
+// 解析一个审批实例，返回一条或多条 ParsedVisit
+export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[]> {
+  const formComponents: FormComponent[] = instance.form_component_values || [];
+
+  // 通用单表单独回退
+  if (!isMultiStopRouteForm(instance)) {
+    const parsed = parseApprovalForm(formComponents);
+    if (!parsed.user_name) parsed.user_name = instance.originator_user_name || "";
+    if (!parsed.time) return [];
+    return [parsed as ParsedVisit];
+  }
+
+  // 多段行程解析：一个 TimeAndLocationField = 一个 visit 点
+  const originatorUserId = instance.originator_userid || instance.originatorUserId || "";
+  const originatorUserName = instance.originator_user_name || instance.originatorUserName || "";
+  const department = instance.originator_dept_name || instance.originatorDeptName || "销售部";
+  const approvalId = instance.business_id || instance.businessId || instance.process_instance_id || instance.processInstanceId || "";
+
+  const findValue = (pattern: RegExp): string | undefined => {
+    for (const c of formComponents) {
+      const name = (c.name || "").trim();
+      const value = (c.value || "").trim();
+      if (pattern.test(name) && value && value !== "null") return value;
+    }
+    return undefined;
+  };
+
+  const tripType = findValue(/请选择出行方式/);
+
+  // MVP 阶段先跳过公共交通出行，避免里程统计失真
+  if (/公共交通/.test(tripType || "")) {
+    return [];
+  }
+
+  const vehicleRaw = findValue(/选择出行车辆/);
+  const startOdometer = parseFloat(findValue(/出发里程读数/) || "NaN");
+
+  // 解析车辆信息，同时拿到用户名
+  const vehicleInfo = vehicleRaw ? parseVehicle(vehicleRaw) : undefined;
+
+  // 用户名 fallback：originator_user_name → 表单姓名 → 车辆字段中的人名 → 通讯录 API → originator_userid
+  let userName = originatorUserName;
+  if (!userName) {
+    const formName = findValue(/^(姓名|申请人|提交人)$/);
+    if (formName) userName = formName;
+  }
+  if (!userName && vehicleInfo?.userName) {
+    userName = vehicleInfo.userName;
+  }
+  if (!userName && originatorUserId) {
+    const contactName = await getUserNameById(originatorUserId);
+    if (contactName) userName = contactName;
+  }
+  if (!userName) userName = originatorUserId;
+
+  // 收集所有非空的 TimeAndLocationField，按表单顺序
+  const stops: { index: number; parsed: ReturnType<typeof parseTimeLocationValue>; isSpecial: boolean }[] = [];
+  for (let i = 0; i < formComponents.length; i++) {
+    const c = formComponents[i];
+    if (c.component_type !== "TimeAndLocationField") continue;
+    const value = (c.value || "").trim();
+    if (!value || value === "null") continue;
+    const parsed = parseTimeLocationValue(value);
+    if (!parsed) continue;
+    const isSpecial = /打卡地|特殊签到/.test(JSON.stringify([c.name, c.id]));
+    stops.push({ index: i, parsed, isSpecial });
+  }
+
+  if (stops.length === 0) return [];
+
+  const vehicle = vehicleInfo?.vehicle;
+
+  // 为每个 stop 找附近上下文（客户、拜访情况、里程读数）
+  const findNearby = (stopIndex: number, pattern: RegExp): string | undefined => {
+    // 在当前 stop 后面最多 8 个字段里找
+    for (let i = stopIndex + 1; i < Math.min(stopIndex + 9, formComponents.length); i++) {
+      const c = formComponents[i];
+      if (c.component_type === "TimeAndLocationField") break; // 遇到下一个定位字段停止
+      const name = (c.name || "").trim();
+      const value = (c.value || "").trim();
+      if (pattern.test(name) && value && value !== "null") return value;
+    }
+    return undefined;
+  };
+
+  const visits: ParsedVisit[] = [];
+
+  for (let i = 0; i < stops.length; i++) {
+    const stop = stops[i];
+    const sequence = i + 1;
+
+    // 尝试提取客户名称
+    const customerRaw = findNearby(stop.index, /^客户$/) || findNearby(stop.index, /客户名称/);
+    const customerName = customerRaw ? extractReadableName(customerRaw) : "";
+
+    // 拜访情况/特殊签到原因作为备注和备选名称
+    const visitNote = findNearby(stop.index, /本次拜访情况|特殊签到原因/);
+    const noteText = visitNote && visitNote !== "null" ? visitNote : "";
+
+    // 里程读数：第一个 stop 用出发里程，后续尝试找对应的终点里程读数
+    let endOdometer: number | null = null;
+    let reportedDistanceKm: number | null = null;
+    if (i === 0 && !isNaN(startOdometer)) {
+      // 第一个点是出发点，不生成 visit，或仅记录为起点
+    } else {
+      const odoRaw = findNearby(stop.index, /^终点里程读数/);
+      endOdometer = odoRaw && odoRaw !== "null" ? parseFloat(odoRaw) : null;
+      if (endOdometer != null && !isNaN(startOdometer)) {
+        reportedDistanceKm = endOdometer - startOdometer;
+      }
+    }
+
+    const locationName =
+      customerName ||
+      (noteText && noteText.length <= 30 ? noteText : "") ||
+      (stop.isSpecial ? "特殊签到点" : i === 0 ? "出发点" : `签到点${sequence}`);
+
+    visits.push({
+      user_name: userName,
+      department,
+      time: stop.parsed!.time,
+      location_name: locationName,
+      address: stop.parsed!.address,
+      customer_name: customerName,
+      lat: stop.parsed!.lat,
+      lng: stop.parsed!.lng,
+      approval_id: approvalId,
+      sequence,
+      trip_type: tripType,
+      vehicle,
+      start_odometer: i === 0 ? startOdometer : undefined,
+      end_odometer: endOdometer ?? undefined,
+      reported_distance_km: reportedDistanceKm ?? undefined,
+      visit_note: noteText,
+      source_detail: stop.isSpecial ? "special_sign_in" : i === 0 ? "trip_start" : undefined,
+    });
+  }
+
+  return visits;
+}
+
+// 保存钉钉审批实例原始数据
+export async function saveRawApproval(instance: any): Promise<void> {
+  const approvalId = instance.business_id || instance.businessId || instance.process_instance_id || instance.processInstanceId || "";
+  if (!approvalId) return;
+
+  const originatorUserId = instance.originator_userid || instance.originatorUserId || "";
+  const originatorUserName = instance.originator_user_name || instance.originatorUserName || "";
+  const createTime = instance.create_time || instance.createTime || null;
+  const finishTime = instance.finish_time || instance.finishTime || null;
+
+  try {
+    await pool.query(
+      `INSERT INTO raw_approvals
+       (approval_id, process_code, title, originator_userid, originator_user_name,
+        originator_dept_name, create_time, finish_time, form_json, result, status, source)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'dingtalk')
+       ON CONFLICT (approval_id) DO UPDATE SET
+         title = EXCLUDED.title,
+         originator_user_name = EXCLUDED.originator_user_name,
+         originator_dept_name = EXCLUDED.originator_dept_name,
+         finish_time = EXCLUDED.finish_time,
+         form_json = EXCLUDED.form_json,
+         result = EXCLUDED.result,
+         status = EXCLUDED.status`,
+      [
+        approvalId,
+        instance.process_code || instance.processCode || null,
+        instance.title || null,
+        originatorUserId,
+        originatorUserName,
+        instance.originator_dept_name || instance.originatorDeptName || null,
+        createTime ? new Date(createTime) : null,
+        finishTime ? new Date(finishTime) : null,
+        JSON.stringify(instance.form_component_values || []),
+        instance.result || null,
+        instance.status || null,
+      ]
+    );
+  } catch (err) {
+    console.error(`[saveRawApproval] failed for ${approvalId}:`, err);
+  }
+}
+
 export async function fetchAllApprovalIds(
   startTimeMs: number,
   endTimeMs: number
@@ -199,16 +483,18 @@ export async function syncApprovals(
   for (const id of ids) {
     try {
       const instance = await getApprovalDetail(id);
-      const formComponents: FormComponent[] = instance.form_component_values || [];
-      const parsed = parseApprovalForm(formComponents);
 
-      // 一个审批实例至少要有姓名和时间才认为有效
-      if (!parsed.user_name || !parsed.time) {
+      // 先保存原始审批数据
+      await saveRawApproval(instance);
+
+      const visits = await parseApprovalInstance(instance);
+
+      if (visits.length === 0) {
         parseFailures++;
         continue;
       }
 
-      parsedVisits.push(parsed as ParsedVisit);
+      parsedVisits.push(...visits);
     } catch (err) {
       console.error(`Failed to parse DingTalk instance ${id}:`, err);
       parseFailures++;

@@ -5,13 +5,18 @@ import {
   getAccessToken,
   getApprovalInstances,
   getApprovalDetail,
+  getProcessCodeByName,
   syncApprovals,
 } from "../services/dingtalk";
 
 const router = Router();
 
-function dateToMs(dateStr: string): number {
+function dateToStartMs(dateStr: string): number {
   return new Date(dateStr + "T00:00:00+08:00").getTime();
+}
+
+function dateToEndMs(dateStr: string): number {
+  return new Date(dateStr + "T23:59:59.999+08:00").getTime();
 }
 
 // GET /dingtalk/status
@@ -43,24 +48,49 @@ router.get("/status", async (_req: Request, res: Response) => {
   }
 });
 
-// GET /dingtalk/test
-// 拉取一条最近的审批实例，验证权限和数据格式
-router.get("/test", async (_req: Request, res: Response) => {
+// GET /dingtalk/discover?name=用车登记
+// 根据审批模板名称反查 process_code
+router.get("/discover", async (req: Request, res: Response) => {
+  if (!isDingTalkConfigured()) {
+    res.status(400).json({ error: "DingTalk not configured" });
+    return;
+  }
+
+  const name = (req.query.name as string) || "用车登记";
+  try {
+    const processCode = await getProcessCodeByName(name);
+    res.json({
+      success: true,
+      name,
+      processCode,
+      message: processCode ? `找到模板 "${name}" 的 process_code` : `未找到模板 "${name}"`,
+    });
+  } catch (err: any) {
+    console.error("DingTalk discover failed:", err);
+    res.status(500).json({ error: err.message || "DingTalk discover failed" });
+  }
+});
+
+// GET /dingtalk/test?days=N
+// 拉取一条最近的审批实例，验证权限和数据格式；默认查最近 7 天
+router.get("/test", async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
   }
 
   try {
+    const days = Math.min(parseInt((req.query.days as string) || "7", 10) || 7, 30);
     const now = Date.now();
-    const yesterday = now - 24 * 60 * 60 * 1000;
-    const result = await getApprovalInstances(yesterday, now, 0, 10);
+    const startTime = now - days * 24 * 60 * 60 * 1000;
+    const result = await getApprovalInstances(startTime, now, 0, 10);
 
     if (result.list.length === 0) {
       res.json({
         success: true,
-        message: "权限正常，但最近 24 小时没有审批实例",
+        message: `权限正常，但最近 ${days} 天没有审批实例`,
         instanceCount: 0,
+        days,
       });
       return;
     }
@@ -68,7 +98,8 @@ router.get("/test", async (_req: Request, res: Response) => {
     const detail = await getApprovalDetail(result.list[0]);
     res.json({
       success: true,
-      message: "权限正常，已获取一条审批实例",
+      message: `权限正常，已获取一条审批实例（最近 ${days} 天）`,
+      days,
       instanceCount: result.list.length,
       sample: {
         title: detail.title,
@@ -103,7 +134,7 @@ router.post("/sync", async (req: Request, res: Response) => {
   const endStr = endDate || startStr;
 
   try {
-    const result = await syncApprovals(dateToMs(startStr), dateToMs(endStr));
+    const result = await syncApprovals(dateToStartMs(startStr), dateToEndMs(endStr));
     res.json({
       success: true,
       startDate: startStr,

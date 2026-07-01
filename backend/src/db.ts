@@ -25,6 +25,31 @@ export async function initDB(): Promise<void> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      -- RAW 层：钉钉审批原始实例
+      CREATE TABLE IF NOT EXISTS raw_approvals (
+        id SERIAL PRIMARY KEY,
+        approval_id VARCHAR(64) UNIQUE NOT NULL,
+        process_code VARCHAR(64),
+        title VARCHAR(255),
+        originator_userid VARCHAR(64),
+        originator_user_name VARCHAR(128),
+        originator_dept_name VARCHAR(128),
+        create_time TIMESTAMPTZ,
+        finish_time TIMESTAMPTZ,
+        form_json JSONB,
+        result VARCHAR(32),
+        status VARCHAR(32),
+        source VARCHAR(64) DEFAULT 'dingtalk',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_raw_approvals_approval_id
+        ON raw_approvals(approval_id);
+      CREATE INDEX IF NOT EXISTS idx_raw_approvals_originator
+        ON raw_approvals(originator_userid);
+      CREATE INDEX IF NOT EXISTS idx_raw_approvals_create_time
+        ON raw_approvals(create_time);
+
       -- NORMALIZED 层：标准化后的核心数据
       CREATE TABLE IF NOT EXISTS visits (
         id SERIAL PRIMARY KEY,
@@ -110,10 +135,14 @@ export async function initDB(): Promise<void> {
 
       ALTER TABLE anomalies ADD COLUMN IF NOT EXISTS metadata JSONB DEFAULT '{}';
 
+      ALTER TABLE anomalies ADD COLUMN IF NOT EXISTS anomaly_date DATE;
+
       CREATE INDEX IF NOT EXISTS idx_anomalies_user
         ON anomalies(user_id, created_at);
       CREATE INDEX IF NOT EXISTS idx_anomalies_user_type_time
         ON anomalies(user_id, type, created_at);
+      CREATE INDEX IF NOT EXISTS idx_anomalies_user_date
+        ON anomalies(user_id, anomaly_date);
 
       -- 风险摘要预计算缓存表
       CREATE TABLE IF NOT EXISTS risk_summary_cache (
@@ -144,6 +173,70 @@ export async function initDB(): Promise<void> {
         ON risk_summary_cache(date);
       CREATE INDEX IF NOT EXISTS idx_risk_summary_user_date
         ON risk_summary_cache(user_id, date);
+
+      -- 用户系统
+      CREATE TABLE IF NOT EXISTS users (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(64) UNIQUE NOT NULL,
+        user_name VARCHAR(128) NOT NULL,
+        department VARCHAR(128),
+        role VARCHAR(16) NOT NULL CHECK (role IN ('admin', 'manager', 'staff')),
+        manager_id INTEGER REFERENCES users(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_users_manager
+        ON users(manager_id);
+      CREATE INDEX IF NOT EXISTS idx_users_user_id
+        ON users(user_id);
+
+      -- 反馈申诉表
+      CREATE TABLE IF NOT EXISTS feedback (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        description TEXT,
+        status VARCHAR(16) DEFAULT 'pending' CHECK (status IN ('pending', 'approved', 'denied')),
+        reviewer_id VARCHAR(64),
+        review_note TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_feedback_user
+        ON feedback(user_id);
+      CREATE INDEX IF NOT EXISTS idx_feedback_status
+        ON feedback(status);
+
+      -- 异常豁免表（审批 approved 后写入，不删除原异常）
+      CREATE TABLE IF NOT EXISTS anomaly_exceptions (
+        id SERIAL PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL,
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        feedback_id INTEGER REFERENCES feedback(id),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_anomaly_exceptions_user
+        ON anomaly_exceptions(user_id);
+      CREATE INDEX IF NOT EXISTS idx_anomaly_exceptions_dates
+        ON anomaly_exceptions(user_id, start_date, end_date);
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_anomaly_exceptions_feedback_id
+        ON anomaly_exceptions(feedback_id);
+
+      -- 初始化一个默认管理员（可被替换）
+      INSERT INTO users (user_id, user_name, department, role)
+      VALUES ('admin', '系统管理员', '总部', 'admin')
+      ON CONFLICT (user_id) DO UPDATE SET user_name = EXCLUDED.user_name;
+
+      -- 将已有拜访数据中的用户自动导入为用户（默认 staff）
+      INSERT INTO users (user_id, user_name, department, role)
+      SELECT DISTINCT user_id, user_name, department, 'staff'
+      FROM visits
+      WHERE user_id IS NOT NULL
+      ON CONFLICT (user_id) DO NOTHING;
 
       -- 异常规则权重配置表
       CREATE TABLE IF NOT EXISTS anomaly_weights (

@@ -210,13 +210,22 @@ export async function computeEmployeeRiskSummary(
     visitsPast2Weeks,
   });
 
+  // 排除已批准的申诉豁免区间
+  const exceptionsResult = await pool.query(
+    `SELECT 1 FROM anomaly_exceptions
+     WHERE user_id = $1 AND start_date <= $2::date AND end_date >= $2::date`,
+    [userId, dateStr]
+  );
+  const isExempt = exceptionsResult.rows.length > 0;
+  const effectiveAnomalies = isExempt ? [] : anomalies;
+
   // 计算风险分数
-  const { score, reasons } = await calculateRiskScore(anomalies);
+  const { score, reasons } = await calculateRiskScore(effectiveAnomalies);
   const riskLevel = getRiskLevel(score);
 
-  const highAnomalies = anomalies.filter((a) => a.severity === "high");
-  const mediumAnomalies = anomalies.filter((a) => a.severity === "medium");
-  const lowAnomalies = anomalies.filter((a) => a.severity === "low");
+  const highAnomalies = effectiveAnomalies.filter((a) => a.severity === "high");
+  const mediumAnomalies = effectiveAnomalies.filter((a) => a.severity === "medium");
+  const lowAnomalies = effectiveAnomalies.filter((a) => a.severity === "low");
 
   const totalStopMinutes = stops.reduce((sum, s) => sum + s.duration_minutes, 0);
   const totalDistance = routes.reduce((sum, r) => sum + r.distance_km, 0);

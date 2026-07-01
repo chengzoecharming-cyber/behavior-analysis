@@ -122,7 +122,7 @@ cd frontend
 cp .env.example .env
 # 编辑 .env，填入 VITE_AMAP_KEY（高德 JS API Key）
 npm install
-npm run dev       # http://localhost:5173
+npm run dev       # 已固定端口 5173（--strictPort，避免自动切换）
 ```
 
 ### 4. 导入真实数据
@@ -140,7 +140,7 @@ curl -X POST http://localhost:3000/upload-excel \
 
 ## 当前运行状态
 
-- 前端服务：`http://localhost:5173`
+- 前端服务：`http://localhost:5173`（package.json 中已固定，不会自动切换到 5174 等端口）
 - 后端服务：`http://localhost:3000`
 - 已导入 Mock 数据 27 条 + 真实钉钉数据 89 条
 
