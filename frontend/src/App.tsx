@@ -26,6 +26,7 @@ import UploadPage from "./pages/UploadPage";
 import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
 import FeedbackPage from "./pages/FeedbackPage";
+import LoginPage from "./pages/LoginPage";
 import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
 
@@ -54,23 +55,28 @@ function App() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [users, setUsers] = useState<AuthUser[]>([]);
+  const [checking, setChecking] = useState(true);
 
   useEffect(() => {
-    // 默认以 admin 登录，方便本地开发
-    if (!localStorage.getItem("user_id")) {
-      localStorage.setItem("user_id", "admin");
-    }
     loadCurrentUser();
   }, []);
 
-
-
   const loadCurrentUser = async () => {
+    const userId = localStorage.getItem("user_id");
+    if (!userId) {
+      setChecking(false);
+      setCurrentUser(null);
+      return;
+    }
     try {
       const user = await fetchCurrentUser();
       setCurrentUser(user);
-    } catch {
+    } catch (err: any) {
+      console.warn("Fetch current user failed:", err);
+      localStorage.removeItem("user_id");
       setCurrentUser(null);
+    } finally {
+      setChecking(false);
     }
   };
 
@@ -92,9 +98,21 @@ function App() {
 
   const logout = () => {
     localStorage.removeItem("user_id");
-    navigate("/");
+    navigate("/login", { replace: true });
     window.location.reload();
   };
+
+  if (checking) {
+    return (
+      <div className="flex h-screen w-full items-center justify-center bg-[#F6F8FC]">
+        <div className="text-sm text-[#72808a]">正在检查登录状态...</div>
+      </div>
+    );
+  }
+
+  if (!currentUser) {
+    return <LoginPage />;
+  }
 
   const roleText: Record<string, string> = {
     admin: "管理员",
@@ -338,6 +356,7 @@ function App() {
           <Route path="/sync" element={<DataSyncPage />} />
           <Route path="/rules" element={<RulesConfigPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/login" element={<LoginPage />} />
         </Routes>
       </main>
     </div>

@@ -12,6 +12,7 @@ import riskSummaryRouter from "./routes/riskSummary";
 import dingtalkRouter from "./routes/dingtalk";
 import usersRouter from "./routes/users";
 import feedbackRouter from "./routes/feedback";
+import authRouter from "./routes/auth";
 import { startRiskSummaryCacheScheduler, startDingTalkSyncScheduler } from "./services/scheduler";
 
 dotenv.config();
@@ -32,6 +33,7 @@ app.use("/analytics", riskSummaryRouter);
 app.use("/dingtalk", dingtalkRouter);
 app.use("/users", usersRouter);
 app.use("/feedback", feedbackRouter);
+app.use("/auth", authRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });

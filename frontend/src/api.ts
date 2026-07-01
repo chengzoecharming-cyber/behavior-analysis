@@ -299,6 +299,14 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
   return res.data;
 }
 
+export async function login(
+  username: string,
+  password: string
+): Promise<Pick<AuthUser, "user_id" | "user_name" | "department" | "role">> {
+  const res = await api.post("/auth/login", { username, password });
+  return res.data;
+}
+
 export async function fetchAuthUsers(): Promise<AuthUser[]> {
   const res = await api.get("/users/switchable");
   return res.data;
