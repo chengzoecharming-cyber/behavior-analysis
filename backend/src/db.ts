@@ -262,6 +262,46 @@ export async function initDB(): Promise<void> {
         ('invalid_trip_type', '异常出行方式', 0.03, 5, true, '公共交通/特殊签到但填报较长里程'),
         ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, '特殊签到未填写原因')
       ON CONFLICT (rule_key) DO NOTHING;
+
+      -- 钉钉通讯录同步（探测/缓存用）
+      CREATE TABLE IF NOT EXISTS dingtalk_departments (
+        id SERIAL PRIMARY KEY,
+        dept_id BIGINT UNIQUE NOT NULL,
+        parent_id BIGINT,
+        name VARCHAR(128) NOT NULL,
+        synced_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dingtalk_departments_parent
+        ON dingtalk_departments(parent_id);
+
+      CREATE TABLE IF NOT EXISTS dingtalk_users (
+        id SERIAL PRIMARY KEY,
+        userid VARCHAR(64) UNIQUE NOT NULL,
+        name VARCHAR(128) NOT NULL,
+        mobile VARCHAR(32),
+        title VARCHAR(128),
+        dept_id_list VARCHAR(255),
+        source_dept_id BIGINT,
+        synced_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dingtalk_users_source_dept
+        ON dingtalk_users(source_dept_id);
+
+      -- 部门别名映射表：原始 department 字符串 → 规范部门名称
+      CREATE TABLE IF NOT EXISTS department_aliases (
+        id SERIAL PRIMARY KEY,
+        alias VARCHAR(255) UNIQUE NOT NULL,
+        canonical_name VARCHAR(128),
+        source VARCHAR(64) DEFAULT 'manual',
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_department_aliases_canonical
+        ON department_aliases(canonical_name);
     `);
     console.log("Database initialized");
   } finally {

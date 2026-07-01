@@ -1,5 +1,13 @@
 import { Router, Request, Response } from "express";
 import { pool } from "../db";
+import {
+  ensureBeijingTimestamp,
+  toBeijingRange,
+  toBeijingDayStart,
+  toBeijingDayEnd,
+  formatBeijingDate,
+} from "../utils/timezone";
+import { getCanonicalDepartment } from "../services/departmentAliasService";
 
 const router = Router();
 
@@ -45,11 +53,15 @@ router.get("/", async (req: Request, res: Response) => {
   }
 
   try {
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(start as string);
+    const { start: rangeStart, end: rangeEnd } = isDateOnly
+      ? toBeijingRange(start as string, end as string)
+      : { start: ensureBeijingTimestamp(start as string), end: ensureBeijingTimestamp(end as string) };
     const result = await pool.query(
       `SELECT * FROM visits
        WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
        ORDER BY timestamp ASC`,
-      [user, start, end]
+      [user, rangeStart, rangeEnd]
     );
     res.json(result.rows);
   } catch (err) {
@@ -60,10 +72,28 @@ router.get("/", async (req: Request, res: Response) => {
 
 router.get("/users", async (_req: Request, res: Response) => {
   try {
+    // 同一 user_id 可能因部门字段写法不同出现重复，按出现次数取最常用的一条
     const result = await pool.query(
-      `SELECT DISTINCT user_id, user_name, department FROM visits ORDER BY user_name`
+      `SELECT user_id, user_name, department
+       FROM (
+         SELECT user_id, user_name, department,
+                ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC) AS rn
+         FROM visits
+         GROUP BY user_id, user_name, department
+       ) t
+       WHERE rn = 1
+       ORDER BY user_name`
     );
-    res.json(result.rows);
+
+    // 把原始 department 映射成规范部门
+    const users = await Promise.all(
+      result.rows.map(async (row) => ({
+        ...row,
+        department: (await getCanonicalDepartment(row.department)) || row.department,
+      }))
+    );
+
+    res.json(users);
   } catch (err) {
     console.error("Failed to fetch users:", err);
     res.status(500).json({ error: "Database error" });
@@ -81,13 +111,13 @@ router.get("/available-dates", async (req: Request, res: Response) => {
 
   try {
     const result = await pool.query(
-      `SELECT DISTINCT DATE(timestamp) as date
+      `SELECT DISTINCT DATE(timestamp AT TIME ZONE 'Asia/Shanghai') as date
        FROM visits
        WHERE user_id = $1
        ORDER BY date DESC`,
       [user]
     );
-    const dates = result.rows.map((r) => r.date.toISOString().split("T")[0]);
+    const dates = result.rows.map((r) => formatBeijingDate(r.date));
     res.json(dates);
   } catch (err) {
     console.error("Failed to fetch available dates:", err);

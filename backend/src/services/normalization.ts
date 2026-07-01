@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { pool } from "../db";
 import { ParsedVisit } from "../types";
 import { totalDistanceKm } from "./distance";
+import { parseDateTimeAsBeijing } from "../utils/timezone";
 
 export interface GeocodeFailure {
   row: number;
@@ -26,7 +27,7 @@ export function normalizeTimestamp(value: string | number | Date): Date {
   if (typeof value === "number") {
     return XLSX.SSF.parse_date_code(value);
   }
-  return new Date(value);
+  return parseDateTimeAsBeijing(value);
 }
 
 export async function checkDuplicateVisit(

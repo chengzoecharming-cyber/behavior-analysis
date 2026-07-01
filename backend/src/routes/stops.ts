@@ -2,6 +2,12 @@ import { Router, Request, Response } from "express";
 import { pool } from "../db";
 import { detectStops } from "../services/stopDetection";
 import { Visit, Stop } from "../types";
+import {
+  ensureBeijingTimestamp,
+  toBeijingRange,
+  toBeijingDayStart,
+  toBeijingDayEnd,
+} from "../utils/timezone";
 
 const router = Router();
 
@@ -16,11 +22,15 @@ router.get("/", async (req: Request, res: Response) => {
   // 范围模式：直接查询已持久化的 stops
   if (start && end) {
     try {
+      const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(start as string);
+      const { start: rangeStart, end: rangeEnd } = isDateOnly
+        ? toBeijingRange(start as string, end as string)
+        : { start: ensureBeijingTimestamp(start as string), end: ensureBeijingTimestamp(end as string) };
       const result = await pool.query(
         `SELECT * FROM stops
          WHERE user_id = $1 AND start_time >= $2 AND start_time <= $3
          ORDER BY start_time ASC`,
-        [user, start, end]
+        [user, rangeStart, rangeEnd]
       );
       res.json(result.rows);
       return;
@@ -36,8 +46,8 @@ router.get("/", async (req: Request, res: Response) => {
     return;
   }
 
-  const dayStart = `${date}T00:00:00+08:00`;
-  const dayEnd = `${date}T23:59:59+08:00`;
+  const dayStart = toBeijingDayStart(date as string);
+  const dayEnd = toBeijingDayEnd(date as string);
 
   try {
     const result = await pool.query(

@@ -1,5 +1,6 @@
 import { persistRiskSummaryCache } from "./riskSummaryService";
 import { isDingTalkConfigured, syncApprovals } from "./dingtalk";
+import { getYesterdayBeijing, toBeijingDayStart } from "../utils/timezone";
 
 function getMillisecondsUntil(hour: number, minute: number): number {
   const now = new Date();
@@ -10,19 +11,13 @@ function getMillisecondsUntil(hour: number, minute: number): number {
   return target.getTime() - now.getTime();
 }
 
-function getYesterdayDateStr(): string {
-  const d = new Date();
-  d.setDate(d.getDate() - 1);
-  return d.toISOString().split("T")[0];
-}
-
 function dateToMs(dateStr: string): number {
-  return new Date(dateStr + "T00:00:00+08:00").getTime();
+  return new Date(toBeijingDayStart(dateStr)).getTime();
 }
 
 export function startRiskSummaryCacheScheduler(): void {
   const runCacheJob = async () => {
-    const yesterday = getYesterdayDateStr();
+    const yesterday = getYesterdayBeijing();
     console.log(`[Scheduler] Refreshing risk summary cache for ${yesterday}`);
     try {
       await persistRiskSummaryCache(yesterday);
@@ -50,7 +45,7 @@ export function startDingTalkSyncScheduler(): void {
   }
 
   const runSyncJob = async () => {
-    const yesterday = getYesterdayDateStr();
+    const yesterday = getYesterdayBeijing();
     console.log(`[Scheduler] Syncing DingTalk approvals for ${yesterday}`);
     try {
       const result = await syncApprovals(dateToMs(yesterday), dateToMs(yesterday));

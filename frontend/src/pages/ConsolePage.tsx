@@ -14,7 +14,7 @@ import {
 import { User, Visit, Stop, Route, Anomaly, MileageStats } from "../types";
 import MapContainer from "../components/MapContainer";
 
-function Dashboard() {
+function ConsolePage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [users, setUsers] = useState<User[]>([]);
   const [userId, setUserId] = useState<string>();
@@ -185,8 +185,17 @@ function Dashboard() {
               }}
               options={users.map((u) => ({
                 value: u.user_id,
-                label: `${u.user_name} (${u.department})`,
+                label: u.user_name,
+                department: u.department,
               }))}
+              optionRender={(option: any) => (
+                <div>
+                  <div>{option.label}</div>
+                  {option.data?.department && (
+                    <div style={{ fontSize: 12, color: "#999" }}>{option.data.department}</div>
+                  )}
+                </div>
+              )}
             />
           </Col>
           <Col>
@@ -432,4 +441,4 @@ function AnomalyItem({ item }: { item: Anomaly }) {
   );
 }
 
-export default Dashboard;
+export default ConsolePage;

@@ -4,6 +4,11 @@ import { detectStops } from "./stopDetection";
 import { planRoute } from "./routePlanning";
 import { calculateRiskScore, getRiskLevel, RiskReason } from "./riskScoring";
 import { Visit, Stop, Route } from "../types";
+import {
+  toBeijingDayStart,
+  toBeijingDayEnd,
+  formatBeijingDate,
+} from "../utils/timezone";
 
 export interface EmployeeRiskSummary {
   user_id: string;
@@ -53,7 +58,7 @@ function generateSummaryText(
 
 // 计算包含 endDate 当天在内的最近 N 个工作日范围
 function getPastWorkdaysRange(n: number, endDateStr: string): { start: string; end: string } {
-  const end = new Date(`${endDateStr}T23:59:59+08:00`);
+  const end = new Date(toBeijingDayEnd(endDateStr));
   let count = 0;
   const start = new Date(end);
   while (count < n) {
@@ -73,7 +78,7 @@ function getPastWorkdaysRange(n: number, endDateStr: string): { start: string; e
 }
 
 function getPastDaysRange(n: number, endDateStr: string): { start: string; end: string } {
-  const end = new Date(`${endDateStr}T23:59:59+08:00`);
+  const end = new Date(toBeijingDayEnd(endDateStr));
   const start = new Date(end);
   start.setDate(start.getDate() - n);
   start.setHours(0, 0, 0, 0);
@@ -89,8 +94,8 @@ export async function computeEmployeeRiskSummary(
   department: string,
   dateStr: string
 ): Promise<EmployeeRiskSummary> {
-  const start = `${dateStr}T00:00:00+08:00`;
-  const end = `${dateStr}T23:59:59+08:00`;
+  const start = toBeijingDayStart(dateStr);
+  const end = toBeijingDayEnd(dateStr);
 
   // 当天拜访记录
   const visitsResult = await pool.query(
@@ -256,8 +261,8 @@ export async function computeEmployeeRiskSummary(
 }
 
 export async function computeRiskSummaryForDate(dateStr: string): Promise<RiskSummaryResult> {
-  const start = `${dateStr}T00:00:00+08:00`;
-  const end = `${dateStr}T23:59:59+08:00`;
+  const start = toBeijingDayStart(dateStr);
+  const end = toBeijingDayEnd(dateStr);
 
   const usersResult = await pool.query(
     `SELECT DISTINCT user_id, user_name, department
@@ -355,7 +360,7 @@ export async function persistRiskSummaryCache(dateStr: string): Promise<void> {
 }
 
 export async function getRiskSummary(dateStr: string): Promise<RiskSummaryResult> {
-  const today = new Date().toISOString().split("T")[0];
+  const today = formatBeijingDate(new Date());
 
   // 今天及以后的日期实时计算
   if (dateStr >= today) {
@@ -372,22 +377,18 @@ export async function getRiskSummary(dateStr: string): Promise<RiskSummaryResult
   return { ...result, from_cache: false };
 }
 
-// 生成 [startStr, endStr] 之间（含）的所有日期字符串（YYYY-MM-DD），按本地日期处理
+// 生成 [startStr, endStr] 之间（含）的所有北京日期字符串（YYYY-MM-DD）
 function eachDate(startStr: string, endStr: string): string[] {
   const dates: string[] = [];
   const parse = (s: string) => {
-    const datePart = s.slice(0, 10); // 兼容 "YYYY-MM-DDTHH:mm:ss"
-    const [y, m, d] = datePart.split("-").map(Number);
-    return new Date(y, m - 1, d);
+    const datePart = s.slice(0, 10);
+    return new Date(`${datePart}T00:00:00+08:00`);
   };
   const start = parse(startStr);
   const end = parse(endStr);
   const current = new Date(start);
   while (current.getTime() <= end.getTime()) {
-    const y = current.getFullYear();
-    const m = String(current.getMonth() + 1).padStart(2, "0");
-    const d = String(current.getDate()).padStart(2, "0");
-    dates.push(`${y}-${m}-${d}`);
+    dates.push(formatBeijingDate(current));
     current.setDate(current.getDate() + 1);
   }
   return dates;

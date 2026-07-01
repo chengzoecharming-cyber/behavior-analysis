@@ -1,24 +1,22 @@
 import { Router, Request, Response } from "express";
 import { Route } from "../types";
 import { computeAndPersistRoutes } from "../services/routeService";
+import {
+  toBeijingDayStart,
+  toBeijingDayEnd,
+  formatBeijingDate,
+} from "../utils/timezone";
 
 const router = Router();
 
 function eachDate(startStr: string, endStr: string): string[] {
   const dates: string[] = [];
-  const parse = (s: string) => {
-    const datePart = s.slice(0, 10); // 兼容 "YYYY-MM-DDTHH:mm:ss"
-    const [y, m, d] = datePart.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  };
+  const parse = (s: string) => new Date(toBeijingDayStart(s.slice(0, 10)));
   const start = parse(startStr);
   const end = parse(endStr);
   const current = new Date(start);
   while (current.getTime() <= end.getTime()) {
-    const y = current.getFullYear();
-    const m = String(current.getMonth() + 1).padStart(2, "0");
-    const d = String(current.getDate()).padStart(2, "0");
-    dates.push(`${y}-${m}-${d}`);
+    dates.push(formatBeijingDate(current));
     current.setDate(current.getDate() + 1);
   }
   return dates;
@@ -38,8 +36,8 @@ router.get("/", async (req: Request, res: Response) => {
       const dates = eachDate(start as string, end as string);
       const allRoutes: Route[] = [];
       for (const d of dates) {
-        const dayStart = `${d}T00:00:00+08:00`;
-        const dayEnd = `${d}T23:59:59+08:00`;
+        const dayStart = toBeijingDayStart(d);
+        const dayEnd = toBeijingDayEnd(d);
         const routes = await computeAndPersistRoutes(
           user as string,
           dayStart,
@@ -56,8 +54,8 @@ router.get("/", async (req: Request, res: Response) => {
       return;
     }
 
-    const dayStart = `${date}T00:00:00+08:00`;
-    const dayEnd = `${date}T23:59:59+08:00`;
+    const dayStart = toBeijingDayStart(date as string);
+    const dayEnd = toBeijingDayEnd(date as string);
 
     const routes: Route[] = await computeAndPersistRoutes(
       user as string,

@@ -81,6 +81,27 @@ export async function getAccessToken(): Promise<string> {
 
 // 通讯录用户信息缓存
 const userNameCache: Record<string, string> = {};
+const userDetailCache: Record<string, any> = {};
+
+export async function getUserDetail(userid: string): Promise<any | null> {
+  if (!userid) return null;
+  if (userDetailCache[userid]) return userDetailCache[userid];
+
+  const accessToken = await getAccessToken();
+  const data = await httpPost(
+    "/topapi/v2/user/get",
+    { access_token: accessToken },
+    { userid, language: "zh_CN" }
+  );
+
+  if (data.errcode !== 0) {
+    throw new Error(`DingTalk user/get failed for ${userid}: ${data.errmsg} (${data.errcode})`);
+  }
+
+  const result = data.result || null;
+  if (result) userDetailCache[userid] = result;
+  return result;
+}
 
 export async function getUserNameById(userid: string): Promise<string | null> {
   if (!userid) return null;
@@ -106,6 +127,175 @@ export async function getUserNameById(userid: string): Promise<string | null> {
     console.warn(`[DingTalk user/get] error for ${userid}:`, err.message);
     return null;
   }
+}
+
+export interface DingTalkDepartment {
+  dept_id: number;
+  parent_id?: number;
+  name: string;
+  create_dept_group?: boolean;
+  auto_add_user?: boolean;
+}
+
+export async function getDepartmentList(
+  parentDeptId = 1
+): Promise<DingTalkDepartment[]> {
+  const accessToken = await getAccessToken();
+  const data = await httpPost(
+    "/topapi/v2/department/listsub",
+    { access_token: accessToken },
+    { dept_id: parentDeptId, language: "zh_CN" }
+  );
+
+  if (data.errcode !== 0) {
+    throw new Error(`DingTalk department/listsub failed: ${data.errmsg} (${data.errcode})`);
+  }
+
+  const list: DingTalkDepartment[] = data.result || [];
+  console.log(`[DingTalk department/listsub] parent=${parentDeptId}, count=${list.length}`);
+
+  // 递归拉取子部门
+  const allDepartments = [...list];
+  for (const dept of list) {
+    const children = await getDepartmentList(dept.dept_id);
+    allDepartments.push(...children);
+  }
+
+  return allDepartments;
+}
+
+export interface DingTalkUser {
+  userid: string;
+  name: string;
+  mobile?: string;
+  title?: string;
+  dept_id_list?: string;
+  dept_order?: number;
+  hide_mobile?: boolean;
+  senior?: boolean;
+  admin?: boolean;
+  boss?: boolean;
+}
+
+export async function getDepartmentUsers(
+  deptId: number,
+  cursor = 0,
+  size = 100
+): Promise<{ list: DingTalkUser[]; nextCursor?: number }> {
+  const accessToken = await getAccessToken();
+  const data = await httpPost(
+    "/topapi/v2/user/list",
+    { access_token: accessToken },
+    { dept_id: deptId, cursor, size, language: "zh_CN" }
+  );
+
+  if (data.errcode !== 0) {
+    throw new Error(`DingTalk user/list failed: ${data.errmsg} (${data.errcode})`);
+  }
+
+  const result = data.result || {};
+  return {
+    list: result.list || [],
+    nextCursor: result.next_cursor,
+  };
+}
+
+export async function fetchAllDepartmentUsers(
+  deptId: number
+): Promise<DingTalkUser[]> {
+  const users: DingTalkUser[] = [];
+  let cursor: number | undefined = 0;
+
+  while (cursor !== undefined) {
+    const result = await getDepartmentUsers(deptId, cursor);
+    users.push(...result.list);
+    cursor = result.nextCursor;
+  }
+
+  return users;
+}
+
+export async function syncContacts(): Promise<{
+  departments: number;
+  users: number;
+  errors: string[];
+}> {
+  if (!isDingTalkConfigured()) {
+    throw new Error("DingTalk not configured");
+  }
+
+  const errors: string[] = [];
+
+  // 1. 清空旧同步数据
+  await pool.query("TRUNCATE dingtalk_departments, dingtalk_users");
+
+  // 2. 拉取部门树
+  let departments: DingTalkDepartment[] = [];
+  try {
+    departments = await getDepartmentList(1);
+  } catch (err: any) {
+    errors.push(`拉取部门失败: ${err.message}`);
+    throw err;
+  }
+
+  for (const dept of departments) {
+    try {
+      await pool.query(
+        `INSERT INTO dingtalk_departments (dept_id, parent_id, name)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (dept_id) DO UPDATE SET
+           parent_id = EXCLUDED.parent_id,
+           name = EXCLUDED.name`,
+        [dept.dept_id, dept.parent_id ?? null, dept.name]
+      );
+    } catch (err: any) {
+      errors.push(`保存部门 ${dept.name}(${dept.dept_id}) 失败: ${err.message}`);
+    }
+  }
+
+  // 3. 拉取每个部门的用户
+  let totalUsers = 0;
+  const seenUserIds = new Set<string>();
+
+  for (const dept of departments) {
+    try {
+      const users = await fetchAllDepartmentUsers(dept.dept_id);
+      for (const user of users) {
+        if (seenUserIds.has(user.userid)) continue;
+        seenUserIds.add(user.userid);
+
+        await pool.query(
+          `INSERT INTO dingtalk_users
+           (userid, name, mobile, title, dept_id_list, source_dept_id)
+           VALUES ($1, $2, $3, $4, $5, $6)
+           ON CONFLICT (userid) DO UPDATE SET
+             name = EXCLUDED.name,
+             mobile = EXCLUDED.mobile,
+             title = EXCLUDED.title,
+             dept_id_list = EXCLUDED.dept_id_list,
+             source_dept_id = EXCLUDED.source_dept_id,
+             updated_at = NOW()`,
+          [
+            user.userid,
+            user.name,
+            user.mobile || null,
+            user.title || null,
+            user.dept_id_list || null,
+            dept.dept_id,
+          ]
+        );
+        totalUsers++;
+      }
+    } catch (err: any) {
+      errors.push(`拉取部门 ${dept.name}(${dept.dept_id}) 用户失败: ${err.message}`);
+    }
+  }
+
+  return {
+    departments: departments.length,
+    users: totalUsers,
+    errors,
+  };
 }
 
 export async function getApprovalInstances(

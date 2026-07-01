@@ -9,15 +9,22 @@ import {
   Row,
   Col,
   Modal,
+  Select,
+  Table,
+  Card,
 } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
 import {
   fetchRiskSummary,
   fetchRiskSummaryRange,
+  fetchRegionalOverview,
+  fetchDepartments,
+  RegionalOverviewResponse,
   RiskSummaryResponse,
   EmployeeRiskSummary,
 } from "../api";
+import HeatMapContainer from "../components/HeatMapContainer";
 
 const { Title, Text } = Typography;
 
@@ -99,6 +106,16 @@ function DecisionPage() {
   const [modalVisible, setModalVisible] = useState(false);
   const [modalLevel, setModalLevel] = useState<RiskLevel | null>(null);
 
+  // 区域拜访热力图状态（独立日期范围）
+  const [regionalData, setRegionalData] = useState<RegionalOverviewResponse | null>(null);
+  const [regionalLoading, setRegionalLoading] = useState(false);
+  const [regionalDepartment, setRegionalDepartment] = useState<string>("all");
+  const [regionalRange, setRegionalRange] = useState<Date[]>(() => {
+    const yesterday = dayjs().subtract(1, "day").toDate();
+    return [yesterday, yesterday];
+  });
+  const [allDepartments, setAllDepartments] = useState<string[]>([]);
+
   // 当前生效的查询范围
   const currentRange = useMemo<{ start: string; end: string; isRange: boolean }>(() => {
     if (mode === "today") {
@@ -160,6 +177,33 @@ function DecisionPage() {
     loadData();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode, date, customRange]);
+
+  // 加载区域拜访热力图数据
+  const loadRegionalData = async () => {
+    if (regionalRange.length !== 2) return;
+    setRegionalLoading(true);
+    try {
+      const start = dayjs(regionalRange[0]).format("YYYY-MM-DD");
+      const end = dayjs(regionalRange[1]).format("YYYY-MM-DD");
+      const res = await fetchRegionalOverview(
+        start,
+        end,
+        regionalDepartment
+      );
+      setRegionalData(res);
+    } finally {
+      setRegionalLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchDepartments().then(setAllDepartments);
+  }, []);
+
+  useEffect(() => {
+    loadRegionalData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [regionalRange, regionalDepartment]);
 
   const openRiskModal = (level: RiskLevel) => {
     setModalLevel(level);
@@ -236,7 +280,7 @@ function DecisionPage() {
           // 下钻到控制台统一使用单日视图，范围为选中的最后一天
           const drillDate = currentRange.end;
           window.open(
-            `/dashboard?user=${emp.user_id}&date=${drillDate}`,
+            `/console?user=${emp.user_id}&date=${drillDate}`,
             "_blank"
           );
         }}
@@ -480,6 +524,91 @@ function DecisionPage() {
           <Col span={8}>{renderStatCard("medium", data.medium_risk_count)}</Col>
           <Col span={8}>{renderStatCard("low", data.low_risk_count)}</Col>
         </Row>
+      )}
+
+      {/* Regional Visit Heat Map */}
+      {!loading && data && (
+        <div style={{ marginTop: 32 }}>
+          <Title heading={3} style={{ marginBottom: 16, fontWeight: 600 }}>
+            区域拜访分析
+          </Title>
+
+          {/* Filter Area */}
+          <div style={{ marginBottom: 16, display: "flex", gap: 12 }}>
+            <DatePicker
+              type="dateRange"
+              value={regionalRange}
+              onChange={(range) => {
+                const r = range as Date[] | null;
+                if (r && r[0] && r[1]) {
+                  setRegionalRange([r[0], r[1]]);
+                }
+              }}
+              style={{ width: 280 }}
+            />
+            <Select
+              style={{ width: 260 }}
+              value={regionalDepartment}
+              onChange={(value) => setRegionalDepartment(value as string)}
+              optionList={[
+                { value: "all", label: "全部部门" },
+                ...allDepartments.map((name) => {
+                  const stat = regionalData?.departments.find((d) => d.name === name);
+                  return {
+                    value: name,
+                    label: stat
+                      ? `${name} (${stat.visitCount}次 / ${stat.employeeCount}人)`
+                      : name,
+                  };
+                }),
+              ]}
+              loading={regionalLoading}
+            />
+          </div>
+
+          {/* Heat Map + Department Table */}
+          <Row gutter={16}>
+            <Col span={16}>
+              <Card
+                title="区域拜访热力图"
+                bodyStyle={{ padding: 12, height: 520 }}
+                loading={regionalLoading}
+              >
+                <HeatMapContainer points={regionalData?.heatMapPoints ?? []} />
+              </Card>
+            </Col>
+            <Col span={8}>
+              <Card
+                title="部门分布"
+                bodyStyle={{ padding: 0, height: 520, overflow: "auto" }}
+                loading={regionalLoading}
+              >
+                <Table
+                  dataSource={regionalData?.departments ?? []}
+                  columns={[
+                    {
+                      title: "部门 / 区域",
+                      dataIndex: "name",
+                      render: (text: string) => <Tag>{text}</Tag>,
+                    },
+                    {
+                      title: "拜访次数",
+                      dataIndex: "visitCount",
+                      sorter: (a: any, b: any) => a.visitCount - b.visitCount,
+                    },
+                    {
+                      title: "涉及员工",
+                      dataIndex: "employeeCount",
+                    },
+                  ]}
+                  rowKey="name"
+                  pagination={false}
+                  size="small"
+                />
+              </Card>
+            </Col>
+          </Row>
+        </div>
       )}
 
       {/* Risk Detail Modal */}

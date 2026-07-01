@@ -13,6 +13,13 @@ import {
   getAnomalyWeights,
   updateAnomalyWeight,
 } from "../services/anomalyWeights";
+import {
+  ensureBeijingTimestamp,
+  toBeijingRange,
+  toBeijingDayStart,
+  toBeijingDayEnd,
+  formatBeijingDate,
+} from "../utils/timezone";
 
 const router = Router();
 
@@ -25,19 +32,12 @@ function formatLocalDate(d: Date): string {
 
 function eachDate(startStr: string, endStr: string): string[] {
   const dates: string[] = [];
-  const parse = (s: string) => {
-    const datePart = s.slice(0, 10); // 兼容 "YYYY-MM-DDTHH:mm:ss"
-    const [y, m, d] = datePart.split("-").map(Number);
-    return new Date(y, m - 1, d);
-  };
+  const parse = (s: string) => new Date(toBeijingDayStart(s.slice(0, 10)));
   const start = parse(startStr);
   const end = parse(endStr);
   const current = new Date(start);
   while (current.getTime() <= end.getTime()) {
-    const y = current.getFullYear();
-    const m = String(current.getMonth() + 1).padStart(2, "0");
-    const d = String(current.getDate()).padStart(2, "0");
-    dates.push(`${y}-${m}-${d}`);
+    dates.push(formatBeijingDate(current));
     current.setDate(current.getDate() + 1);
   }
   return dates;
@@ -57,12 +57,19 @@ router.get("/mileage", async (req: Request, res: Response) => {
     let responseDate: any;
 
     if (start && end) {
-      rangeStart = start as string;
-      rangeEnd = end as string;
+      const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(start as string);
+      if (isDateOnly) {
+        const range = toBeijingRange(start as string, end as string);
+        rangeStart = range.start;
+        rangeEnd = range.end;
+      } else {
+        rangeStart = ensureBeijingTimestamp(start as string);
+        rangeEnd = ensureBeijingTimestamp(end as string);
+      }
       responseDate = { start, end };
     } else if (date) {
-      rangeStart = `${date}T00:00:00+08:00`;
-      rangeEnd = `${date}T23:59:59+08:00`;
+      rangeStart = toBeijingDayStart(date as string);
+      rangeEnd = toBeijingDayEnd(date as string);
       responseDate = { date };
     } else {
       res.status(400).json({ error: "Missing date or start/end parameter" });
@@ -83,8 +90,8 @@ router.get("/mileage", async (req: Request, res: Response) => {
       // 范围模式：按天补算 route
       const dates = eachDate(start as string, end as string);
       for (const d of dates) {
-        const dayStart = `${d}T00:00:00+08:00`;
-        const dayEnd = `${d}T23:59:59+08:00`;
+        const dayStart = toBeijingDayStart(d);
+        const dayEnd = toBeijingDayEnd(d);
         const dayRoutes = await computeAndPersistRoutes(
           user as string,
           dayStart,
@@ -110,7 +117,10 @@ router.get("/mileage", async (req: Request, res: Response) => {
       [user, rangeStart, rangeEnd]
     );
     const reportedDistanceKm = visitsResult.rows.reduce(
-      (sum: number, row: any) => sum + (row.reported_distance_km || 0),
+      (sum: number, row: any) => {
+        const v = row.reported_distance_km;
+        return sum + (v && v > 0 ? v : 0);
+      },
       0
     );
 
@@ -159,8 +169,8 @@ router.get("/anomaly", async (req: Request, res: Response) => {
       return;
     }
 
-    const dayStart = `${date}T00:00:00+08:00`;
-    const dayEnd = `${date}T23:59:59+08:00`;
+    const dayStart = toBeijingDayStart(date as string);
+    const dayEnd = toBeijingDayEnd(date as string);
 
     const visitsResult = await pool.query(
       `SELECT * FROM visits
@@ -241,11 +251,13 @@ router.get("/mileage-distribution", async (req: Request, res: Response) => {
   }
 
   try {
+    const rangeStart = ensureBeijingTimestamp(start as string);
+    const rangeEnd = ensureBeijingTimestamp(end as string);
     const visitsResult = await pool.query(
       `SELECT * FROM visits
        WHERE timestamp >= $1 AND timestamp <= $2
        ORDER BY user_id, timestamp ASC`,
-      [start, end]
+      [rangeStart, rangeEnd]
     );
     const visits: Visit[] = visitsResult.rows;
 
@@ -308,8 +320,8 @@ router.get("/risk-score", async (req: Request, res: Response) => {
     return;
   }
 
-  const start = `${date}T00:00:00+08:00`;
-  const end = `${date}T23:59:59+08:00`;
+  const start = toBeijingDayStart(date as string);
+  const end = toBeijingDayEnd(date as string);
 
   try {
     const visitsResult = await pool.query(

@@ -9,7 +9,6 @@ import {
 } from "react-router-dom";
 import {
   Home,
-  BarChart3,
   Upload,
   Bell,
   User,
@@ -22,7 +21,7 @@ import {
   LogOut,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
-import Dashboard from "./pages/Dashboard";
+import ConsolePage from "./pages/ConsolePage";
 import UploadPage from "./pages/UploadPage";
 import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
@@ -38,7 +37,7 @@ interface NavItem {
 
 const navItems: NavItem[] = [
   { path: "/", label: "决策系统", icon: Home },
-  { path: "/dashboard", label: "控制台", icon: BarChart3 },
+  { path: "/console", label: "控制台", icon: MapPin },
   { path: "/upload", label: "数据上传", icon: Upload },
   { path: "/sync", label: "数据同步", icon: RefreshCw },
   { path: "/rules", label: "规则配置", icon: Settings },
@@ -332,8 +331,9 @@ function App() {
       <main className="flex-1 min-h-0" style={{ padding: 24 }}>
         <Routes>
           <Route path="/" element={<DecisionPage />} />
-          <Route path="/dashboard" element={<Dashboard />} />
-          <Route path="/map" element={<Navigate to="/dashboard" replace />} />
+          <Route path="/dashboard" element={<Navigate to="/" replace />} />
+          <Route path="/console" element={<ConsolePage />} />
+          <Route path="/map" element={<Navigate to="/" replace />} />
           <Route path="/upload" element={<UploadPage />} />
           <Route path="/sync" element={<DataSyncPage />} />
           <Route path="/rules" element={<RulesConfigPage />} />

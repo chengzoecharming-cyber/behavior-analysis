@@ -142,6 +142,45 @@ export async function fetchRiskSummaryRange(
   return res.data;
 }
 
+export interface RegionalOverviewResponse {
+  start: string;
+  end: string;
+  department?: string;
+  totalVisits: number;
+  totalEmployees: number;
+  totalLocations: number;
+  departments: {
+    name: string;
+    visitCount: number;
+    employeeCount: number;
+  }[];
+  heatMapPoints: {
+    lat: number;
+    lng: number;
+    count: number;
+    userName: string;
+    locationName: string;
+    address: string;
+    timestamp: string;
+  }[];
+}
+
+export async function fetchRegionalOverview(
+  start: string,
+  end: string,
+  department?: string
+): Promise<RegionalOverviewResponse> {
+  const res = await api.get("/analytics/regional-overview", {
+    params: { start, end, department: department && department !== "all" ? department : undefined },
+  });
+  return res.data;
+}
+
+export async function fetchDepartments(): Promise<string[]> {
+  const res = await api.get("/analytics/departments");
+  return res.data;
+}
+
 export async function fetchAnomalyWeights(): Promise<AnomalyWeight[]> {
   const res = await api.get("/analytics/anomaly-weights");
   return res.data;
