@@ -1,7 +1,116 @@
 # 销售外勤行为分析系统 - 开发计划
 
-> 最后更新：2026-06-26
-> 当前重点：Dashboard/控制台定位已拆分；后续可优化热力图性能、部门筛选数据源（users 表 or 钉钉通讯录）。
+> 最后更新：2026-07-01
+> 当前重点：P0 热修复——时间轴语义统一与权限收口。
+
+## P0 热修复（当前冲刺）
+
+### 背景
+
+接入真实数据后发现，系统存在两类阻断性风险：
+
+1. **时间轴语义不统一**：Excel 日期解析异常、部分代码未按北京时间处理业务日期、前端日期选择器受浏览器时区影响，导致"选 7 月 1 日查不到数据"、"风险摘要算错日期"、"工作日/周末误判"。
+2. **权限系统未收口**：大量核心业务接口未挂载认证与角色过滤，存在数据泄露和越权操作风险。
+
+这两类问题不解决，后续所有分析功能都建立在不可信的数据和不受控的访问之上。
+
+---
+
+### P0-1 时间轴语义统一
+
+#### 产品目标
+
+> 定义并落地「业务时间契约」：**任何无显式时区的日期/时间字符串，统一按 Asia/Shanghai（UTC+8）解释；数据库继续以 UTC 时间戳存储；前端日期选择器反映业务日期，而非浏览器本地日期。**
+
+#### 核心原则
+
+| 原则 | 说明 |
+|---|---|
+| 业务日期唯一解释 | `2026-07-01` = 2026-07-01 00:00:00 +08:00，不受服务器/浏览器时区影响 |
+| 数据库统一存 UTC | 使用 `TIMESTAMPTZ`，写入前完成 +08:00 → UTC 转换 |
+| 前后端参数简化 | 前端传 `YYYY-MM-DD`，后端按 +08:00 解释 |
+| 工作日按北京时间 | 周末/工作日判断基于 Asia/Shanghai 的星期几 |
+
+#### 任务拆分
+
+- [x] **T1. Excel 日期解析标准化**
+  - 修复 `services/normalization.ts:25-30`：`XLSX.SSF.parse_date_code` 返回对象而非 `Date`，需显式转换为 JS `Date`
+  - 验收：所有 Excel/钉钉导入记录的 `timestamp` 为有效 UTC 时间戳
+
+- [x] **T2. 坐标缺失/无效防御**
+  - 修复 `routes/upload.ts` / `services/normalization.ts`：`parseFloat("")` 会产生 `NaN` 且 `NaN ?? 0` 不触发 fallback
+  - 验收：`visits.lat` / `visits.lng` 无 `NaN`；无效记录标记 `geocode_status='failed'` 并可进入"待修正坐标"列表
+
+- [x] **T3. 地理编码兜底策略修正**
+  - 修复 `services/geocoding.ts`：移除随机抖动；高德失败时查询 `address_fallback_coordinates` 兜底地址表；仍失败返回 `null`
+  - `visits.lat` / `visits.lng` 改为可空，不再入库 `0,0`
+  - 下游 `stopDetection`、`routePlanning`、`anomalyDetection` 均跳过/防御 `null` 坐标
+  - 验收：同一地址多次 geocode 返回同一结果；无效地址坐标为 `null` 并标记 `geocode_status='failed'`
+
+- [x] **T4. 后端查询接口时区统一**
+  - 扫描并修复 `routes/visits.ts`、`routes/stops.ts`、`routes/routes.ts`、`routes/analytics.ts`、`routes/riskSummary.ts`、`routes/dingtalk.ts`
+  - 替换所有 `new Date(dateStr)` / `getDay()` 等本地时区依赖，统一使用 `services/utils/timezone.ts`
+  - 验收：服务器无论部署在何种时区，按 `start`/`end`/`date` 查询的结果一致
+
+- [x] **T5. 计算逻辑时区统一**
+  - 修复 `services/anomalyDetection.ts`、`services/riskSummaryService.ts`、`services/scheduler.ts`
+  - 工作日判断、日期格式化、定时任务调度全部基于北京时间
+  - 验收：定时任务在北京时间每天 02:00 / 02:30 触发；周末异常不误判
+
+- [x] **T6. 前端日期组件时区统一**
+  - 全局配置 `dayjs.tz.setDefault("Asia/Shanghai")`
+  - 修复 `ConsolePage.tsx`、`MapPage.tsx`、`DecisionPage.tsx`、`FeedbackPage.tsx`、`DataSyncPage.tsx`、`MapContainer.tsx` 中的日期格式化
+  - 验收：浏览器不在东八区时，选择"2026-07-01"仍查询北京时间的 2026-07-01
+
+- [x] **T7. 历史脏数据清洗**
+  - 编写 `backend/scripts/cleanHistoricalData.ts` 一次性脚本，幂等执行
+  - 自动修复：负里程 → NULL、`anomalies.anomaly_date` 缺失 → 按北京时间推断
+  - 分类报告：`routes` 零距离 18 条、`visits` null 坐标 3 条（预期状态）
+  - 报告已保存：`backend/clean-report-2026-07-01.json`
+  - 验收：核心表无负里程、无缺失业务日期；剩余异常项均为预期状态或待人工复核
+
+---
+
+### P0-2 权限系统收口
+
+#### 产品目标
+
+> **"数据范围"必须与"用户身份"绑定：staff 仅看自己，manager 看本部门，admin 看全部；写操作仅对 admin/manager 开放。**
+
+#### 角色权限矩阵
+
+| 角色 | 数据范围 | 可读接口 | 可写操作 |
+|---|---|---|---|
+| admin | 全部 | 全部 | 全部 |
+| manager | 本部门员工 | 全部（按部门过滤） | 上传 Excel、部门别名维护、钉钉同步、规则配置 |
+| staff | 仅自己 | `/visits`、`/stops`、`/routes`、`/analytics/*`（仅自己） | 提交申诉反馈 |
+
+#### 任务拆分
+
+- [ ] **P2-1. 后端路由统一认证**
+  - 为 `/analytics/*`、`/visits/*`、`/routes/*`、`/stops/*`、`/upload-excel`、`/dingtalk/*` 挂载 `authMiddleware`
+  - 验收：无 `X-User-Id` 请求头时返回 `401 Unauthorized`
+
+- [ ] **P2-2. 后端数据范围过滤**
+  - staff：`user_id = 当前用户`
+  - manager：`department = 本部门` 或 `user_id` 在下属列表
+  - admin：无限制
+  - 验收：staff 通过 `?user=他人` 访问时返回 `403` 或空结果
+
+- [ ] **P2-3. 写操作角色限制**
+  - 上传 Excel、修改异常权重、初始化部门别名、钉钉同步、刷新风险摘要缓存 仅 admin/manager
+  - 验收：staff 调用写接口返回 `403 Forbidden`
+
+- [ ] **P2-4. 前端菜单与路由守卫**
+  - `App.tsx` 按 `currentUser.role` 过滤 `navItems`
+  - 无权限页面重定向或显示"无权限"
+  - 验收：staff 看不到"规则配置"、"数据同步"、"用户管理"等入口
+
+- [ ] **P2-5. 前端组件级权限**
+  - 按钮、卡片、下钻链接按角色禁用或隐藏
+  - 验收：staff 无法点击他人下钻链接，无法访问管理功能
+
+---
 
 ## 已上线
 
@@ -114,9 +223,10 @@
   - 所有查询接口把前端传入的日期按 `+08:00` 解释
   - 清空 `risk_summary_cache`，按新规则重新预计算
 - **任务**：
-  - [x] 统一后端 `/visits`、`/routes`、`/stops`、`/analytics/*` 的时区处理
+  - [x] 统一后端 `/visits`、`/routes`、`/stops`、`/analytics/*` 的时区处理（初版）
   - [x] 统一前端日期传参格式（后端已兼容，前端保持 `YYYY-MM-DDTHH:mm:ss` 无 tz 格式）
   - [x] 清空并重建风险摘要缓存（2026-06-17 / 18 / 26 已重算）
+  - [ ] **待收口**：仍有 `new Date(dateStr)` / `getDay()` / 前端 `dayjs()` 本地时区依赖（详见 P0-1 时间轴语义统一）
 
 #### 3.5.2 用户去重（中优先级）
 
@@ -295,6 +405,8 @@ CREATE TABLE fuel_records (
 
 ### Step 6：权限系统（框架已完成，核心业务接口待收口）
 
+> 详见上方 **P0-2 权限系统收口**，本节保留历史记录。
+
 #### 角色设计
 
 | 角色 | 权限 |
@@ -310,12 +422,13 @@ CREATE TABLE fuel_records (
 - ✅ `/users`、`/feedback` 接口已按角色过滤
 - ✅ 前端 `App.tsx` 用户切换与角色展示
 
-#### 待收口
+#### 待收口（已拆分为 P0-2 任务）
 
-- [ ] `/analytics/*`、`/visits/*`、`/routes/*`、`/stops/*`、`/upload-excel`、`/dingtalk/*` 等核心业务接口接入权限过滤
-- [ ] 前端导航栏按角色隐藏入口
-- [ ] Dashboard/控制台按角色限制数据范围
-- [ ] 普通员工个人页
+- [ ] P2-1. 后端路由统一认证：`/analytics/*`、`/visits/*`、`/routes/*`、`/stops/*`、`/upload-excel`、`/dingtalk/*`
+- [ ] P2-2. 后端数据范围过滤（staff=自己 / manager=本部门 / admin=全部）
+- [ ] P2-3. 写操作角色限制（上传、权重、部门别名、钉钉同步、缓存刷新）
+- [ ] P2-4. 前端菜单与路由守卫
+- [ ] P2-5. 前端组件级权限控制
 
 ---
 
