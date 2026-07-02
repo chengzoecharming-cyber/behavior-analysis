@@ -2,12 +2,14 @@ import { Router, Request, Response } from "express";
 import { pool } from "../db";
 import { detectAnomalies } from "../services/anomalyDetection";
 import { detectStops } from "../services/stopDetection";
-import { planRoute } from "../services/routePlanning";
+
 import { computeAndPersistRoutes } from "../services/routeService";
+import { MAX_MILEAGE_KM } from "../services/mileageConfig";
 import {
   computeMileageSegments,
   computeMileageStats,
 } from "../services/mileageAnalysis";
+import { computeUserOverview } from "../services/userOverviewService";
 import { Visit, Stop, Route, Anomaly } from "../types";
 import {
   getAnomalyWeights,
@@ -102,20 +104,24 @@ router.get("/mileage", async (req: Request, res: Response) => {
 
     const totalKm = routes.reduce((sum, r) => sum + r.distance_km, 0);
 
-    // 计算填报总里程（累加所有 visit 的 reported_distance_km）
-    const visitsResult = await pool.query(
-      `SELECT reported_distance_km
-       FROM visits
-       WHERE user_id = $1
-        AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-        AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`,
-      [user, rangeStart, rangeEnd]
+    // 计算填报总里程：钉钉的 reported_distance_km 是累计值，
+    // 同一 approval_id 内应取最后一个累计值（MAX），再跨审批求和。
+    const reportedResult = await pool.query(
+      `SELECT approval_group, MAX(reported_distance_km) AS trip_total
+       FROM (
+         SELECT reported_distance_km,
+                COALESCE(approval_id, user_id || '_' || business_date::text) AS approval_group
+         FROM visits
+         WHERE user_id = $1
+           AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+           AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+       ) t
+       WHERE reported_distance_km > 0 AND reported_distance_km <= $4
+       GROUP BY approval_group`,
+      [user, rangeStart, rangeEnd, MAX_MILEAGE_KM]
     );
-    const reportedDistanceKm = visitsResult.rows.reduce(
-      (sum: number, row: any) => {
-        const v = row.reported_distance_km;
-        return sum + (v && v > 0 ? v : 0);
-      },
+    const reportedDistanceKm = reportedResult.rows.reduce(
+      (sum: number, row: any) => sum + (row.trip_total ? parseFloat(row.trip_total) : 0),
       0
     );
 
@@ -177,10 +183,12 @@ router.get("/anomaly", async (req: Request, res: Response) => {
 
     const stops = detectStops(visits);
 
-    const routes: Route[] = [];
-    for (let i = 1; i < visits.length; i++) {
-      routes.push(await planRoute(visits[i - 1], visits[i], user as string));
-    }
+    // 按 approval_id 分组计算路线，避免跨审批串点
+    const routes: Route[] = await computeAndPersistRoutes(
+      user as string,
+      dayStart,
+      dayEnd
+    );
 
     const anomalies = await detectAnomalies({
       userId: user as string,
@@ -308,6 +316,28 @@ router.put("/anomaly-weights/:key", async (req: Request, res: Response) => {
 });
 
 
+// 单个员工周期总览
+router.get("/user-overview", async (req: Request, res: Response) => {
+  const { user, start, end } = req.query;
+
+  if (!user || !start || !end) {
+    res.status(400).json({ error: "Missing user, start or end parameter" });
+    return;
+  }
+
+  try {
+    const result = await computeUserOverview(
+      user as string,
+      start as string,
+      end as string
+    );
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to compute user overview:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 // 单日风险评分
 router.get("/risk-score", async (req: Request, res: Response) => {
   const { user_id, date } = req.query;
@@ -329,10 +359,11 @@ router.get("/risk-score", async (req: Request, res: Response) => {
     const visits: Visit[] = visitsResult.rows;
 
     const stops = detectStops(visits);
-    const routes: Route[] = [];
-    for (let i = 1; i < visits.length; i++) {
-      routes.push(await planRoute(visits[i - 1], visits[i], user_id as string));
-    }
+    const routes: Route[] = await computeAndPersistRoutes(
+      user_id as string,
+      start,
+      end
+    );
 
     const anomalies = await detectAnomalies({
       userId: user_id as string,

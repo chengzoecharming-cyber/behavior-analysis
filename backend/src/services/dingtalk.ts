@@ -1,6 +1,7 @@
 import { ParsedVisit } from "../types";
 import { processParsedVisits, ProcessResult } from "./normalization";
 import { pool } from "../db";
+import { MAX_MILEAGE_KM } from "./mileageConfig";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
 
@@ -560,13 +561,19 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     // 里程读数：第一个 stop 用出发里程，后续尝试找对应的终点里程读数
     let endOdometer: number | null = null;
     let reportedDistanceKm: number | null = null;
+    let mileageNote = "";
     if (i === 0 && !isNaN(startOdometer)) {
       // 第一个点是出发点，不生成 visit，或仅记录为起点
     } else {
       const odoRaw = findNearby(stop.index, /^终点里程读数/);
       endOdometer = odoRaw && odoRaw !== "null" ? parseFloat(odoRaw) : null;
       if (endOdometer != null && !isNaN(startOdometer)) {
-        reportedDistanceKm = endOdometer - startOdometer;
+        const diff = endOdometer - startOdometer;
+        if (diff >= 0 && diff <= MAX_MILEAGE_KM) {
+          reportedDistanceKm = diff;
+        } else {
+          mileageNote = " [里程读数异常]";
+        }
       }
     }
 
@@ -591,7 +598,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
       start_odometer: i === 0 ? startOdometer : undefined,
       end_odometer: endOdometer ?? undefined,
       reported_distance_km: reportedDistanceKm ?? undefined,
-      visit_note: noteText,
+      visit_note: noteText + mileageNote,
       source_detail: stop.isSpecial ? "special_sign_in" : i === 0 ? "trip_start" : undefined,
     });
   }

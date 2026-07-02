@@ -1,5 +1,6 @@
 import * as XLSX from "xlsx";
 import { batchGeocode } from "./geocoding";
+import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { ParsedVisit } from "../types";
 
 export interface ParseResult {
@@ -167,7 +168,7 @@ export async function parseDingTalkExcel(filePath: string): Promise<ParseResult>
         vehicle,
         start_odometer: startOdometer,
         end_odometer: parseNumber(row[block.endOdometer]),
-        reported_distance_km: parseNumber(row[block.cumulativeMileage]),
+        reported_distance_km: validMileage(row[block.cumulativeMileage]),
         visit_note: String(row[block.note] || "").trim(),
         special_sign_reason: specialSignReason,
         sign_count: parseNumber(row[block.signCount]),
@@ -204,7 +205,7 @@ export async function parseDingTalkExcel(filePath: string): Promise<ParseResult>
         trip_type: tripType,
         vehicle,
         start_odometer: startOdometer,
-        reported_distance_km: totalMileage,
+        reported_distance_km: validMileage(totalMileage),
         visit_note: String(row[COL.specialBlock.note] || "").trim(),
         special_sign_reason: specialSignReason,
         source_detail: "dingtalk_special_sign",
@@ -246,6 +247,13 @@ function parseNumber(value: any): number | undefined {
   if (value === "" || value === null || value === undefined) return undefined;
   const n = typeof value === "number" ? value : parseFloat(String(value).replace(/,/g, ""));
   return isNaN(n) ? undefined : n;
+}
+
+function validMileage(value: any): number | undefined {
+  const n = parseNumber(value);
+  if (n == null) return undefined;
+  if (n < 0 || n > MAX_MILEAGE_KM) return undefined;
+  return n;
 }
 
 function truncate(str: string, max: number): string {

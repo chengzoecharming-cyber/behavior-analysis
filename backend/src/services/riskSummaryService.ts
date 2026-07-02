@@ -1,7 +1,7 @@
 import { pool } from "../db";
 import { detectAnomalies } from "./anomalyDetection";
 import { detectStops } from "./stopDetection";
-import { planRoute } from "./routePlanning";
+import { computeAndPersistRoutes } from "./routeService";
 import { calculateRiskScore, getRiskLevel, RiskReason } from "./riskScoring";
 import { Visit, Stop, Route } from "../types";
 import {
@@ -138,74 +138,10 @@ export async function computeEmployeeRiskSummary(
   );
   const stops: Stop[] = stopsResult.rows;
 
-  // 路径（优先用已持久化的 routes，缺失的并行补算）
-  // 仅查询相邻 visit 之间的 route，避免返回非相邻历史 route
-  const adjacentPairs = [] as [number, number][];
-  for (let i = 1; i < visitsToday.length; i++) {
-    adjacentPairs.push([visitsToday[i - 1].id, visitsToday[i].id]);
-  }
-
-  let existingRoutes: Route[] = [];
-  if (adjacentPairs.length > 0) {
-    const fromIds = adjacentPairs.map(([a]) => a);
-    const toIds = adjacentPairs.map(([, b]) => b);
-    const routesResult = await pool.query(
-      `SELECT * FROM routes
-       WHERE user_id = $1
-         AND (from_visit_id, to_visit_id) IN (
-           SELECT * FROM unnest($2::int[], $3::int[]) AS t(from_id, to_id)
-         )
-       ORDER BY from_visit_id`,
-      [userId, fromIds, toIds]
-    );
-    existingRoutes = routesResult.rows;
-  }
-  const existingPairs = new Set(
-    existingRoutes.map((r) => `${r.from_visit_id}-${r.to_visit_id}`)
-  );
-
-  const missingPairs: { from: Visit; to: Visit }[] = [];
-  for (let i = 1; i < visitsToday.length; i++) {
-    const pairKey = `${visitsToday[i - 1].id}-${visitsToday[i].id}`;
-    if (!existingPairs.has(pairKey)) {
-      missingPairs.push({ from: visitsToday[i - 1], to: visitsToday[i] });
-    }
-  }
-
-  const computedRoutes = await Promise.all(
-    missingPairs.map(async (pair) => {
-      try {
-        const route = await planRoute(pair.from, pair.to, userId);
-        const existing = await pool.query(
-          `SELECT id FROM routes
-           WHERE user_id = $1 AND from_visit_id = $2 AND to_visit_id = $3`,
-          [userId, route.from_visit_id, route.to_visit_id]
-        );
-        if (existing.rows.length === 0) {
-          await pool.query(
-            `INSERT INTO routes (user_id, from_visit_id, to_visit_id, distance_km, duration_min, polyline)
-             VALUES ($1, $2, $3, $4, $5, $6)`,
-            [
-              userId,
-              route.from_visit_id,
-              route.to_visit_id,
-              route.distance_km,
-              route.duration_min,
-              route.polyline,
-            ]
-          );
-        }
-        return route;
-      } catch {
-        return null;
-      }
-    })
-  );
-
-  const routes: Route[] = [
-    ...existingRoutes,
-    ...(computedRoutes.filter((r) => r !== null) as Route[]),
-  ];
+  // 路径：按 approval_id 分组计算并持久化，避免跨审批串点
+  const dayStart = toBeijingDayStart(dateStr);
+  const dayEnd = toBeijingDayEnd(dateStr);
+  const routes: Route[] = await computeAndPersistRoutes(userId, dayStart, dayEnd);
 
   // 检测异常
   const anomalies = await detectAnomalies({
@@ -234,6 +170,32 @@ export async function computeEmployeeRiskSummary(
   const highAnomalies = effectiveAnomalies.filter((a) => a.severity === "high");
   const mediumAnomalies = effectiveAnomalies.filter((a) => a.severity === "medium");
   const lowAnomalies = effectiveAnomalies.filter((a) => a.severity === "low");
+
+  // 持久化异常事件（按用户 + 业务日期），供范围查询使用
+  await pool.query(
+    `DELETE FROM anomalies WHERE user_id = $1 AND anomaly_date = $2::date`,
+    [userId, dateStr]
+  );
+  for (const a of effectiveAnomalies) {
+    await pool.query(
+      `INSERT INTO anomalies
+       (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata, anomaly_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+      [
+        a.user_id,
+        a.type,
+        a.description,
+        a.start_time,
+        a.end_time,
+        a.lat,
+        a.lng,
+        a.severity,
+        a.related_visit_ids,
+        a.metadata || {},
+        dateStr,
+      ]
+    );
+  }
 
   const totalStopMinutes = stops.reduce((sum, s) => sum + s.duration_minutes, 0);
   const totalDistance = routes.reduce((sum, r) => sum + r.distance_km, 0);

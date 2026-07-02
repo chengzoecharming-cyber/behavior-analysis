@@ -2,6 +2,49 @@ import { pool } from "../db";
 import { Visit, Route } from "../types";
 import { planRoute } from "./routePlanning";
 
+/**
+ * 将 visits 按审批单分组。无 approval_id 的（如 Excel 导入）按 user_id + business_date 兜底。
+ */
+function groupVisitsByApproval(visits: Visit[]): Map<string, Visit[]> {
+  const groups = new Map<string, Visit[]>();
+  for (const visit of visits) {
+    const key =
+      visit.approval_id || `${visit.user_id}_${visit.business_date || ""}`;
+    if (!groups.has(key)) {
+      groups.set(key, []);
+    }
+    groups.get(key)!.push(visit);
+  }
+  return groups;
+}
+
+/**
+ * 为一组 visit 计算 route，组内按时序相邻点连线。
+ * 不同 approval_id 之间不会生成 route。
+ */
+export async function computeRoutesForVisits(
+  visits: Visit[],
+  userId: string
+): Promise<Route[]> {
+  const groups = groupVisitsByApproval(visits);
+  const routes: Route[] = [];
+
+  for (const groupVisits of groups.values()) {
+    // 组内按时间排序
+    groupVisits.sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+
+    for (let i = 1; i < groupVisits.length; i++) {
+      const route = await planRoute(groupVisits[i - 1], groupVisits[i], userId);
+      routes.push(route);
+    }
+  }
+
+  return routes;
+}
+
 export async function computeAndPersistRoutes(
   userId: string,
   start: string,
@@ -9,21 +52,21 @@ export async function computeAndPersistRoutes(
 ): Promise<Route[]> {
   const visitsResult = await pool.query(
     `SELECT * FROM visits
-     WHERE user_id = $1 AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+     WHERE user_id = $1
+       AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+       AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
      ORDER BY timestamp ASC`,
     [userId, start, end]
   );
 
   const visits: Visit[] = visitsResult.rows;
-  const routePlans: Route[] = [];
-
-  for (let i = 1; i < visits.length; i++) {
-    const route = await planRoute(visits[i - 1], visits[i], userId);
-    routePlans.push(route);
-  }
+  const routePlans = await computeRoutesForVisits(visits, userId);
 
   await pool.query(
-    `DELETE FROM routes WHERE user_id = $1 AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`,
+    `DELETE FROM routes
+     WHERE user_id = $1
+       AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+       AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`,
     [userId, start, end]
   );
 

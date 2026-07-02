@@ -7,7 +7,8 @@
     "dev": "nodemon src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "seed": "ts-node scripts/seed.ts"
+    "seed": "ts-node scripts/seed.ts",
+    "fix:names": "ts-node scripts/fixUserNames.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

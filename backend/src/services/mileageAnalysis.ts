@@ -1,5 +1,6 @@
 import { Visit } from "../types";
 import { planRoute } from "./routePlanning";
+import { MAX_MILEAGE_KM } from "./mileageConfig";
 
 export interface MileageSegment {
   user_id: string;
@@ -47,16 +48,27 @@ export async function computeMileageSegments(
     const curr = sorted[i];
 
     if (!prev.approval_id || prev.approval_id !== curr.approval_id) continue;
+
+    // 优先使用里程表读数差计算分段里程；缺失时回退到累计值差。
+    const prevEndOdometer = prev.end_odometer ?? prev.start_odometer;
+    let reportedSegmentKm: number | null = null;
+    if (curr.end_odometer != null && prevEndOdometer != null) {
+      reportedSegmentKm = curr.end_odometer - prevEndOdometer;
+    } else if (
+      prev.reported_distance_km != null &&
+      curr.reported_distance_km != null
+    ) {
+      reportedSegmentKm = curr.reported_distance_km - prev.reported_distance_km;
+    }
+
+    // 忽略里程读数异常（负数、或超过合理上限的离谱值）
     if (
-      prev.reported_distance_km == null ||
-      curr.reported_distance_km == null
+      reportedSegmentKm == null ||
+      reportedSegmentKm < 0 ||
+      reportedSegmentKm > MAX_MILEAGE_KM
     ) {
       continue;
     }
-
-    const reportedSegmentKm = curr.reported_distance_km - prev.reported_distance_km;
-    // 忽略里程读数异常（负数、或大于 5000km 的离谱值）
-    if (reportedSegmentKm < 0 || reportedSegmentKm > 5000) continue;
 
     const route = await planRoute(prev, curr, prev.user_id);
     const gaodeKm = route.distance_km;

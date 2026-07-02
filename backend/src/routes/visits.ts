@@ -102,7 +102,7 @@ router.get("/users", async (_req: Request, res: Response) => {
 
 // 获取某用户有数据的日期列表
 router.get("/available-dates", async (req: Request, res: Response) => {
-  const { user } = req.query;
+  const { user, with_anomaly } = req.query;
 
   if (!user) {
     res.status(400).json({ error: "Missing user parameter" });
@@ -118,6 +118,26 @@ router.get("/available-dates", async (req: Request, res: Response) => {
       [user]
     );
     const dates = result.rows.map((r) => formatBeijingDate(r.date));
+
+    if (with_anomaly === "true") {
+      const anomalyResult = await pool.query(
+        `SELECT DISTINCT anomaly_date as date
+         FROM anomalies
+         WHERE user_id = $1 AND anomaly_date IS NOT NULL`,
+        [user]
+      );
+      const anomalyDates = new Set(
+        anomalyResult.rows.map((r) => formatBeijingDate(r.date))
+      );
+      res.json(
+        dates.map((d) => ({
+          date: d,
+          has_anomaly: anomalyDates.has(d),
+        }))
+      );
+      return;
+    }
+
     res.json(dates);
   } catch (err) {
     console.error("Failed to fetch available dates:", err);

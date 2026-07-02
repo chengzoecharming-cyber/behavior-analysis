@@ -16,6 +16,7 @@ async function main() {
   for (const row of rows) {
     const userId = normalizeUserId(row.user_name);
     const timestamp = new Date(row.time as string);
+    const businessDate = timestamp.toISOString().split("T")[0];
 
     // RAW 层
     const rawResult = await pool.query(
@@ -32,6 +33,7 @@ async function main() {
         String(row.lng),
         row.customer_name,
         "seed",
+        businessDate,
       ]
     );
     const rawVisitId = rawResult.rows[0].id;
@@ -39,8 +41,8 @@ async function main() {
     // NORMALIZED 层
     await pool.query(
       `INSERT INTO visits
-       (raw_visit_id, user_id, user_name, department, timestamp, lat, lng, location_name, address, customer_name, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       (raw_visit_id, user_id, user_name, department, timestamp, lat, lng, location_name, address, customer_name, source, business_date)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         rawVisitId,
         userId,
