@@ -76,8 +76,9 @@ map/
 │   │       ├── departmentAliasService.ts
 │   │       └── scheduler.ts
 │   ├── scripts/
-│   │   ├── seed.ts             # 从 data/mock-visits.xlsx 导入模拟数据
-│   │   └── refreshRiskCache.ts # 手动刷新风险摘要缓存
+│   │   ├── seed.ts                       # 从 data/mock-visits.xlsx 导入模拟数据
+│   │   ├── refreshRiskCache.ts           # 手动刷新风险摘要缓存
+│   │   └── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
 │   ├── Dockerfile
@@ -396,6 +397,9 @@ docker compose logs -f postgres
 - 权限系统框架已完成，但大量核心业务接口尚未按角色过滤数据。
 - 部门名称通过 `department_aliases` 表规范化，当前有 10 个规范部门/分组。
 - 风险摘要缓存策略：历史日期优先读 `risk_summary_cache`，今天及以后实时计算。
+- 钉钉表单中的 `累计里程N` 是截至本次签到的累计值，系统统计时应按 `approval_id` 取 `MAX(reported_distance_km)`，不能直接 `SUM`。
+- 路线计算已按 `approval_id` 分组，控制台地图支持按审批单切换视图。
+- 里程读数异常上限通过环境变量 `MILEAGE_VALIDATION_MAX_KM`（后端）和 `VITE_MILEAGE_MAX_KM`（前端）配置，默认 5000 km。
 - 钉钉通讯录同步因应用可见范围不足已暂时放弃，改为依赖 `department_aliases` 映射。
 - 车辆/油卡/油耗模型（Step 4）已暂缓，相关表结构在 `PLAN.md` 中有设计但未实现。
 - 月维度数据导出（Step 5）尚未实现。
