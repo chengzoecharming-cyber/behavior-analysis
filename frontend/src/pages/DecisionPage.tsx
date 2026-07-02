@@ -378,7 +378,7 @@ function DecisionPage() {
   return (
     <div>
       {/* Title */}
-      <div style={{ marginBottom: 24 }}>
+      <div style={{ marginBottom: 12 }}>
         <Title heading={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
           销售外勤行为决策系统
         </Title>

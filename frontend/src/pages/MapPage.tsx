@@ -9,6 +9,7 @@ import {
   fetchStops,
   fetchRoutes,
   fetchAnomalies,
+  AvailableDate,
 } from "../api";
 import { User, Visit, Stop, Route, Anomaly } from "../types";
 import MapContainer from "../components/MapContainer";
@@ -16,7 +17,7 @@ import MapContainer from "../components/MapContainer";
 function MapPage() {
   const [users, setUsers] = useState<User[]>([]);
   const [userId, setUserId] = useState<string>();
-  const [availableDates, setAvailableDates] = useState<string[]>([]);
+  const [availableDates, setAvailableDates] = useState<AvailableDate[]>([]);
   const [date, setDate] = useState<Dayjs | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
@@ -69,7 +70,7 @@ function MapPage() {
     fetchAvailableDates(userId).then((dates) => {
       setAvailableDates(dates);
       if (dates.length > 0) {
-        setDate(dayjs.tz(dates[0]));
+        setDate(dayjs.tz(dates[0].date));
       } else {
         setDate(null);
       }
@@ -103,7 +104,7 @@ function MapPage() {
   const disabledDate = (current: Dayjs) => {
     if (availableDates.length === 0) return true;
     const dateStr = current.format("YYYY-MM-DD");
-    return !availableDates.includes(dateStr);
+    return !availableDates.some((info) => info.date === dateStr);
   };
 
   return (

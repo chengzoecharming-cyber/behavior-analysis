@@ -27,10 +27,22 @@ export async function fetchUsers(): Promise<User[]> {
   return res.data;
 }
 
-export async function fetchAvailableDates(userId: string): Promise<string[]> {
+export interface AvailableDate {
+  date: string;
+  has_anomaly: boolean;
+}
+
+export async function fetchAvailableDates(
+  userId: string,
+  withAnomaly = false
+): Promise<AvailableDate[]> {
   const res = await api.get("/visits/available-dates", {
-    params: { user: userId },
+    params: { user: userId, with_anomaly: withAnomaly },
   });
+  // 兼容旧版返回字符串数组
+  if (Array.isArray(res.data) && typeof res.data[0] === "string") {
+    return res.data.map((d: string) => ({ date: d, has_anomaly: false }));
+  }
   return res.data;
 }
 
@@ -73,6 +85,50 @@ export async function fetchMileage(
   end: string
 ): Promise<MileageStats> {
   const res = await api.get("/analytics/mileage", {
+    params: { user: userId, start, end },
+  });
+  return res.data;
+}
+
+export interface DailyOverview {
+  date: string;
+  visit_count: number;
+  stop_minutes: number;
+  reported_distance_km: number;
+  estimated_distance_km: number;
+  anomaly_count: number;
+}
+
+export interface UserOverviewAnomaly {
+  id: number;
+  type: string;
+  description: string;
+  severity: "low" | "medium" | "high";
+  anomaly_date: string;
+  metadata: Record<string, any>;
+}
+
+export interface UserOverviewResult {
+  user_id: string;
+  start: string;
+  end: string;
+  totals: {
+    visit_count: number;
+    stop_minutes: number;
+    reported_distance_km: number;
+    estimated_distance_km: number;
+    anomaly_count: number;
+  };
+  daily: DailyOverview[];
+  anomalies: UserOverviewAnomaly[];
+}
+
+export async function fetchUserOverview(
+  userId: string,
+  start: string,
+  end: string
+): Promise<UserOverviewResult> {
+  const res = await api.get("/analytics/user-overview", {
     params: { user: userId, start, end },
   });
   return res.data;
