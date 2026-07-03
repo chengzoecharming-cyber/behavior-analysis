@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { Visit, Stop, Route, Anomaly } from "../types";
 import dayjs from "dayjs";
-import { Card, Descriptions } from "antd";
+import { Card, Descriptions, Button } from "@douyinfe/semi-ui";
 
 export interface RouteGroup {
   key: string;
@@ -23,6 +23,12 @@ interface MapContainerProps {
 }
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "YOUR_AMAP_KEY";
+
+// 稳定的空数组，避免默认参数每次渲染都生成新引用
+const EMPTY_VISITS: Visit[] = [];
+const EMPTY_STOPS: Stop[] = [];
+const EMPTY_ROUTES: Route[] = [];
+const EMPTY_ANOMALIES: Anomaly[] = [];
 
 function deduplicateVisits(visits: Visit[]): Visit[] {
   const seen = new Set<string>();
@@ -81,16 +87,27 @@ function buildRoutePath(routes: Route[]): [number, number][] {
   return fullPath;
 }
 
-function getMarkerContent(label: string, bgColor: string, textColor = "#fff") {
-  return `<div style="width:20px;height:20px;border-radius:50%;background:${bgColor};color:${textColor};display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:600;border:2px solid #fff;box-shadow:0 1px 3px rgba(0,0,0,.3)">${label}</div>`;
+function DescItem({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <Descriptions.Item
+      itemKey={label}
+      keyStyle={{ fontSize: 14, color: "#999", fontWeight: 400, marginTop: 8, marginBottom: 8 }}
+    >
+      <span style={{ fontSize: 14, color: "#000", fontWeight: 400 }}>{children}</span>
+    </Descriptions.Item>
+  );
+}
+
+function getMarkerContent(label: string, bgColor: string, textColor = "#fff", opacity = 1) {
+  return `<div style="width:28px;height:28px;border-radius:50%;background:${bgColor};color:${textColor};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);opacity:${opacity}">${label}</div>`;
 }
 
 export default function MapContainer({
-  visits = [],
-  stops = [],
-  routes = [],
+  visits = EMPTY_VISITS,
+  stops = EMPTY_STOPS,
+  routes = EMPTY_ROUTES,
   routeGroups,
-  anomalies = [],
+  anomalies = EMPTY_ANOMALIES,
   progress = 1,
   progressMap,
 }: MapContainerProps) {
@@ -129,6 +146,7 @@ export default function MapContainer({
         });
         map.addControl(new AMap.ToolBar());
         map.addControl(new AMap.Scale());
+
         mapInstance.current = map;
         setLoaded(true);
       })
@@ -153,7 +171,6 @@ export default function MapContainer({
     polylines.current = [];
     coloredLinesRef.current = {};
     fullPathMap.current = {};
-    setSelectedVisit(null);
 
     const allVisits: Visit[] = [];
     const visitIds = new Set<number>();
@@ -208,6 +225,11 @@ export default function MapContainer({
 
       // 标记点：起 / 终 / 途N
       const sorted = sortVisits(uniqueVisits);
+      const startVisit = sorted[0];
+      const endVisit = sorted[sorted.length - 1];
+      // 当起点与终点距离很近（<100m）或只有 1 个 visit 时，同时显示起、终
+      const sameStartEnd = startVisit && endVisit;
+
       sorted.forEach((v, idx) => {
         const isStart = idx === 0;
         const isEnd = idx === sorted.length - 1;
@@ -225,11 +247,17 @@ export default function MapContainer({
           bgColor = "#1890ff";
         }
 
+        // 起、终标记设置一定透明度，重合时也能看到下方标记
+        const opacity = isStart || isEnd ? 0.85 : 1;
+        // 终点在重合时位于更上层，保证"终"可见
+        const zIndex = sameStartEnd && isEnd ? 120 : isStart ? 110 : isEnd ? 100 : 90;
+
         const marker = new AMap.Marker({
           position: [v.lng, v.lat],
           title: `${dayjs(v.timestamp).format("HH:mm")} ${v.location_name}`,
-          content: getMarkerContent(label, bgColor),
-          offset: new AMap.Pixel(-10, -10),
+          content: getMarkerContent(label, bgColor, "#fff", opacity),
+          offset: new AMap.Pixel(-14, -14),
+          zIndex,
         });
         marker.on("click", () => setSelectedVisit(v));
         marker.setMap(mapInstance.current);
@@ -241,10 +269,11 @@ export default function MapContainer({
     stops.forEach((s) => {
       const circle = new AMap.CircleMarker({
         center: [s.lng, s.lat],
-        radius: 10,
+        radius: 14,
         fillColor: "#ff4d4f",
         strokeColor: "#ff4d4f",
         fillOpacity: 0.6,
+        zIndex: 80,
       });
       circle.setMap(mapInstance.current);
       markers.current.push(circle);
@@ -259,28 +288,30 @@ export default function MapContainer({
           borderRadius: "4px",
           fontSize: "10px",
         },
-        offset: new AMap.Pixel(0, -18),
+        offset: new AMap.Pixel(0, -22),
+        zIndex: 81,
       });
       label.setMap(mapInstance.current);
       markers.current.push(label);
     });
 
-    // 异常标记
-    anomalies.forEach((a) => {
-      if (a.lat == null || a.lng == null) return;
-      const marker = new AMap.Marker({
-        position: [a.lng, a.lat],
-        title: a.description,
-        icon: "https://webapi.amap.com/theme/v1.3/markers/n/mark_r.png",
-      });
-      marker.setMap(mapInstance.current);
-      markers.current.push(marker);
-    });
+    // 异常事件只在左侧列表展示，不在地图上绘制标记
 
     if (allVisits.length > 0) {
       mapInstance.current.setFitView();
     }
   }, [visits, stops, routes, routeGroups, anomalies, loaded]);
+
+  // 数据真正变化时，若当前选中的 visit 已不在当前所有轨迹分组里，则关闭详情面板
+  useEffect(() => {
+    if (!selectedVisit) return;
+    const groups = routeGroups && routeGroups.length > 0 ? routeGroups : [{ visits }];
+    const ids = new Set<number>();
+    groups.forEach((g) => g.visits.forEach((v) => ids.add(v.id)));
+    if (!ids.has(selectedVisit.id)) {
+      setSelectedVisit(null);
+    }
+  }, [routeGroups, visits]);
 
   useEffect(() => {
     if (!loaded) return;
@@ -362,45 +393,36 @@ export default function MapContainer({
         >
           <Card
             title="拜访详情"
-            size="small"
-            extra={
-              <button
+            headerExtraContent={
+              <Button
+                theme="borderless"
+                type="tertiary"
                 onClick={() => setSelectedVisit(null)}
-                style={{
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  fontSize: 16,
-                  color: "#999",
-                }}
+                style={{ color: "#999" }}
               >
                 ✕
-              </button>
+              </Button>
             }
-            styles={{ body: { padding: 12 } }}
+            bodyStyle={{ padding: 12 }}
           >
-            <Descriptions column={1} size="small" bordered>
-              <Descriptions.Item label="员工姓名">
-                {selectedVisit.user_name}
-              </Descriptions.Item>
-              <Descriptions.Item label="部门">
-                {selectedVisit.department}
-              </Descriptions.Item>
-              <Descriptions.Item label="拜访时间">
+            <Descriptions row size="small">
+              <DescItem label="员工姓名">{selectedVisit.user_name}</DescItem>
+              <DescItem label="部门">{selectedVisit.department}</DescItem>
+              <DescItem label="拜访时间">
                 {dayjs(selectedVisit.timestamp).format("YYYY-MM-DD HH:mm")}
-              </Descriptions.Item>
-              <Descriptions.Item label="客户名称">
-                {selectedVisit.customer_name}
-              </Descriptions.Item>
-              <Descriptions.Item label="地点名称">
-                {selectedVisit.location_name}
-              </Descriptions.Item>
-              <Descriptions.Item label="详细地址">
-                {selectedVisit.address}
-              </Descriptions.Item>
-              <Descriptions.Item label="数据来源">
-                {selectedVisit.source}
-              </Descriptions.Item>
+              </DescItem>
+              <DescItem label="客户名称">{selectedVisit.customer_name}</DescItem>
+              <DescItem label="地点名称">{selectedVisit.location_name}</DescItem>
+              <DescItem label="详细地址">{selectedVisit.address}</DescItem>
+              <DescItem label="数据来源">{selectedVisit.source}</DescItem>
+              {selectedVisit.reported_distance_km !== undefined && (
+                <DescItem label="填报里程">
+                  {selectedVisit.reported_distance_km} km
+                </DescItem>
+              )}
+              {selectedVisit.vehicle && (
+                <DescItem label="交通工具">{selectedVisit.vehicle}</DescItem>
+              )}
             </Descriptions>
           </Card>
         </div>
