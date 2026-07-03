@@ -1,6 +1,7 @@
 import { ParsedVisit } from "../types";
 import { processParsedVisits, ProcessResult } from "./normalization";
 import { pool } from "../db";
+import { parseDateTimeAsBeijing } from "../utils/timezone";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
@@ -613,8 +614,10 @@ export async function saveRawApproval(instance: any): Promise<void> {
 
   const originatorUserId = instance.originator_userid || instance.originatorUserId || "";
   const originatorUserName = instance.originator_user_name || instance.originatorUserName || "";
-  const createTime = instance.create_time || instance.createTime || null;
-  const finishTime = instance.finish_time || instance.finishTime || null;
+  const rawCreateTime = instance.create_time || instance.createTime || null;
+  const rawFinishTime = instance.finish_time || instance.finishTime || null;
+  const createTime = rawCreateTime ? parseDateTimeAsBeijing(rawCreateTime) : null;
+  const finishTime = rawFinishTime ? parseDateTimeAsBeijing(rawFinishTime) : null;
 
   try {
     await pool.query(
@@ -637,8 +640,8 @@ export async function saveRawApproval(instance: any): Promise<void> {
         originatorUserId,
         originatorUserName,
         instance.originator_dept_name || instance.originatorDeptName || null,
-        createTime ? new Date(createTime) : null,
-        finishTime ? new Date(finishTime) : null,
+        createTime,
+        finishTime,
         JSON.stringify(instance.form_component_values || []),
         instance.result || null,
         instance.status || null,
