@@ -143,9 +143,11 @@ function App() {
               to="/"
               className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-[#0f1419] transition hover:text-stone-600"
             >
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#0f1419]">
-                <MapPin className="h-4 w-4 text-white" />
-              </div>
+              <img
+                src="/logo.png"
+                alt="销售外勤行为决策系统"
+                className="h-8 w-8 shrink-0 rounded-lg object-contain"
+              />
               <span className="text-base font-medium">销售外勤行为决策系统</span>
             </Link>
 

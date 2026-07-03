@@ -341,7 +341,7 @@ function DecisionPage() {
         >
           <span>{emp.visit_count} 次拜访</span>
           <span>{Math.round(emp.total_stop_minutes)} 分钟停留</span>
-          <span>{emp.total_distance_km.toFixed(1)} km</span>
+          <span>{Math.round(emp.total_distance_km)} km</span>
         </div>
       </div>
     );
