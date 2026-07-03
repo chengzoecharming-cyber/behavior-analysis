@@ -59,11 +59,15 @@ export async function computeMileageSegments(
     const visitIds = Array.from(
       new Set(pairs.flatMap((p) => [p.prev.id, p.curr.id]))
     );
-    const placeholders = visitIds.map((_, i) => `$${i + 1}`).join(",");
+    // 两个 IN 子句的占位符必须全局唯一，不能复用 $1,$2,$3
+    const placeholders1 = visitIds.map((_, i) => `$${i + 1}`).join(",");
+    const placeholders2 = visitIds
+      .map((_, i) => `$${i + 1 + visitIds.length}`)
+      .join(",");
     const routeResult = await pool.query(
       `SELECT * FROM routes
-       WHERE from_visit_id IN (${placeholders})
-         AND to_visit_id IN (${placeholders})`,
+       WHERE from_visit_id IN (${placeholders1})
+         AND to_visit_id IN (${placeholders2})`,
       [...visitIds, ...visitIds]
     );
     for (const row of routeResult.rows) {
