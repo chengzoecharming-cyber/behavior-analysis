@@ -6,6 +6,7 @@ import { pool } from "../db";
 import { RawVisitRow, ParsedVisit } from "../types";
 import { parseDingTalkExcel } from "../services/excelParser";
 import { processParsedVisits, GeocodeFailure } from "../services/normalization";
+import { recomputeDerivedDataForVisits } from "../services/derivedComputation";
 
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads", { recursive: true });
@@ -78,6 +79,15 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
       parsedVisits,
       isDingTalk ? "dingtalk" : "excel"
     );
+
+    // 后台自动补算路线、异常和风险缓存
+    if (processResult.affectedUserDates.length > 0) {
+      recomputeDerivedDataForVisits(processResult.affectedUserDates).catch(
+        (err) => {
+          console.error("[upload] 后台衍生数据计算失败:", err);
+        }
+      );
+    }
 
     const response: UploadResponse = {
       success: true,

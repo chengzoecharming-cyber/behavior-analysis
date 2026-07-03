@@ -10,12 +10,18 @@ export interface GeocodeFailure {
   user: string;
 }
 
+export interface AffectedUserDate {
+  user_id: string;
+  business_date: string;
+}
+
 export interface ProcessResult {
   rawInserted: number;
   normalizedInserted: number;
   skipped: number;
   totalDistanceKm: number;
   geocodeFailures: GeocodeFailure[];
+  affectedUserDates: AffectedUserDate[];
 }
 
 export function normalizeUserId(name: string): string {
@@ -150,6 +156,7 @@ export async function processParsedVisits(
   let skippedCount = 0;
   const userPointsMap: Record<string, { lat: number; lng: number }[]> = {};
   const geocodeFailures: GeocodeFailure[] = [];
+  const affectedUserDates = new Set<string>();
   const businessDates = await computeBusinessDates(parsedVisits, source);
 
   for (let i = 0; i < parsedVisits.length; i++) {
@@ -237,6 +244,9 @@ export async function processParsedVisits(
       ]
     );
     insertedNormalized.push(visitResult.rows[0].id);
+    affectedUserDates.add(
+      JSON.stringify({ user_id: userId, business_date: businessDates[i] })
+    );
 
     if (!userPointsMap[userId]) userPointsMap[userId] = [];
     if (lat != null && lng != null) {
@@ -255,5 +265,6 @@ export async function processParsedVisits(
     skipped: skippedCount,
     totalDistanceKm: parseFloat(totalDistance.toFixed(2)),
     geocodeFailures,
+    affectedUserDates: Array.from(affectedUserDates).map((s) => JSON.parse(s)),
   };
 }

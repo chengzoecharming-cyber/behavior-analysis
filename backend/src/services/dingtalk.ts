@@ -3,6 +3,7 @@ import { processParsedVisits, ProcessResult } from "./normalization";
 import { pool } from "../db";
 import { parseDateTimeAsBeijing } from "../utils/timezone";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
+import { recomputeDerivedDataForVisits } from "./derivedComputation";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
 
@@ -702,6 +703,13 @@ export async function syncApprovals(
   }
 
   const result = await processParsedVisits(parsedVisits, "dingtalk");
+
+  // 后台自动补算路线和异常，避免用户手动跑脚本
+  if (result.affectedUserDates.length > 0) {
+    recomputeDerivedDataForVisits(result.affectedUserDates).catch((err) => {
+      console.error("[syncApprovals] 后台衍生数据计算失败:", err);
+    });
+  }
 
   return {
     ...result,
