@@ -1,4 +1,5 @@
-import { Visit } from "../types";
+import { Visit, Route } from "../types";
+import { pool } from "../db";
 import { planRoute } from "./routePlanning";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 
@@ -43,12 +44,34 @@ export async function computeMileageSegments(
 
   const segments: MileageSegment[] = [];
 
+  // 收集同一审批单内的相邻 visit 对，用于查询已算好的 route
+  const pairs: { prev: Visit; curr: Visit }[] = [];
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
-
     if (!prev.approval_id || prev.approval_id !== curr.approval_id) continue;
+    pairs.push({ prev, curr });
+  }
 
+  // 批量查询 routes 表，避免重复请求高德 API
+  const routeMap = new Map<string, Route>();
+  if (pairs.length > 0) {
+    const visitIds = Array.from(
+      new Set(pairs.flatMap((p) => [p.prev.id, p.curr.id]))
+    );
+    const placeholders = visitIds.map((_, i) => `$${i + 1}`).join(",");
+    const routeResult = await pool.query(
+      `SELECT * FROM routes
+       WHERE from_visit_id IN (${placeholders})
+         AND to_visit_id IN (${placeholders})`,
+      [...visitIds, ...visitIds]
+    );
+    for (const row of routeResult.rows) {
+      routeMap.set(`${row.from_visit_id},${row.to_visit_id}`, row as Route);
+    }
+  }
+
+  for (const { prev, curr } of pairs) {
     // 优先使用里程表读数差计算分段里程；缺失时回退到累计值差。
     const prevEndOdometer = prev.end_odometer ?? prev.start_odometer;
     let reportedSegmentKm: number | null = null;
@@ -70,7 +93,8 @@ export async function computeMileageSegments(
       continue;
     }
 
-    const route = await planRoute(prev, curr, prev.user_id);
+    const cachedRoute = routeMap.get(`${prev.id},${curr.id}`);
+    const route = cachedRoute ?? (await planRoute(prev, curr, prev.user_id));
     const gaodeKm = route.distance_km;
 
     const deviationRate = gaodeKm > 0
@@ -79,7 +103,7 @@ export async function computeMileageSegments(
 
     segments.push({
       user_id: prev.user_id,
-      approval_id: prev.approval_id,
+      approval_id: prev.approval_id || "",
       from_visit_id: prev.id,
       to_visit_id: curr.id,
       from_location: prev.location_name,
