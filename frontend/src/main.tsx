@@ -9,6 +9,10 @@ import "dayjs/locale/zh-cn";
 import App from "./App";
 import ErrorBoundary from "./components/ErrorBoundary";
 import "./index.css";
+import { initVChartSemiTheme } from "@visactor/vchart-semi-theme";
+
+// 初始化 Semi DV 图表主题，自动适配 Semi Design 亮/暗模式
+initVChartSemiTheme();
 
 // 业务时间统一按北京时间处理
 // Semi Design/Ant Design 的 DatePicker 返回原生 Date，后续格式化时仍需使用 dayjs.tz

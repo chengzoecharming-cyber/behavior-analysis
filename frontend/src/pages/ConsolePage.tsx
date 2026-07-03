@@ -28,17 +28,9 @@ import {
 import { User, Visit, Stop, Route, Anomaly, MileageStats } from "../types";
 import MapContainer from "../components/MapContainer";
 import HeatMapContainer from "../components/HeatMapContainer";
-import {
-  ResponsiveContainer,
-  ComposedChart,
-  CartesianGrid,
-  XAxis,
-  YAxis,
-  Tooltip,
-  Legend,
-  Bar,
-  Line,
-} from "recharts";
+import { Suspense, lazy } from "react";
+
+const OverviewChart = lazy(() => import("../components/OverviewChart"));
 
 const MAX_MILEAGE_KM = parseFloat(import.meta.env.VITE_MILEAGE_MAX_KM || "5000");
 
@@ -326,6 +318,19 @@ function ConsolePage() {
           color: ROUTE_COLORS[idx % ROUTE_COLORS.length],
         })),
     [approvalGroups]
+  );
+
+  // 避免父组件无关 re-render 导致 MapContainer routeGroups 引用变化
+  const mapRouteGroups = useMemo(
+    () =>
+      routeGroups.map((g) => ({
+        key: g.key,
+        label: g.label,
+        color: g.color,
+        routes: g.routes,
+        visits: g.visits,
+      })),
+    [routeGroups]
   );
 
   // 数据变化时重置各轨迹播放进度
@@ -690,7 +695,7 @@ function ConsolePage() {
                     {overviewGroup.mileage.reportedDistanceKm || "未填报"}
                   </span>
                   <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
-                  <span>{overviewGroup.mileage.totalKm}</span>
+                  <span>{Math.round(overviewGroup.mileage.totalKm)}</span>
                 </span>
               </div>
             </Col>
@@ -759,13 +764,7 @@ function ConsolePage() {
                 </div>
                 <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
                   <MapContainer
-                    routeGroups={routeGroups.map((g) => ({
-                      key: g.key,
-                      label: g.label,
-                      color: g.color,
-                      routes: g.routes,
-                      visits: g.visits,
-                    }))}
+                    routeGroups={mapRouteGroups}
                     stops={overviewGroup.stops}
                     anomalies={overviewGroup.anomalies}
                     progressMap={routeProgressMap}
@@ -851,6 +850,15 @@ function OverviewPanel({
     () => fillDailyRange(data?.daily ?? [], range[0], range[1]),
     [data, range]
   );
+  // 估算里程只显示整数，填报里程保持原精度
+  const chartData = useMemo(
+    () =>
+      filled.map((d) => ({
+        ...d,
+        estimated_distance_km: Math.round(d.estimated_distance_km),
+      })),
+    [filled]
+  );
   const totals = data?.totals;
 
   return (
@@ -880,7 +888,7 @@ function OverviewPanel({
                 <span style={statValueStyle}>
                   <span>{totals?.reported_distance_km ?? 0}</span>
                   <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>/</span>
-                  <span>{totals?.estimated_distance_km ?? 0}</span>
+                  <span>{Math.round(totals?.estimated_distance_km ?? 0)}</span>
                   <span style={{ fontSize: 12, color: "#999" }}>km</span>
                 </span>
               </div>
@@ -906,50 +914,9 @@ function OverviewPanel({
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
                   每日趋势
                 </div>
-                <div style={{ height: 320 }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <ComposedChart data={filled}>
-                      <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                      <XAxis
-                        dataKey="date"
-                        tickFormatter={(v) => dayjs.tz(v).format("MM-DD")}
-                      />
-                      <YAxis yAxisId="left" />
-                      <YAxis yAxisId="right" orientation="right" />
-                      <Tooltip
-                        labelFormatter={(v) =>
-                          dayjs.tz(v as string).format("YYYY-MM-DD")
-                        }
-                      />
-                      <Legend />
-                      <Bar
-                        yAxisId="left"
-                        dataKey="visit_count"
-                        name="拜访数"
-                        fill="#1890ff"
-                        radius={[4, 4, 0, 0]}
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="reported_distance_km"
-                        name="填报里程"
-                        stroke="#52c41a"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                      <Line
-                        yAxisId="right"
-                        type="monotone"
-                        dataKey="estimated_distance_km"
-                        name="估算里程"
-                        stroke="#faad14"
-                        strokeWidth={2}
-                        dot={false}
-                      />
-                    </ComposedChart>
-                  </ResponsiveContainer>
-                </div>
+                <Suspense fallback={<div style={{ height: 320 }}>加载图表中...</div>}>
+                  <OverviewChart data={chartData} />
+                </Suspense>
               </div>
             </Col>
           </Row>
@@ -961,7 +928,7 @@ function OverviewPanel({
                   padding: 20,
                   backgroundColor: "#fff",
                   borderRadius: 16,
-                  height: "100%",
+                  height: 460,
                   display: "flex",
                   flexDirection: "column",
                 }}
@@ -969,7 +936,7 @@ function OverviewPanel({
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
                   拜访热度
                 </div>
-                <div style={{ flex: 1, minHeight: 380 }}>
+                <div style={{ flex: 1, minHeight: 0 }}>
                   <HeatMapContainer points={heatMapPoints} />
                 </div>
               </div>
@@ -1013,11 +980,13 @@ function AnomalyItem({ item }: { item: Anomaly }) {
     const isMileage = item.type === "mileage_deviation";
     const title = `${m.from_location} → ${m.to_location}`;
     const description = isMileage
-      ? `填报 ${m.reported_distance_km ?? "-"}km vs 高德 ${m.gaode_distance_km ?? "-"}km · 偏差 ${
+      ? `填报 ${m.reported_distance_km ?? "-"}km vs 高德 ${
+          m.gaode_distance_km != null ? Math.round(m.gaode_distance_km) : "-"
+        }km · 偏差 ${
           m.deviation_rate != null ? `${(m.deviation_rate * 100).toFixed(1)}%` : "-"
         }`
-      : `实际 ${(m.actual_distance_km ?? 0).toFixed(2)}km vs 直线 ${(m.straight_distance_km ?? 0).toFixed(
-          2
+      : `实际 ${Math.round(m.actual_distance_km ?? 0)}km vs 直线 ${Math.round(
+          m.straight_distance_km ?? 0
         )}km`;
     return renderAnomalyRow(item.severity, title, description);
   }
