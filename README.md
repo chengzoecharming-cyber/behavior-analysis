@@ -138,11 +138,20 @@ curl -X POST http://localhost:3000/upload-excel \
 - 标准格式：`user_name, time, location_name, address, lat, lng, customer_name`
 - 钉钉审批导出宽表：自动提取多段拜访记录
 
-## 当前运行状态
+## 端口与访问
 
-- 前端服务：`http://localhost:5173`（package.json 中已固定，不会自动切换到 5174 等端口）
-- 后端服务：`http://localhost:3000`
-- 已导入 Mock 数据 27 条 + 真实钉钉数据 89 条
+本地开发时各服务默认端口如下：
+
+| 服务 | 地址 | 说明 |
+|---|---|---|
+| 前端 | `http://localhost:5173` | Vite 已固定 `--strictPort`，不会自动切换到 5174 等端口 |
+| 后端 | `http://localhost:3000` | Express API 入口，健康检查 `/health` |
+| PostgreSQL | `localhost:5433` | Docker Compose 映射到本机 5433，避免与本地其他 PostgreSQL 冲突 |
+
+默认管理员账号（本地开发）：
+
+- 用户名：`admin`
+- 密码：`admin123`
 
 ## 注意事项
 
