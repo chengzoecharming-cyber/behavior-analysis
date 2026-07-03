@@ -27,15 +27,23 @@ export async function planRoute(
     return fallbackRoute(from, to, userId, 0);
   }
 
-  // 重试机制：高德路径规划 API 偶尔失败，失败时重试最多 3 次
+  // 重试机制：高德路径规划 API 偶尔失败，失败时重试最多 5 次
   let lastError: any = null;
-  for (let attempt = 0; attempt < 3; attempt++) {
+  const timeoutMs = 15000; // 单次请求 15 秒超时
+  const delays = [500, 1500, 3000, 5000]; // 重试间隔（指数退避）
+
+  for (let attempt = 0; attempt < 5; attempt++) {
     try {
       const url =
         `https://restapi.amap.com/v3/direction/driving?` +
         `origin=${from.lng},${from.lat}&destination=${to.lng},${to.lat}&extensions=all&key=${AMAP_KEY}`;
 
-      const response = await fetch(url);
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      const response = await fetch(url, { signal: controller.signal });
+      clearTimeout(timer);
+
       const data = (await response.json()) as any;
 
       if (data.status === "1" && data.route?.paths?.[0]) {
@@ -55,14 +63,18 @@ export async function planRoute(
 
       // 记录非成功响应，用于重试
       lastError = new Error(`AMap status=${data.status}, info=${data.info}`);
-    } catch (err) {
+    } catch (err: any) {
       lastError = err;
-      console.warn(`AMap route planning attempt ${attempt + 1} failed:`, err);
+      const isTimeout = err.name === "AbortError";
+      console.warn(
+        `AMap route planning attempt ${attempt + 1} failed:`,
+        isTimeout ? "request timeout" : err
+      );
     }
 
-    // 重试前等待 200ms
-    if (attempt < 2) {
-      await new Promise((resolve) => setTimeout(resolve, 200));
+    // 重试前等待
+    if (attempt < delays.length) {
+      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
     }
   }
 

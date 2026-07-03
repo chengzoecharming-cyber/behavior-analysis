@@ -36,6 +36,10 @@ async function main() {
           err
         );
       }
+      // 避免请求过快导致网络超时，每对之间间隔 150ms
+      if (i < pairs.length - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+      }
     }
 
     const datesResult = await pool.query(
