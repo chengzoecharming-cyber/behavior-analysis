@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Button, Card, DatePicker, Tag, Typography, Spin, Alert } from "antd";
+import { Button, Card, DatePicker, Tag, Typography, Spin, Alert, Tabs } from "antd";
 import { RefreshCw, PlayCircle, CheckCircle, AlertCircle } from "lucide-react";
 import dayjs, { Dayjs } from "dayjs";
 import {
@@ -9,10 +9,11 @@ import {
   DingTalkStatus,
   DingTalkSyncResult,
 } from "../api";
+import { UploadPanel } from "./UploadPage";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
-function DataSyncPage() {
+function SyncPanel() {
   const [status, setStatus] = useState<DingTalkStatus | null>(null);
   const [loadingStatus, setLoadingStatus] = useState(false);
   const [testing, setTesting] = useState(false);
@@ -74,15 +75,6 @@ function DataSyncPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title level={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
-          数据同步
-        </Title>
-        <Text type="secondary" style={{ fontSize: 14 }}>
-          从钉钉 OA 自动拉取审批数据并写入系统
-        </Text>
-      </div>
-
       <Card style={{ marginBottom: 24, borderRadius: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <RefreshCw size={20} />
@@ -245,6 +237,28 @@ function DataSyncPage() {
           </div>
         )}
       </Card>
+    </div>
+  );
+}
+
+function DataSyncPage() {
+  return (
+    <div>
+      <Tabs
+        defaultActiveKey="upload"
+        items={[
+          {
+            key: "upload",
+            label: "数据上传",
+            children: <UploadPanel />,
+          },
+          {
+            key: "sync",
+            label: "数据同步",
+            children: <SyncPanel />,
+          },
+        ]}
+      />
     </div>
   );
 }

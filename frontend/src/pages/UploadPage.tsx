@@ -7,7 +7,7 @@ const { Dragger } = Upload;
 const { Title } = Typography;
 const { Step } = Steps;
 
-function UploadPage() {
+export function UploadPanel() {
   const [preview, setPreview] = useState<PreviewRow[]>([]);
   const [isDingTalk, setIsDingTalk] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -50,10 +50,6 @@ function UploadPage() {
 
   return (
     <div>
-      <Title level={4} style={{ marginBottom: 24, fontWeight: 600, color: "#0f1419" }}>
-        Excel 数据导入
-      </Title>
-
       {/* Steps + Upload Area */}
       <div style={{ marginBottom: 16 }}>
         <Steps size="small" current={file ? (result ? 2 : 1) : 0} style={{ marginBottom: 24 }}>
@@ -164,6 +160,17 @@ function UploadPage() {
           ) : null}
         </>
       )}
+    </div>
+  );
+}
+
+function UploadPage() {
+  return (
+    <div>
+      <Title level={4} style={{ marginBottom: 24, fontWeight: 600, color: "#0f1419" }}>
+        Excel 数据导入
+      </Title>
+      <UploadPanel />
     </div>
   );
 }

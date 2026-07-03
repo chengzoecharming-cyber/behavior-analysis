@@ -9,7 +9,6 @@ import {
 } from "react-router-dom";
 import {
   Home,
-  Upload,
   Bell,
   User,
   Menu,
@@ -22,7 +21,6 @@ import {
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import ConsolePage from "./pages/ConsolePage";
-import UploadPage from "./pages/UploadPage";
 import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
 import FeedbackPage from "./pages/FeedbackPage";
@@ -39,7 +37,6 @@ interface NavItem {
 const navItems: NavItem[] = [
   { path: "/", label: "决策系统", icon: Home },
   { path: "/console", label: "控制台", icon: MapPin },
-  { path: "/upload", label: "数据上传", icon: Upload },
   { path: "/sync", label: "数据同步", icon: RefreshCw },
   { path: "/rules", label: "规则配置", icon: Settings },
 ];
@@ -166,7 +163,11 @@ function App() {
             <nav className="ml-8 hidden h-16 min-w-0 items-center gap-7 overflow-x-auto md:flex">
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const active = location.pathname === item.path;
+                const active =
+                  item.path === "/"
+                    ? location.pathname === "/"
+                    : location.pathname === item.path ||
+                      location.pathname.startsWith(item.path + "/");
                 return (
                   <Link
                     key={item.path}
@@ -266,7 +267,11 @@ function App() {
             <nav className="flex flex-col gap-1">
               {navItems.map((item) => {
                 const Icon = item.icon;
-                const active = location.pathname === item.path;
+                const active =
+                  item.path === "/"
+                    ? location.pathname === "/"
+                    : location.pathname === item.path ||
+                      location.pathname.startsWith(item.path + "/");
                 return (
                   <Link
                     key={item.path}
@@ -354,7 +359,7 @@ function App() {
           <Route path="/dashboard" element={<Navigate to="/" replace />} />
           <Route path="/console" element={<ConsolePage />} />
           <Route path="/map" element={<Navigate to="/" replace />} />
-          <Route path="/upload" element={<UploadPage />} />
+          <Route path="/upload" element={<Navigate to="/sync" replace />} />
           <Route path="/sync" element={<DataSyncPage />} />
           <Route path="/rules" element={<RulesConfigPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
