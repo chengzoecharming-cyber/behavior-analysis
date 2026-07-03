@@ -407,3 +407,22 @@ export async function syncDingTalk(
   const res = await api.post("/dingtalk/sync", { startDate, endDate });
   return res.data;
 }
+
+export interface ExportConsoleReportPayload {
+  userId: string;
+  start: string;
+  end: string;
+  mapImage: string; // base64 dataURL
+}
+
+export interface ExportConsoleReportResult {
+  success: boolean;
+  message: string;
+}
+
+export async function exportConsoleReport(
+  payload: ExportConsoleReportPayload
+): Promise<ExportConsoleReportResult> {
+  const res = await api.post("/export/console-report", payload);
+  return res.data;
+}

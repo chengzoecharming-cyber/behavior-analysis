@@ -9,8 +9,10 @@ import {
   Tabs,
   TabPane,
   DatePicker,
+  Toast,
 } from "@douyinfe/semi-ui";
 import { IconPlayCircle, IconPause, IconRedo } from "@douyinfe/semi-icons";
+import html2canvas from "html2canvas";
 import dayjs from "dayjs";
 import {
   fetchUsers,
@@ -21,6 +23,7 @@ import {
   fetchMileage,
   fetchAnomalies,
   fetchUserOverview,
+  exportConsoleReport,
   AvailableDate,
   UserOverviewResult,
   DailyOverview,
@@ -670,6 +673,8 @@ function ConsolePage() {
 
         {viewMode === "overview" && userId && (
           <OverviewPanel
+            userId={userId}
+            users={users}
             range={overviewRange}
             data={overviewData}
             heatMapPoints={heatMapPoints}
@@ -836,16 +841,23 @@ function ConsolePage() {
 }
 
 interface OverviewPanelProps {
+  userId: string;
+  users: User[];
   range: [string, string];
   data: UserOverviewResult | null;
   heatMapPoints: { lat: number; lng: number; count: number }[];
 }
 
 function OverviewPanel({
+  userId,
+  users,
   range,
   data,
   heatMapPoints,
 }: OverviewPanelProps) {
+  const [exportLoading, setExportLoading] = useState(false);
+  const heatMapRef = useRef<HTMLDivElement>(null);
+
   const filled = useMemo(
     () => fillDailyRange(data?.daily ?? [], range[0], range[1]),
     [data, range]
@@ -861,6 +873,65 @@ function OverviewPanel({
   );
   const totals = data?.totals;
 
+  const dayCount = useMemo(() => {
+    const s = dayjs.tz(range[0]);
+    const e = dayjs.tz(range[1]);
+    return e.diff(s, "day") + 1;
+  }, [range]);
+
+  const visitFrequency = useMemo(() => {
+    if (!totals || dayCount <= 0) return 0;
+    return (totals.visit_count / dayCount).toFixed(2);
+  }, [totals, dayCount]);
+
+  const estimatedFuelCost = useMemo(() => {
+    const km = totals?.estimated_distance_km ?? 0;
+    return (km * 0.8).toFixed(2);
+  }, [totals]);
+
+  const userName = useMemo(
+    () => users.find((u) => u.user_id === userId)?.user_name || userId,
+    [users, userId]
+  );
+
+  const handleExport = async () => {
+    if (!data || !heatMapRef.current) return;
+
+    setExportLoading(true);
+    try {
+      let mapImage = "";
+      try {
+        const canvas = await html2canvas(heatMapRef.current, {
+          backgroundColor: "#ffffff",
+          useCORS: true,
+          scale: 2,
+        });
+        mapImage = canvas.toDataURL("image/jpeg", 0.85);
+      } catch (captureErr) {
+        console.warn("地图截图失败:", captureErr);
+        mapImage = "";
+      }
+
+      const result = await exportConsoleReport({
+        userId,
+        start: range[0],
+        end: range[1],
+        mapImage,
+      });
+
+      if (result.success) {
+        Toast.success(result.message || "已发送到钉钉群");
+      } else {
+        Toast.error(result.message || "发送失败");
+      }
+    } catch (err: any) {
+      console.error("导出到钉钉失败:", err);
+      Toast.error(err?.response?.data?.error || err?.message || "导出失败");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   return (
     <div style={{ marginTop: 16 }}>
       {!data ? (
@@ -868,20 +939,6 @@ function OverviewPanel({
       ) : (
         <>
           <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={6}>
-              <div style={statStyle}>
-                <span style={statLabelStyle}>总拜访数</span>
-                <span style={statValueStyle}>{totals?.visit_count ?? 0}</span>
-              </div>
-            </Col>
-            <Col span={6}>
-              <div style={statStyle}>
-                <span style={statLabelStyle}>总停留时长</span>
-                <span style={statValueStyle}>
-                  {((totals?.stop_minutes ?? 0) / 60).toFixed(1)}h
-                </span>
-              </div>
-            </Col>
             <Col span={6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>填报 / 估算里程</span>
@@ -895,15 +952,40 @@ function OverviewPanel({
             </Col>
             <Col span={6}>
               <div style={statStyle}>
-                <span style={statLabelStyle}>异常事件</span>
-                <span
+                <span style={statLabelStyle}>预估油费</span>
+                <span style={statValueStyle}>
+                  {estimatedFuelCost}
+                  <span style={{ fontSize: 12, color: "#999" }}>元</span>
+                </span>
+              </div>
+            </Col>
+            <Col span={6}>
+              <div style={statStyle}>
+                <span style={statLabelStyle}>拜访频率</span>
+                <span style={statValueStyle}>
+                  {visitFrequency}
+                  <span style={{ fontSize: 12, color: "#999" }}>次/天</span>
+                </span>
+              </div>
+            </Col>
+            <Col span={6}>
+              <div style={{ ...statStyle, alignItems: "center" }}>
+                <button
+                  onClick={handleExport}
+                  disabled={exportLoading}
                   style={{
-                    ...statValueStyle,
-                    color: (totals?.anomaly_count ?? 0) > 0 ? "#F54C5C" : "#27C39D",
+                    padding: "8px 16px",
+                    backgroundColor: exportLoading ? "#d9d9d9" : "#1890ff",
+                    color: "#fff",
+                    border: "none",
+                    borderRadius: 6,
+                    cursor: exportLoading ? "not-allowed" : "pointer",
+                    fontSize: 14,
+                    fontWeight: 500,
                   }}
                 >
-                  {totals?.anomaly_count ?? 0}
-                </span>
+                  {exportLoading ? "发送中..." : "导出并发送到钉钉"}
+                </button>
               </div>
             </Col>
           </Row>
@@ -924,6 +1006,7 @@ function OverviewPanel({
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={24}>
               <div
+                ref={heatMapRef}
                 style={{
                   padding: 20,
                   backgroundColor: "#fff",
@@ -934,7 +1017,7 @@ function OverviewPanel({
                 }}
               >
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
-                  拜访热度
+                  拜访热度（{userName}）
                 </div>
                 <div style={{ flex: 1, minHeight: 0 }}>
                   <HeatMapContainer points={heatMapPoints} />

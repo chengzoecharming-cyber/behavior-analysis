@@ -200,6 +200,12 @@ AMAP_KEY=YOUR_AMAP_KEY
 DINGTALK_APP_KEY=YOUR_DINGTALK_APP_KEY
 DINGTALK_APP_SECRET=YOUR_DINGTALK_APP_SECRET
 DINGTALK_PROCESS_CODE=YOUR_DINGTALK_PROCESS_CODE
+
+# 控制台导出报告目标钉钉群 chatid
+DINGTALK_EXPORT_CHAT_ID=
+
+# 可选：自定义机器人 webhook，用于发送文字摘要
+DINGTALK_EXPORT_ROBOT_WEBHOOK=
 ```
 
 ### 前端 `frontend/.env.example`
@@ -290,6 +296,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET/POST | `/dingtalk/*` | 钉钉同步相关接口 |
 | GET/POST/PUT/DELETE | `/users/*` | 用户管理 |
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
+| POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
 
 前后端代理路径：
 
