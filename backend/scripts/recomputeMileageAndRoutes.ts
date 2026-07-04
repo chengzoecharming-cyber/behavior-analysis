@@ -56,7 +56,7 @@ async function main() {
     for (let i = 0; i < dates.length; i++) {
       const date = dates[i];
       try {
-        await persistRiskSummaryCache(date);
+        await persistRiskSummaryCache(date, { useExistingRoutes: true });
         console.log(`[${i + 1}/${dates.length}] Risk cache refreshed: ${date}`);
       } catch (err) {
         console.error(

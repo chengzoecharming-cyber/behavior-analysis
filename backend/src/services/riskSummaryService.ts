@@ -41,6 +41,10 @@ export interface RiskSummaryResult {
   from_cache: boolean;
 }
 
+export interface RiskSummaryComputeOptions {
+  useExistingRoutes?: boolean;
+}
+
 function generateSummaryText(
   userName: string,
   riskLevel: string,
@@ -94,7 +98,8 @@ export async function computeEmployeeRiskSummary(
   userId: string,
   userName: string,
   department: string,
-  dateStr: string
+  dateStr: string,
+  options: RiskSummaryComputeOptions = {}
 ): Promise<EmployeeRiskSummary> {
   // 当天拜访记录
   const visitsResult = await pool.query(
@@ -141,7 +146,16 @@ export async function computeEmployeeRiskSummary(
   // 路径：按 approval_id 分组计算并持久化，避免跨审批串点
   const dayStart = toBeijingDayStart(dateStr);
   const dayEnd = toBeijingDayEnd(dateStr);
-  const routes: Route[] = await computeAndPersistRoutes(userId, dayStart, dayEnd);
+  const routes: Route[] = options.useExistingRoutes
+    ? (
+        await pool.query(
+          `SELECT * FROM routes
+           WHERE user_id = $1 AND business_date = $2::date
+           ORDER BY id ASC`,
+          [userId, dateStr]
+        )
+      ).rows
+    : await computeAndPersistRoutes(userId, dayStart, dayEnd);
 
   // 检测异常
   const anomalies = await detectAnomalies({
@@ -225,7 +239,10 @@ export async function computeEmployeeRiskSummary(
   };
 }
 
-export async function computeRiskSummaryForDate(dateStr: string): Promise<RiskSummaryResult> {
+export async function computeRiskSummaryForDate(
+  dateStr: string,
+  options: RiskSummaryComputeOptions = {}
+): Promise<RiskSummaryResult> {
   const usersResult = await pool.query(
     `SELECT DISTINCT user_id, user_name, department
      FROM visits
@@ -236,7 +253,13 @@ export async function computeRiskSummaryForDate(dateStr: string): Promise<RiskSu
 
   // 并行计算所有员工的风险摘要
   const summaryPromises = usersResult.rows.map((user) =>
-    computeEmployeeRiskSummary(user.user_id, user.user_name, user.department || "", dateStr)
+    computeEmployeeRiskSummary(
+      user.user_id,
+      user.user_name,
+      user.department || "",
+      dateStr,
+      options
+    )
   );
   const summaries = await Promise.all(summaryPromises);
 
@@ -289,8 +312,11 @@ export async function getRiskSummaryCache(dateStr: string): Promise<RiskSummaryR
   };
 }
 
-export async function persistRiskSummaryCache(dateStr: string): Promise<void> {
-  const result = await computeRiskSummaryForDate(dateStr);
+export async function persistRiskSummaryCache(
+  dateStr: string,
+  options: RiskSummaryComputeOptions = {}
+): Promise<void> {
+  const result = await computeRiskSummaryForDate(dateStr, options);
 
   await pool.query(`DELETE FROM risk_summary_cache WHERE date = $1`, [dateStr]);
 
@@ -300,7 +326,21 @@ export async function persistRiskSummaryCache(dateStr: string): Promise<void> {
        (user_id, user_name, department, date, risk_score, risk_level, anomaly_count, high_anomaly_count,
         medium_anomaly_count, low_anomaly_count, visit_count, total_stop_minutes,
         total_distance_km, reasons)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       ON CONFLICT (user_id, date)
+       DO UPDATE SET
+         user_name = EXCLUDED.user_name,
+         department = EXCLUDED.department,
+         risk_score = EXCLUDED.risk_score,
+         risk_level = EXCLUDED.risk_level,
+         anomaly_count = EXCLUDED.anomaly_count,
+         high_anomaly_count = EXCLUDED.high_anomaly_count,
+         medium_anomaly_count = EXCLUDED.medium_anomaly_count,
+         low_anomaly_count = EXCLUDED.low_anomaly_count,
+         visit_count = EXCLUDED.visit_count,
+         total_stop_minutes = EXCLUDED.total_stop_minutes,
+         total_distance_km = EXCLUDED.total_distance_km,
+         reasons = EXCLUDED.reasons`,
       [
         emp.user_id,
         emp.user_name,

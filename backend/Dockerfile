@@ -1,5 +1,8 @@
 FROM node:20-alpine
 
+ARG GIT_COMMIT=unknown
+LABEL git.commit=$GIT_COMMIT
+
 WORKDIR /app
 
 COPY package*.json ./

@@ -1,50 +1,39 @@
 import { Visit, Route } from "../types";
-import { haversineDistance } from "./distance";
+import { fetchJson } from "./httpClient";
 
 const AMAP_KEY = process.env.AMAP_KEY || "";
+const ROUTE_TIMEOUT_MS = Number(process.env.AMAP_ROUTE_TIMEOUT_MS || 15000);
+const ROUTE_RETRY_COUNT = Number(process.env.AMAP_ROUTE_RETRY_COUNT || 5);
 
 export async function planRoute(
   from: Visit,
   to: Visit,
   userId: string
-): Promise<Route> {
-  const fromLat = from.lat ?? null;
-  const fromLng = from.lng ?? null;
-  const toLat = to.lat ?? null;
-  const toLng = to.lng ?? null;
-  const fromValid = fromLat != null && fromLng != null;
-  const toValid = toLat != null && toLng != null;
-  const distanceKm =
-    fromValid && toValid
-      ? haversineDistance(fromLat, fromLng, toLat, toLng)
-      : 0;
+): Promise<Route | null> {
+  const fromValid = from.lat != null && from.lng != null;
+  const toValid = to.lat != null && to.lng != null;
 
   if (!AMAP_KEY || AMAP_KEY === "YOUR_AMAP_KEY") {
-    return fallbackRoute(from, to, userId, distanceKm);
+    console.warn(`AMap key not configured, skip route planning for ${userId}`);
+    return null;
   }
 
   if (!fromValid || !toValid) {
-    return fallbackRoute(from, to, userId, 0);
+    console.warn(`Invalid coordinates, skip route planning for ${userId}`);
+    return null;
   }
 
-  // 重试机制：高德路径规划 API 偶尔失败，失败时重试最多 5 次
+  // 重试机制：高德路径规划 API 偶尔失败，失败时重试
   let lastError: any = null;
-  const timeoutMs = 15000; // 单次请求 15 秒超时
   const delays = [500, 1500, 3000, 5000]; // 重试间隔（指数退避）
 
-  for (let attempt = 0; attempt < 5; attempt++) {
+  for (let attempt = 0; attempt < ROUTE_RETRY_COUNT; attempt++) {
     try {
       const url =
         `https://restapi.amap.com/v3/direction/driving?` +
         `origin=${from.lng},${from.lat}&destination=${to.lng},${to.lat}&extensions=all&key=${AMAP_KEY}`;
 
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const response = await fetch(url, { signal: controller.signal });
-      clearTimeout(timer);
-
-      const data = (await response.json()) as any;
+      const data = await fetchJson<any>(url, ROUTE_TIMEOUT_MS);
 
       if (data.status === "1" && data.route?.paths?.[0]) {
         const path = data.route.paths[0];
@@ -54,7 +43,7 @@ export async function planRoute(
           user_id: userId,
           from_visit_id: from.id,
           to_visit_id: to.id,
-          distance_km: parseFloat(path.distance) / 1000 || distanceKm,
+          distance_km: parseFloat(path.distance) / 1000 || 0,
           duration_min: Math.round(parseFloat(path.duration) / 60) || 0,
           polyline,
           created_at: new Date(),
@@ -65,47 +54,24 @@ export async function planRoute(
       lastError = new Error(`AMap status=${data.status}, info=${data.info}`);
     } catch (err: any) {
       lastError = err;
-      const isTimeout = err.name === "AbortError";
       console.warn(
         `AMap route planning attempt ${attempt + 1} failed:`,
-        isTimeout ? "request timeout" : err
+        err.message || err
       );
     }
 
     // 重试前等待
-    if (attempt < delays.length) {
-      await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    if (attempt < ROUTE_RETRY_COUNT - 1) {
+      const delayMs = delays[Math.min(attempt, delays.length - 1)];
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
     }
   }
 
   console.warn(
-    `AMap route planning failed after 3 attempts, falling back to straight line for ${userId}`
+    `AMap route planning failed after ${ROUTE_RETRY_COUNT} attempts, skip route for ${userId}:`,
+    lastError?.message || lastError
   );
-  return fallbackRoute(from, to, userId, distanceKm);
-}
-
-function fallbackRoute(
-  from: Visit,
-  to: Visit,
-  userId: string,
-  distanceKm: number
-): Route {
-  const fromValid = from.lat != null && from.lng != null;
-  const toValid = to.lat != null && to.lng != null;
-  const polyline =
-    fromValid && toValid
-      ? `${from.lng},${from.lat};${to.lng},${to.lat}`
-      : "";
-  return {
-    id: 0,
-    user_id: userId,
-    from_visit_id: from.id,
-    to_visit_id: to.id,
-    distance_km: distanceKm,
-    duration_min: distanceKm > 0 ? Math.round((distanceKm / 30) * 60) : 0,
-    polyline,
-    created_at: new Date(),
-  };
+  return null;
 }
 
 function decodePolyline(steps: any[]): string {

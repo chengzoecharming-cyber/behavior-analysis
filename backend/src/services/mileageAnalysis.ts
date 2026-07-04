@@ -99,6 +99,10 @@ export async function computeMileageSegments(
 
     const cachedRoute = routeMap.get(`${prev.id},${curr.id}`);
     const route = cachedRoute ?? (await planRoute(prev, curr, prev.user_id));
+    if (!route) {
+      // 高德路径规划失败，跳过该段，避免用直线距离兜底
+      continue;
+    }
     const gaodeKm = route.distance_km;
 
     const deviationRate = gaodeKm > 0

@@ -38,7 +38,7 @@ export async function computeRoutesForVisits(
 
     for (let i = 1; i < groupVisits.length; i++) {
       const route = await planRoute(groupVisits[i - 1], groupVisits[i], userId);
-      routes.push(route);
+      if (route) routes.push(route);
     }
   }
 
