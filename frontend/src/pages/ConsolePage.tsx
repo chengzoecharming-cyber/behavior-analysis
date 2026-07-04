@@ -424,6 +424,26 @@ function ConsolePage() {
     });
   };
 
+  const jumpMonth = (direction: "prev" | "next") => {
+    if (!selectedDate || availableDateInfos.length === 0) return;
+    const current = dayjs.tz(selectedDate);
+    const targetMonth =
+      direction === "prev" ? current.subtract(1, "month") : current.add(1, "month");
+    const datesInMonth = availableDateInfos
+      .map((i) => i.date)
+      .filter((d) => {
+        const dt = dayjs.tz(d);
+        return dt.year() === targetMonth.year() && dt.month() === targetMonth.month();
+      })
+      .sort();
+    if (datesInMonth.length === 0) return;
+    const target =
+      direction === "prev"
+        ? datesInMonth[datesInMonth.length - 1]
+        : datesInMonth[0];
+    selectDate(target);
+  };
+
   const handleToday = () => {
     const today = dayjs.tz().format("YYYY-MM-DD");
     // 优先选今天；今天无数据则选最近的有数据日期
@@ -448,6 +468,20 @@ function ConsolePage() {
     params.set("date", dateStr);
     setSearchParams(params);
   };
+
+  // 选中日期变化时，自动滚动日期轴让该日期居中可见
+  useEffect(() => {
+    if (!selectedDate || !dateAxisRef.current) return;
+    const timer = setTimeout(() => {
+      const activeBtn = dateAxisRef.current?.querySelector(
+        `[data-date="${selectedDate}"]`
+      ) as HTMLElement | null;
+      if (activeBtn) {
+        activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [selectedDate]);
 
   const weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"];
 
@@ -557,6 +591,20 @@ function ConsolePage() {
                   今天
                 </button>
                 <button
+                  onClick={() => jumpMonth("prev")}
+                  title="上一月"
+                  style={{
+                    backgroundColor: "#fff",
+                    border: "1px solid #d9d9d9",
+                    borderRadius: 6,
+                    padding: "4px 10px",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  &lt;&lt;
+                </button>
+                <button
                   onClick={() => scrollDateAxis("left")}
                   style={{
                     backgroundColor: "#fff",
@@ -586,6 +634,7 @@ function ConsolePage() {
                     return (
                       <button
                         key={info.date}
+                        data-date={info.date}
                         onClick={() => selectDate(info.date)}
                         disabled={!hasData}
                         style={{
@@ -636,6 +685,20 @@ function ConsolePage() {
                   }}
                 >
                   &gt;
+                </button>
+                <button
+                  onClick={() => jumpMonth("next")}
+                  title="下一月"
+                  style={{
+                    backgroundColor: "#fff",
+                    border: "1px solid #d9d9d9",
+                    borderRadius: 6,
+                    padding: "4px 10px",
+                    cursor: "pointer",
+                    fontSize: 13,
+                  }}
+                >
+                  &gt;&gt;
                 </button>
               </div>
             )}
