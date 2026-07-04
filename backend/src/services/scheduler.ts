@@ -1,6 +1,6 @@
 import { persistRiskSummaryCache } from "./riskSummaryService";
 import { isDingTalkConfigured, syncApprovals } from "./dingtalk";
-import { getYesterdayBeijing, toBeijingDayStart } from "../utils/timezone";
+import { getYesterdayBeijing, toBeijingDayStart, toBeijingDayEnd } from "../utils/timezone";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -23,8 +23,13 @@ function getMillisecondsUntil(hour: number, minute: number): number {
   return target.getTime() - now.getTime();
 }
 
-function dateToMs(dateStr: string): number {
+function dateToStartMs(dateStr: string): number {
   return new Date(toBeijingDayStart(dateStr)).getTime();
+}
+
+function dateToEndMs(dateStr: string): number {
+  // 23:59:59.999 +08:00
+  return new Date(toBeijingDayEnd(dateStr).replace("+08:00", ".999+08:00")).getTime();
 }
 
 export function startRiskSummaryCacheScheduler(): void {
@@ -32,7 +37,7 @@ export function startRiskSummaryCacheScheduler(): void {
     const yesterday = getYesterdayBeijing();
     console.log(`[Scheduler] Refreshing risk summary cache for ${yesterday}`);
     try {
-      await persistRiskSummaryCache(yesterday);
+      await persistRiskSummaryCache(yesterday, { useExistingRoutes: true });
       console.log(`[Scheduler] Risk summary cache refreshed for ${yesterday}`);
     } catch (err) {
       console.error(`[Scheduler] Failed to refresh risk summary cache:`, err);
@@ -60,7 +65,7 @@ export function startDingTalkSyncScheduler(): void {
     const yesterday = getYesterdayBeijing();
     console.log(`[Scheduler] Syncing DingTalk approvals for ${yesterday}`);
     try {
-      const result = await syncApprovals(dateToMs(yesterday), dateToMs(yesterday));
+      const result = await syncApprovals(dateToStartMs(yesterday), dateToEndMs(yesterday));
       console.log(
         `[Scheduler] DingTalk sync completed: ${result.totalInstances} instances, ${result.normalizedInserted} visits inserted, ${result.parseFailures} failures`
       );

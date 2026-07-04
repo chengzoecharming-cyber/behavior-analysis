@@ -40,7 +40,7 @@ export async function recomputeDerivedDataForVisits(
 
   for (const date of affectedDates) {
     try {
-      await persistRiskSummaryCache(date);
+      await persistRiskSummaryCache(date, { useExistingRoutes: true });
     } catch (err) {
       console.warn(
         `[recomputeDerivedDataForVisits] 风险缓存刷新失败: ${date}`,
