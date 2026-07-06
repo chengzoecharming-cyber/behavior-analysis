@@ -7,6 +7,7 @@ import {
   MileageStats,
   User,
   AnomalyWeight,
+  DingTalkSyncLog,
 } from "./types";
 
 const api = axios.create({
@@ -326,6 +327,12 @@ export interface DingTalkSyncResult {
   error?: string;
 }
 
+export interface DingTalkSyncLogsResponse {
+  success: boolean;
+  limit: number;
+  logs: DingTalkSyncLog[];
+}
+
 export interface AuthUser {
   id: number;
   user_id: string;
@@ -405,6 +412,16 @@ export async function syncDingTalk(
   endDate: string
 ): Promise<DingTalkSyncResult> {
   const res = await api.post("/dingtalk/sync", { startDate, endDate });
+  return res.data;
+}
+
+export async function fetchSyncLogs(limit = 50): Promise<DingTalkSyncLogsResponse> {
+  const res = await api.get("/dingtalk/sync-logs", { params: { limit } });
+  return res.data;
+}
+
+export async function retrySyncLog(id: number): Promise<DingTalkSyncResult> {
+  const res = await api.post(`/dingtalk/sync-logs/${id}/retry`);
   return res.data;
 }
 

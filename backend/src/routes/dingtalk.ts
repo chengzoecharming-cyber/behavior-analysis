@@ -14,6 +14,7 @@ import {
   getUserDetail,
 } from "../services/dingtalk";
 import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getYesterdayBeijing } from "../utils/timezone";
+import { pool } from "../db";
 
 const router = Router();
 
@@ -23,6 +24,13 @@ function dateToStartMs(dateStr: string): number {
 
 function dateToEndMs(dateStr: string): number {
   return new Date(toBeijingDayEnd(dateStr).replace("+08:00", ".999+08:00")).getTime();
+}
+
+function formatBeijingDateTime(date: Date | string | null): string | null {
+  if (!date) return null;
+  const d = typeof date === "string" ? new Date(date) : date;
+  const beijing = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  return beijing.toISOString().replace("T", " ").slice(0, 19);
 }
 
 // GET /dingtalk/probe-user?userid=xxx
@@ -276,6 +284,88 @@ router.post("/sync-contacts", async (_req: Request, res: Response) => {
   } catch (err: any) {
     console.error("Failed to sync DingTalk contacts:", err);
     res.status(500).json({ error: err.message || "Failed to sync contacts" });
+  }
+});
+
+// GET /dingtalk/sync-logs?limit=50
+// 查询钉钉同步历史记录
+router.get("/sync-logs", async (req: Request, res: Response) => {
+  const limit = Math.min(parseInt((req.query.limit as string) || "50", 10) || 50, 200);
+
+  try {
+    const result = await pool.query(
+      `SELECT id, triggered_by, status, start_date, end_date,
+              total_instances, parsed_visits, parse_failures,
+              normalized_inserted, skipped, error_message,
+              started_at, finished_at
+       FROM dingtalk_sync_logs
+       ORDER BY started_at DESC
+       LIMIT $1`,
+      [limit]
+    );
+
+    const logs = result.rows.map((row) => ({
+      ...row,
+      start_date: formatBeijingDate(row.start_date),
+      end_date: formatBeijingDate(row.end_date),
+      started_at: formatBeijingDateTime(row.started_at),
+      finished_at: formatBeijingDateTime(row.finished_at),
+    }));
+
+    res.json({
+      success: true,
+      limit,
+      logs,
+    });
+  } catch (err) {
+    console.error("Failed to fetch DingTalk sync logs:", err);
+    res.status(500).json({ error: "Failed to fetch sync logs" });
+  }
+});
+
+// POST /dingtalk/sync-logs/:id/retry
+// 根据某条同步记录的日期范围重新执行同步
+router.post("/sync-logs/:id/retry", async (req: Request, res: Response) => {
+  if (!isDingTalkConfigured()) {
+    res.status(400).json({ error: "DingTalk not configured" });
+    return;
+  }
+
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid sync log id" });
+    return;
+  }
+
+  try {
+    const logResult = await pool.query(
+      `SELECT start_date, end_date FROM dingtalk_sync_logs WHERE id = $1`,
+      [id]
+    );
+
+    if (logResult.rows.length === 0) {
+      res.status(404).json({ error: "Sync log not found" });
+      return;
+    }
+
+    const { start_date, end_date } = logResult.rows[0];
+    const startDateStr = formatBeijingDate(start_date);
+    const endDateStr = formatBeijingDate(end_date);
+    const result = await syncApprovals(
+      dateToStartMs(startDateStr),
+      dateToEndMs(endDateStr),
+      "manual"
+    );
+
+    res.json({
+      success: true,
+      startDate: startDateStr,
+      endDate: endDateStr,
+      ...result,
+    });
+  } catch (err: any) {
+    console.error(`Failed to retry DingTalk sync log ${id}:`, err);
+    res.status(500).json({ error: err.message || "Failed to retry sync" });
   }
 });
 

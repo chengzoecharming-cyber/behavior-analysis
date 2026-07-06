@@ -18,6 +18,7 @@ import {
   MessageSquareText,
   Users,
   LogOut,
+  History,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import ConsolePage from "./pages/ConsolePage";
@@ -25,6 +26,7 @@ import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
 import FeedbackPage from "./pages/FeedbackPage";
 import LoginPage from "./pages/LoginPage";
+import SyncLogsPage from "./pages/SyncLogsPage";
 import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
 
@@ -218,6 +220,14 @@ function App() {
                     >
                       切换用户
                     </Dropdown.Item>
+                    {currentUser?.role === "admin" && (
+                      <Dropdown.Item
+                        icon={<History className="h-4 w-4" />}
+                        style={itemStyle}
+                      >
+                        <Link to="/sync-logs">同步记录</Link>
+                      </Dropdown.Item>
+                    )}
                     <Dropdown.Item
                       icon={<MessageSquareText className="h-4 w-4" />}
                       style={itemStyle}
@@ -363,6 +373,7 @@ function App() {
           <Route path="/sync" element={<DataSyncPage />} />
           <Route path="/rules" element={<RulesConfigPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/sync-logs" element={<SyncLogsPage />} />
           <Route path="/login" element={<LoginPage />} />
         </Routes>
       </main>

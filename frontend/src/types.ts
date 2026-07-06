@@ -106,3 +106,19 @@ export interface AnomalyWeight {
   created_at: string;
   updated_at: string;
 }
+
+export interface DingTalkSyncLog {
+  id: number;
+  triggered_by: "scheduler" | "manual" | "startup";
+  status: "running" | "success" | "failed";
+  start_date: string;
+  end_date: string;
+  total_instances: number;
+  parsed_visits: number;
+  parse_failures: number;
+  normalized_inserted: number;
+  skipped: number;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+}

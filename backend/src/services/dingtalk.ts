@@ -1,7 +1,7 @@
 import { ParsedVisit } from "../types";
 import { processParsedVisits, ProcessResult } from "./normalization";
 import { pool } from "../db";
-import { parseDateTimeAsBeijing } from "../utils/timezone";
+import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { recomputeDerivedDataForVisits } from "./derivedComputation";
 
@@ -671,50 +671,128 @@ export async function fetchAllApprovalIds(
 
 export async function syncApprovals(
   startTimeMs: number,
-  endTimeMs: number
+  endTimeMs: number,
+  triggeredBy: "scheduler" | "manual" | "startup" = "manual"
 ): Promise<ProcessResult & { totalInstances: number; parsedVisits: number; parseFailures: number }> {
   if (!isDingTalkConfigured()) {
     throw new Error("DingTalk not configured");
   }
 
-  const ids = await fetchAllApprovalIds(startTimeMs, endTimeMs);
-  const parsedVisits: ParsedVisit[] = [];
-  let parseFailures = 0;
+  const startDate = formatBeijingDate(new Date(startTimeMs));
+  const endDate = formatBeijingDate(new Date(endTimeMs));
 
-  for (const id of ids) {
-    try {
-      const instance = await getApprovalDetail(id);
+  // 把同日期范围未结束的旧记录标记为失败，避免页面上长期显示"进行中"
+  await pool.query(
+    `UPDATE dingtalk_sync_logs
+     SET status = 'failed',
+         error_message = '被后续同步任务中断',
+         finished_at = NOW()
+     WHERE status = 'running'
+       AND start_date = $1
+       AND end_date = $2`,
+    [startDate, endDate]
+  );
 
-      // 先保存原始审批数据
-      await saveRawApproval(instance);
+  const logResult = await pool.query(
+    `INSERT INTO dingtalk_sync_logs
+     (triggered_by, status, start_date, end_date, started_at)
+     VALUES ($1, 'running', $2, $3, NOW())
+     RETURNING id`,
+    [triggeredBy, startDate, endDate]
+  );
+  const syncLogId = logResult.rows[0].id;
 
-      const visits = await parseApprovalInstance(instance);
-
-      if (visits.length === 0) {
-        parseFailures++;
-        continue;
-      }
-
-      parsedVisits.push(...visits);
-    } catch (err) {
-      console.error(`Failed to parse DingTalk instance ${id}:`, err);
-      parseFailures++;
-    }
-  }
-
-  const result = await processParsedVisits(parsedVisits, "dingtalk");
-
-  // 后台自动补算路线和异常，避免用户手动跑脚本
-  if (result.affectedUserDates.length > 0) {
-    recomputeDerivedDataForVisits(result.affectedUserDates).catch((err) => {
-      console.error("[syncApprovals] 后台衍生数据计算失败:", err);
-    });
-  }
-
-  return {
-    ...result,
-    totalInstances: ids.length,
-    parsedVisits: parsedVisits.length,
-    parseFailures,
+  const updateLog = async (
+    status: "success" | "failed",
+    data: {
+      totalInstances?: number;
+      parsedVisits?: number;
+      parseFailures?: number;
+      normalizedInserted?: number;
+      skipped?: number;
+    },
+    errorMessage?: string
+  ) => {
+    await pool.query(
+      `UPDATE dingtalk_sync_logs
+       SET status = $1,
+           total_instances = $2,
+           parsed_visits = $3,
+           parse_failures = $4,
+           normalized_inserted = $5,
+           skipped = $6,
+           error_message = $7,
+           finished_at = NOW()
+       WHERE id = $8`,
+      [
+        status,
+        data.totalInstances ?? 0,
+        data.parsedVisits ?? 0,
+        data.parseFailures ?? 0,
+        data.normalizedInserted ?? 0,
+        data.skipped ?? 0,
+        errorMessage ?? null,
+        syncLogId,
+      ]
+    );
   };
+
+  try {
+    const ids = await fetchAllApprovalIds(startTimeMs, endTimeMs);
+    const parsedVisits: ParsedVisit[] = [];
+    let parseFailures = 0;
+
+    for (const id of ids) {
+      try {
+        const instance = await getApprovalDetail(id);
+
+        // 先保存原始审批数据
+        await saveRawApproval(instance);
+
+        const visits = await parseApprovalInstance(instance);
+
+        if (visits.length === 0) {
+          parseFailures++;
+          continue;
+        }
+
+        parsedVisits.push(...visits);
+      } catch (err) {
+        console.error(`Failed to parse DingTalk instance ${id}:`, err);
+        parseFailures++;
+      }
+    }
+
+    const result = await processParsedVisits(parsedVisits, "dingtalk");
+
+    // 后台自动补算路线和异常，避免用户手动跑脚本
+    if (result.affectedUserDates.length > 0) {
+      recomputeDerivedDataForVisits(result.affectedUserDates).catch((err) => {
+        console.error("[syncApprovals] 后台衍生数据计算失败:", err);
+      });
+    }
+
+    const finalResult = {
+      ...result,
+      totalInstances: ids.length,
+      parsedVisits: parsedVisits.length,
+      parseFailures,
+    };
+
+    await updateLog(
+      "success",
+      {
+        totalInstances: finalResult.totalInstances,
+        parsedVisits: finalResult.parsedVisits,
+        parseFailures: finalResult.parseFailures,
+        normalizedInserted: finalResult.normalizedInserted,
+        skipped: finalResult.skipped,
+      }
+    );
+
+    return finalResult;
+  } catch (err: any) {
+    await updateLog("failed", {}, err.message || String(err));
+    throw err;
+  }
 }

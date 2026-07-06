@@ -31,6 +31,11 @@ services:
     environment:
       DATABASE_URL: postgresql://sales:sales123@postgres:5432/sales_map
       AMAP_KEY: ${AMAP_KEY}
+      AMAP_ROUTE_TIMEOUT_MS: ${AMAP_ROUTE_TIMEOUT_MS:-15000}
+      AMAP_ROUTE_RETRY_COUNT: ${AMAP_ROUTE_RETRY_COUNT:-5}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-postgres,localhost,127.0.0.1}
       DINGTALK_APP_KEY: ${DINGTALK_APP_KEY:-}
       DINGTALK_APP_SECRET: ${DINGTALK_APP_SECRET:-}
       DINGTALK_PROCESS_CODE: ${DINGTALK_PROCESS_CODE:-}

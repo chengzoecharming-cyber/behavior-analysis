@@ -331,6 +331,28 @@ export async function initDB(): Promise<void> {
 
       CREATE INDEX IF NOT EXISTS idx_department_aliases_canonical
         ON department_aliases(canonical_name);
+
+      -- 钉钉同步记录表
+      CREATE TABLE IF NOT EXISTS dingtalk_sync_logs (
+        id SERIAL PRIMARY KEY,
+        triggered_by VARCHAR(32) NOT NULL CHECK (triggered_by IN ('scheduler', 'manual', 'startup')),
+        status VARCHAR(16) NOT NULL CHECK (status IN ('running', 'success', 'failed')),
+        start_date DATE NOT NULL,
+        end_date DATE NOT NULL,
+        total_instances INTEGER NOT NULL DEFAULT 0,
+        parsed_visits INTEGER NOT NULL DEFAULT 0,
+        parse_failures INTEGER NOT NULL DEFAULT 0,
+        normalized_inserted INTEGER NOT NULL DEFAULT 0,
+        skipped INTEGER NOT NULL DEFAULT 0,
+        error_message TEXT,
+        started_at TIMESTAMPTZ DEFAULT NOW(),
+        finished_at TIMESTAMPTZ
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_dingtalk_sync_logs_status_started
+        ON dingtalk_sync_logs(status, started_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_dingtalk_sync_logs_dates
+        ON dingtalk_sync_logs(start_date, end_date);
     `);
     console.log("Database initialized");
   } finally {

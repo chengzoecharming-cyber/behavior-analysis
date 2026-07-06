@@ -145,3 +145,19 @@ export interface AnomalyException {
   feedback_id: number | null;
   created_at: Date;
 }
+
+export interface DingTalkSyncLog {
+  id: number;
+  triggered_by: "scheduler" | "manual" | "startup";
+  status: "running" | "success" | "failed";
+  start_date: string;
+  end_date: string;
+  total_instances: number;
+  parsed_visits: number;
+  parse_failures: number;
+  normalized_inserted: number;
+  skipped: number;
+  error_message: string | null;
+  started_at: Date;
+  finished_at: Date | null;
+}
