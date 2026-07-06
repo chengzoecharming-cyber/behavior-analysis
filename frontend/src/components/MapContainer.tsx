@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { Visit, Stop, Route, Anomaly } from "../types";
 import dayjs from "dayjs";
-import { Card, Descriptions, Button } from "@douyinfe/semi-ui";
+import { Card, Descriptions, Button, Tag } from "@douyinfe/semi-ui";
 
 export interface RouteGroup {
   key: string;
@@ -98,8 +98,22 @@ function DescItem({ label, children }: { label: string; children: ReactNode }) {
   );
 }
 
-function getMarkerContent(label: string, bgColor: string, textColor = "#fff", opacity = 1) {
-  return `<div style="width:28px;height:28px;border-radius:50%;background:${bgColor};color:${textColor};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);opacity:${opacity}">${label}</div>`;
+function getMarkerContent(
+  label: string,
+  bgColor: string,
+  textColor = "#fff",
+  opacity = 1,
+  isPublicTransport = false
+) {
+  // 公共交通在标记上加一个小圆点标识
+  const badge = isPublicTransport
+    ? `<div style="position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:#fa8c16;border:1px solid #fff;"></div>`
+    : "";
+  return `<div style="position:relative;width:28px;height:28px;border-radius:50%;background:${bgColor};color:${textColor};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);opacity:${opacity}">${label}${badge}</div>`;
+}
+
+function isPublicTransportVisit(visit: Visit): boolean {
+  return (visit.trip_type || "").includes("公共交通");
 }
 
 export default function MapContainer({
@@ -231,12 +245,16 @@ export default function MapContainer({
       const sameStartEnd = startVisit && endVisit;
 
       sorted.forEach((v, idx) => {
+        const isPublic = isPublicTransportVisit(v);
         const isStart = idx === 0;
         const isEnd = idx === sorted.length - 1;
         let label: string;
         let bgColor: string;
 
-        if (isStart) {
+        if (isPublic) {
+          label = "公";
+          bgColor = "#722ed1";
+        } else if (isStart) {
           label = "起";
           bgColor = "#52c41a";
         } else if (isEnd) {
@@ -248,14 +266,15 @@ export default function MapContainer({
         }
 
         // 起、终标记设置一定透明度，重合时也能看到下方标记
-        const opacity = isStart || isEnd ? 0.85 : 1;
+        const opacity = !isPublic && (isStart || isEnd) ? 0.85 : 1;
         // 终点在重合时位于更上层，保证"终"可见
-        const zIndex = sameStartEnd && isEnd ? 120 : isStart ? 110 : isEnd ? 100 : 90;
+        const zIndex =
+          sameStartEnd && isEnd && !isPublic ? 120 : isStart && !isPublic ? 110 : isEnd && !isPublic ? 100 : isPublic ? 130 : 90;
 
         const marker = new AMap.Marker({
           position: [v.lng, v.lat],
           title: `${dayjs(v.timestamp).format("HH:mm")} ${v.location_name}`,
-          content: getMarkerContent(label, bgColor, "#fff", opacity),
+          content: getMarkerContent(label, bgColor, "#fff", opacity, isPublic),
           offset: new AMap.Pixel(-14, -14),
           zIndex,
         });
@@ -415,12 +434,20 @@ export default function MapContainer({
               <DescItem label="地点名称">{selectedVisit.location_name}</DescItem>
               <DescItem label="详细地址">{selectedVisit.address}</DescItem>
               <DescItem label="数据来源">{selectedVisit.source}</DescItem>
-              {selectedVisit.reported_distance_km !== undefined && (
-                <DescItem label="填报里程">
-                  {selectedVisit.reported_distance_km} km
+              {selectedVisit.trip_type && (
+                <DescItem label="出行方式">
+                  <Tag color={isPublicTransportVisit(selectedVisit) ? "purple" : "blue"}>
+                    {selectedVisit.trip_type}
+                  </Tag>
                 </DescItem>
               )}
-              {selectedVisit.vehicle && (
+              {!isPublicTransportVisit(selectedVisit) &&
+                selectedVisit.reported_distance_km !== undefined && (
+                  <DescItem label="填报里程">
+                    {selectedVisit.reported_distance_km} km
+                  </DescItem>
+                )}
+              {!isPublicTransportVisit(selectedVisit) && selectedVisit.vehicle && (
                 <DescItem label="交通工具">{selectedVisit.vehicle}</DescItem>
               )}
             </Descriptions>

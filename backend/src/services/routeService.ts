@@ -37,7 +37,16 @@ export async function computeRoutesForVisits(
     );
 
     for (let i = 1; i < groupVisits.length; i++) {
-      const route = await planRoute(groupVisits[i - 1], groupVisits[i], userId);
+      const prev = groupVisits[i - 1];
+      const curr = groupVisits[i];
+      // 公共交通不参与驾车路线规划，避免路线失真
+      if (
+        prev.trip_type?.includes("公共交通") ||
+        curr.trip_type?.includes("公共交通")
+      ) {
+        continue;
+      }
+      const route = await planRoute(prev, curr, userId);
       if (route) routes.push(route);
     }
   }

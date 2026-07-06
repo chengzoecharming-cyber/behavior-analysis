@@ -50,6 +50,13 @@ export async function computeMileageSegments(
     const prev = sorted[i - 1];
     const curr = sorted[i];
     if (!prev.approval_id || prev.approval_id !== curr.approval_id) continue;
+    // 公共交通不参与里程偏差计算
+    if (
+      prev.trip_type?.includes("公共交通") ||
+      curr.trip_type?.includes("公共交通")
+    ) {
+      continue;
+    }
     pairs.push({ prev, curr });
   }
 

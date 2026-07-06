@@ -115,6 +115,7 @@ router.get("/mileage", async (req: Request, res: Response) => {
          WHERE user_id = $1
            AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
            AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+           AND (trip_type IS NULL OR trip_type NOT LIKE '%公共交通%')
        ) t
        WHERE reported_distance_km > 0 AND reported_distance_km <= $4
        GROUP BY approval_group`,

@@ -233,13 +233,17 @@ function ConsolePage() {
 
 
   const totalDistance = useMemo(() => {
+    // 过滤公共交通 visits，避免直线距离估算失真
+    const nonPublicVisits = visits.filter(
+      (v) => !(v.trip_type || "").includes("公共交通")
+    );
     let total = 0;
-    for (let i = 1; i < visits.length; i++) {
+    for (let i = 1; i < nonPublicVisits.length; i++) {
       total += haversine(
-        visits[i - 1].lat,
-        visits[i - 1].lng,
-        visits[i].lat,
-        visits[i].lng
+        nonPublicVisits[i - 1].lat,
+        nonPublicVisits[i - 1].lng,
+        nonPublicVisits[i].lat,
+        nonPublicVisits[i].lng
       );
     }
     return total.toFixed(2);
@@ -759,11 +763,18 @@ function ConsolePage() {
               <div style={statStyle}>
                 <span style={statLabelStyle}>总里程 vs 估算里程</span>
                 <span style={statValueStyle}>
-                  <span style={{ color: overviewGroup.mileage.reportedDistanceKm ? "#0f1419" : "#999" }}>
-                    {overviewGroup.mileage.reportedDistanceKm || "未填报"}
-                  </span>
-                  <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
-                  <span>{Math.round(overviewGroup.mileage.totalKm)}</span>
+                  {overviewGroup.mileage.reportedDistanceKm === 0 &&
+                  overviewGroup.mileage.totalKm === 0 ? (
+                    <span style={{ color: "#999", fontSize: 16 }}>公共交通/无驾车</span>
+                  ) : (
+                    <>
+                      <span style={{ color: overviewGroup.mileage.reportedDistanceKm ? "#0f1419" : "#999" }}>
+                        {overviewGroup.mileage.reportedDistanceKm || "未填报"}
+                      </span>
+                      <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
+                      <span>{Math.round(overviewGroup.mileage.totalKm)}</span>
+                    </>
+                  )}
                 </span>
               </div>
             </Col>
@@ -776,7 +787,14 @@ function ConsolePage() {
             <Col span={6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>估算油费 (元)</span>
-                <span style={statValueStyle}>{overviewGroup.mileage.estimatedFuelCost}</span>
+                <span style={statValueStyle}>
+                  {overviewGroup.mileage.estimatedFuelCost === 0 &&
+                  overviewGroup.mileage.totalKm === 0 ? (
+                    <span style={{ color: "#999" }}>-</span>
+                  ) : (
+                    overviewGroup.mileage.estimatedFuelCost
+                  )}
+                </span>
               </div>
             </Col>
           </Row>

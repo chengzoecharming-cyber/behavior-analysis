@@ -209,6 +209,14 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
       const to = visitsToday.find((v) => v.id === route.to_visit_id);
       if (!from || !to) continue;
 
+      // 公共交通不生成 route，此处额外保险
+      if (
+        from.trip_type?.includes("公共交通") ||
+        to.trip_type?.includes("公共交通")
+      ) {
+        continue;
+      }
+
       if (from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
         continue;
       }

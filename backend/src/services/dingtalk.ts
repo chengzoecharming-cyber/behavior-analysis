@@ -489,14 +489,12 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
   };
 
   const tripType = findValue(/请选择出行方式/);
+  const isPublicTransport = /公共交通/.test(tripType || "");
 
-  // MVP 阶段先跳过公共交通出行，避免里程统计失真
-  if (/公共交通/.test(tripType || "")) {
-    return [];
-  }
-
-  const vehicleRaw = findValue(/选择出行车辆/);
-  const startOdometer = parseFloat(findValue(/出发里程读数/) || "NaN");
+  const vehicleRaw = isPublicTransport ? undefined : findValue(/选择出行车辆/);
+  const startOdometer = isPublicTransport
+    ? NaN
+    : parseFloat(findValue(/出发里程读数/) || "NaN");
 
   // 解析车辆信息，同时拿到用户名
   const vehicleInfo = vehicleRaw ? parseVehicle(vehicleRaw) : undefined;
