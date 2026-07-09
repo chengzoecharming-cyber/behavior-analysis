@@ -212,10 +212,10 @@ export async function processParsedVisits(
        (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
         location_name, address, customer_name, source,
         approval_id, sequence, trip_type, vehicle, start_odometer, end_odometer,
-        reported_distance_km, visit_note, special_sign_reason, geocode_status, source_detail,
+        reported_distance_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
         business_date)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
        RETURNING id`,
       [
         rawVisitId,
@@ -238,6 +238,7 @@ export async function processParsedVisits(
         visit.reported_distance_km ?? null,
         visit.visit_note ?? null,
         visit.special_sign_reason ?? null,
+        visit.photos ?? null,
         geocodeStatus,
         visit.source_detail ?? null,
         businessDates[i],

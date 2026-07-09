@@ -77,6 +77,7 @@ export async function initDB(): Promise<void> {
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS reported_distance_km DOUBLE PRECISION;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS visit_note TEXT;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS special_sign_reason TEXT;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS geocode_status VARCHAR(16) DEFAULT 'pending';
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS source_detail VARCHAR(64);
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS business_date DATE;

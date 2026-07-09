@@ -35,6 +35,7 @@ export interface Visit {
   reported_distance_km?: number;
   visit_note?: string;
   special_sign_reason?: string;
+  photos?: string[];
   geocode_status?: string;
   source_detail?: string;
   business_date?: string;
@@ -110,6 +111,7 @@ export interface ParsedVisit {
   reported_distance_km?: number;
   visit_note?: string;
   special_sign_reason?: string;
+  photos?: string[];
   sign_count?: number;
   continues_to_next?: boolean;
   source_detail?: string;

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { Visit, Stop, Route, Anomaly } from "../types";
 import dayjs from "dayjs";
-import { Card, Descriptions, Button, Tag } from "@douyinfe/semi-ui";
+import { Card, Descriptions, Button, Tag, Image } from "@douyinfe/semi-ui";
 
 export interface RouteGroup {
   key: string;
@@ -271,9 +271,12 @@ export default function MapContainer({
         const zIndex =
           sameStartEnd && isEnd && !isPublic ? 120 : isStart && !isPublic ? 110 : isEnd && !isPublic ? 100 : isPublic ? 130 : 90;
 
+        const markerTitle = v.special_sign_reason
+          ? v.location_name || v.special_sign_reason
+          : v.visit_note || v.location_name;
         const marker = new AMap.Marker({
           position: [v.lng, v.lat],
-          title: `${dayjs(v.timestamp).format("HH:mm")} ${v.location_name}`,
+          title: `${dayjs(v.timestamp).format("HH:mm")} ${markerTitle}`,
           content: getMarkerContent(label, bgColor, "#fff", opacity, isPublic),
           offset: new AMap.Pixel(-14, -14),
           zIndex,
@@ -430,10 +433,39 @@ export default function MapContainer({
               <DescItem label="拜访时间">
                 {dayjs(selectedVisit.timestamp).format("YYYY-MM-DD HH:mm")}
               </DescItem>
-              <DescItem label="客户名称">{selectedVisit.customer_name}</DescItem>
-              <DescItem label="地点名称">{selectedVisit.location_name}</DescItem>
+              {selectedVisit.customer_name && (
+                <DescItem label="客户名称">{selectedVisit.customer_name}</DescItem>
+              )}
+              {selectedVisit.visit_note && (
+                <DescItem label="本次拜访情况">{selectedVisit.visit_note}</DescItem>
+              )}
+              {selectedVisit.special_sign_reason && (
+                <>
+                  {selectedVisit.location_name && selectedVisit.location_name !== "特殊签到点" && (
+                    <DescItem label="打卡地">{selectedVisit.location_name}</DescItem>
+                  )}
+                  <DescItem label="特殊签到原因">
+                    {selectedVisit.special_sign_reason}
+                  </DescItem>
+                </>
+              )}
               <DescItem label="详细地址">{selectedVisit.address}</DescItem>
-              <DescItem label="数据来源">{selectedVisit.source}</DescItem>
+              {selectedVisit.photos && selectedVisit.photos.length > 0 && (
+                <DescItem label="里程照片和拜访客户照片">
+                  <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                    {selectedVisit.photos.map((url, idx) => (
+                      <Image
+                        key={idx}
+                        src={url}
+                        width={80}
+                        height={80}
+                        style={{ borderRadius: 4, objectFit: "cover" }}
+                        preview
+                      />
+                    ))}
+                  </div>
+                </DescItem>
+              )}
               {selectedVisit.trip_type && (
                 <DescItem label="出行方式">
                   <Tag color={isPublicTransportVisit(selectedVisit) ? "purple" : "blue"}>

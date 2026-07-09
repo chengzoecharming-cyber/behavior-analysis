@@ -22,6 +22,7 @@ export interface Visit {
   reported_distance_km?: number;
   visit_note?: string;
   special_sign_reason?: string;
+  photos?: string[];
   geocode_status?: string;
   source_detail?: string;
 }

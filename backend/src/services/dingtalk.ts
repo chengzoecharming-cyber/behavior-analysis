@@ -434,8 +434,14 @@ export function parseApprovalForm(formComponents: FormComponent[]): Partial<Pars
       visit.trip_type = value;
     } else if (/车辆|车牌|用车/.test(name)) {
       visit.vehicle = value;
-    } else if (/备注|说明|原因/.test(name)) {
+    } else if (/^本次拜访情况\d*$/.test(name)) {
       visit.visit_note = value;
+    } else if (name === "特殊签到原因") {
+      visit.special_sign_reason = value;
+    } else if (name === "打卡地") {
+      visit.location_name = value;
+    } else if (/^里程照片和拜访客户照片\d*$/.test(name)) {
+      visit.photos = parsePhotoUrls(value);
     }
   }
 
@@ -456,6 +462,21 @@ function parseTimeLocationValue(value: string): { time: string; lng: number; lat
   } catch {
     return null;
   }
+}
+
+// 解析照片字段的 JSON 数组字符串，返回 URL 列表
+function parsePhotoUrls(value: string): string[] {
+  if (!value || value === "null") return [];
+  try {
+    const parsed = JSON.parse(value);
+    if (Array.isArray(parsed)) {
+      return parsed.filter((item) => typeof item === "string" && item.startsWith("http"));
+    }
+  } catch {
+    // 不是 JSON，可能是单个 URL
+    if (value.startsWith("http")) return [value];
+  }
+  return [];
 }
 
 // 从 "华南/徐加乐 赣K56927" 或 "浙江/贺鹏程 川A E495Q" 中提取车牌和用户名
@@ -585,9 +606,18 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     const customerRaw = findNearby(stop.index, /^客户$/) || findNearby(stop.index, /客户名称/);
     const customerName = customerRaw ? extractReadableName(customerRaw) : "";
 
-    // 拜访情况/特殊签到原因作为备注和备选名称
-    const visitNote = findNearby(stop.index, /本次拜访情况|特殊签到原因/);
-    const noteText = visitNote && visitNote !== "null" ? visitNote : "";
+    // 拜访情况 / 特殊签到原因 / 打卡地 / 照片分开解析
+    const visitNote = findNearby(stop.index, /^本次拜访情况\d*$/);
+    const visitNoteText = visitNote && visitNote !== "null" ? visitNote : "";
+
+    const specialSignReason = findNearby(stop.index, /^特殊签到原因$/);
+    const specialSignReasonText = specialSignReason && specialSignReason !== "null" ? specialSignReason : "";
+
+    const checkInPlace = findNearby(stop.index, /^打卡地$/);
+    const checkInPlaceText = checkInPlace && checkInPlace !== "null" ? checkInPlace : "";
+
+    const photosRaw = findNearby(stop.index, /^里程照片和拜访客户照片\d*$/);
+    const photos = photosRaw ? parsePhotoUrls(photosRaw) : [];
 
     // 里程读数：第一个 stop 用出发里程，后续尝试找对应的终点里程读数
     let endOdometer: number | null = null;
@@ -609,8 +639,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     }
 
     const locationName =
-      customerName ||
-      (noteText && noteText.length <= 30 ? noteText : "") ||
+      checkInPlaceText ||
       (stop.isSpecial ? "特殊签到点" : i === 0 ? "出发点" : `签到点${sequence}`);
 
     visits.push({
@@ -630,7 +659,9 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
       start_odometer: i === 0 ? startOdometer : undefined,
       end_odometer: endOdometer ?? undefined,
       reported_distance_km: reportedDistanceKm ?? undefined,
-      visit_note: noteText + mileageNote,
+      visit_note: visitNoteText + mileageNote,
+      special_sign_reason: specialSignReasonText,
+      photos,
       source_detail: stop.isSpecial ? "special_sign_in" : i === 0 ? "trip_start" : undefined,
     });
   }
