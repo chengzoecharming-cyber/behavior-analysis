@@ -50,7 +50,7 @@ async function getUserName(userId: string): Promise<string> {
 }
 
 router.post("/console-report", async (req: Request, res: Response) => {
-  const { userId, start, end, mapImage } = req.body || {};
+  const { userId, start, end, amapKey, points } = req.body || {};
 
   if (!userId || typeof userId !== "string") {
     res.status(400).json({ error: "Missing userId" });
@@ -92,7 +92,8 @@ router.post("/console-report", async (req: Request, res: Response) => {
       overview,
       estimatedFuelCost,
       visitFrequency,
-      mapImage: typeof mapImage === "string" ? mapImage : "",
+      amapKey: typeof amapKey === "string" ? amapKey : "",
+      points: Array.isArray(points) ? points : [],
     });
 
     const fileName = `${userName}_${start}_${end}_外勤报告.html`;

@@ -426,11 +426,19 @@ export async function retrySyncLog(id: number): Promise<DingTalkSyncResult> {
   return res.data;
 }
 
+export interface HeatMapPoint {
+  lat: number;
+  lng: number;
+  count: number;
+}
+
 export interface ExportConsoleReportPayload {
   userId: string;
   start: string;
   end: string;
-  mapImage: string; // base64 dataURL
+  mapImage?: string; // 已废弃，改用 amapKey + points 在 HTML 内渲染交互地图
+  amapKey: string;
+  points: HeatMapPoint[];
 }
 
 export interface ExportConsoleReportResult {

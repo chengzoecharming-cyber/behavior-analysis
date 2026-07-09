@@ -12,7 +12,7 @@ import {
   Toast,
 } from "@douyinfe/semi-ui";
 import { IconPlayCircle, IconPause, IconRedo } from "@douyinfe/semi-icons";
-import html2canvas from "html2canvas";
+
 import dayjs from "dayjs";
 import {
   fetchUsers,
@@ -937,7 +937,6 @@ function OverviewPanel({
   heatMapPoints,
 }: OverviewPanelProps) {
   const [exportLoading, setExportLoading] = useState(false);
-  const heatMapRef = useRef<HTMLDivElement>(null);
 
   const filled = useMemo(
     () => fillDailyRange(data?.daily ?? [], range[0], range[1]),
@@ -976,28 +975,17 @@ function OverviewPanel({
   );
 
   const handleExport = async () => {
-    if (!data || !heatMapRef.current) return;
+    if (!data) return;
 
     setExportLoading(true);
     try {
-      let mapImage = "";
-      try {
-        const canvas = await html2canvas(heatMapRef.current, {
-          backgroundColor: "#ffffff",
-          useCORS: true,
-          scale: 2,
-        });
-        mapImage = canvas.toDataURL("image/jpeg", 0.85);
-      } catch (captureErr) {
-        console.warn("地图截图失败:", captureErr);
-        mapImage = "";
-      }
-
+      const amapKey = import.meta.env.VITE_AMAP_KEY || "";
       const result = await exportConsoleReport({
         userId,
         start: range[0],
         end: range[1],
-        mapImage,
+        amapKey,
+        points: heatMapPoints,
       });
 
       if (result.success) {
@@ -1087,7 +1075,6 @@ function OverviewPanel({
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={24}>
               <div
-                ref={heatMapRef}
                 style={{
                   padding: 20,
                   backgroundColor: "#fff",

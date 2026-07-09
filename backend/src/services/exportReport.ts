@@ -1,5 +1,11 @@
 import { DailyOverview, UserOverviewResult } from "./userOverviewService";
 
+export interface HeatMapPoint {
+  lat: number;
+  lng: number;
+  count: number;
+}
+
 export interface ReportInput {
   userId: string;
   userName: string;
@@ -8,7 +14,8 @@ export interface ReportInput {
   overview: UserOverviewResult;
   estimatedFuelCost: number;
   visitFrequency: number;
-  mapImage: string; // base64 dataURL 或空字符串
+  amapKey: string; // 前端高德 JS API Key
+  points: HeatMapPoint[]; // 热力图坐标点
 }
 
 function escapeHtml(str: string): string {
@@ -28,7 +35,8 @@ export function renderConsoleReportHtml(input: ReportInput): string {
     overview,
     estimatedFuelCost,
     visitFrequency,
-    mapImage,
+    amapKey,
+    points,
   } = input;
 
   const totals = overview.totals;
@@ -41,15 +49,14 @@ export function renderConsoleReportHtml(input: ReportInput): string {
     .replace(/</g, "\\u003c")
     .replace(/>/g, "\\u003e");
 
-  const mapSection = mapImage
-    ? `<div class="section">
-         <div class="section-title">拜访热度地图</div>
-         <img class="map-image" src="${mapImage}" alt="拜访热度地图" />
-       </div>`
-    : `<div class="section">
-         <div class="section-title">拜访热度地图</div>
-         <div class="placeholder">地图快照生成失败，请在系统中查看。</div>
-       </div>`;
+  const pointsJson = JSON.stringify(points)
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e");
+
+  const mapSection = `<div class="section">
+    <div class="section-title">拜访热度地图</div>
+    <div id="amap-report" style="width:100%;height:400px;border-radius:8px;background:#e5e5e5;"></div>
+  </div>`;
 
   return `<!DOCTYPE html>
 <html lang="zh-CN">
@@ -315,6 +322,104 @@ export function renderConsoleReportHtml(input: ReportInput): string {
         document.getElementById("chart").innerHTML =
           '<div class="placeholder">图表渲染失败，请在系统中查看。</div>';
       }
+
+      // 初始化高德地图热力图（打开报告时实时渲染，避免 html2canvas 无法捕获 WebGL 底图）
+      (function initReportMap() {
+        var key = "${escapeHtml(amapKey)}";
+        var mapPoints = ${pointsJson};
+
+        var container = document.getElementById("amap-report");
+        if (!key || !mapPoints.length) {
+          if (container) {
+            container.innerHTML =
+              '<div class="placeholder">暂无地图数据或 Key 未配置，请在系统中查看。</div>';
+          }
+          return;
+        }
+
+        if (typeof AMap === "undefined" || !AMap.Map) {
+          var script = document.createElement("script");
+          script.src =
+            "https://webapi.amap.com/maps?v=2.0&key=" +
+            encodeURIComponent(key) +
+            "&plugin=AMap.HeatMap,AMap.ToolBar,AMap.Scale";
+          script.async = true;
+          script.defer = true;
+          script.onload = initReportMap;
+          script.onerror = function () {
+            if (container) {
+              container.innerHTML =
+                '<div class="placeholder">地图加载失败，请检查网络或 Key 配置。</div>';
+            }
+          };
+          document.head.appendChild(script);
+          return;
+        }
+
+        try {
+          var map = new AMap.Map("amap-report", {
+            zoom: 5,
+            center: [116.397428, 39.90923],
+          });
+          map.addControl(new AMap.ToolBar());
+          map.addControl(new AMap.Scale());
+
+          map.plugin(["AMap.HeatMap"], function () {
+            var heatmap = new AMap.HeatMap(map, {
+              radius: 25,
+              opacity: [0, 0.8],
+              gradient: {
+                0.5: "blue",
+                0.65: "rgb(117,211,248)",
+                0.7: "rgb(0, 255, 0)",
+                0.9: "#ffea00",
+                1.0: "red",
+              },
+            });
+
+            var data = mapPoints.map(function (p) {
+              return { lng: p.lng, lat: p.lat, count: p.count };
+            });
+            var max =
+              Math.max.apply(
+                null,
+                mapPoints.map(function (p) {
+                  return p.count;
+                })
+              ) || 1;
+            heatmap.setDataSet({ data: data, max: max });
+
+            if (mapPoints.length === 1) {
+              map.setCenter([mapPoints[0].lng, mapPoints[0].lat]);
+              map.setZoom(13);
+            } else {
+              var lats = mapPoints.map(function (p) {
+                return p.lat;
+              });
+              var lngs = mapPoints.map(function (p) {
+                return p.lng;
+              });
+              var minLat = Math.min.apply(null, lats);
+              var maxLat = Math.max.apply(null, lats);
+              var minLng = Math.min.apply(null, lngs);
+              var maxLng = Math.max.apply(null, lngs);
+              var latPad = Math.max((maxLat - minLat) * 0.2, 0.005);
+              var lngPad = Math.max((maxLng - minLng) * 0.2, 0.005);
+              var bounds = new AMap.Bounds(
+                [minLng - lngPad, minLat - latPad],
+                [maxLng + lngPad, maxLat + latPad]
+              );
+              map.setBounds(bounds);
+            }
+          });
+        } catch (e) {
+          console.error(e);
+          if (container) {
+            container.innerHTML =
+              '<div class="placeholder">地图渲染失败，请在系统中查看。</div>';
+          }
+        }
+      })();
     })();
   </script>
 </body>
