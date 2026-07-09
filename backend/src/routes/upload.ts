@@ -5,7 +5,7 @@ import fs from "fs";
 import { pool } from "../db";
 import { RawVisitRow, ParsedVisit } from "../types";
 import { parseDingTalkExcel } from "../services/excelParser";
-import { processParsedVisits, GeocodeFailure } from "../services/normalization";
+import { processParsedVisits, GeocodeFailure, normalizeUserId } from "../services/normalization";
 import { recomputeDerivedDataForVisits } from "../services/derivedComputation";
 
 if (!fs.existsSync("uploads")) {
@@ -52,6 +52,7 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
     } else {
       const rows = XLSX.utils.sheet_to_json<RawVisitRow>(sheet);
       parsedVisits = rows.map((r) => ({
+        user_id: normalizeUserId(r.user_name),
         user_name: r.user_name,
         department: "销售部",
         time: String(r.time),

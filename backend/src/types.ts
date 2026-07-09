@@ -92,6 +92,7 @@ export interface RawVisitRow {
 }
 
 export interface ParsedVisit {
+  user_id: string;
   user_name: string;
   department: string;
   time: string;
@@ -121,6 +122,7 @@ export interface User {
   department: string | null;
   role: "admin" | "manager" | "staff";
   manager_id: number | null;
+  is_resigned: boolean;
   created_at: Date;
 }
 

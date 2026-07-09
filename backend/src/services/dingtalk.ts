@@ -499,6 +499,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
   if (!isMultiStopRouteForm(instance)) {
     const parsed = parseApprovalForm(formComponents);
     if (!parsed.user_name) parsed.user_name = instance.originator_user_name || "";
+    parsed.user_id = instance.originator_userid || instance.originatorUserId || "";
     if (!parsed.time) return [];
     return [parsed as ParsedVisit];
   }
@@ -613,6 +614,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
       (stop.isSpecial ? "特殊签到点" : i === 0 ? "出发点" : `签到点${sequence}`);
 
     visits.push({
+      user_id: originatorUserId,
       user_name: userName,
       department,
       time: stop.parsed!.time,

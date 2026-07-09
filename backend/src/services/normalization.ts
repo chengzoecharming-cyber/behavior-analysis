@@ -161,7 +161,7 @@ export async function processParsedVisits(
 
   for (let i = 0; i < parsedVisits.length; i++) {
     const visit = parsedVisits[i];
-    const userId = normalizeUserId(visit.user_name);
+    const userId = visit.user_id || normalizeUserId(visit.user_name);
     const timestamp = normalizeTimestamp(visit.time);
     const lat = normalizeCoordinate(visit.lat);
     const lng = normalizeCoordinate(visit.lng);

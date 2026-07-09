@@ -2,6 +2,7 @@ import * as XLSX from "xlsx";
 import { batchGeocode } from "./geocoding";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { ParsedVisit } from "../types";
+import { normalizeUserId } from "./normalization";
 
 export interface ParseResult {
   visits: ParsedVisit[];
@@ -154,6 +155,7 @@ export async function parseDingTalkExcel(filePath: string): Promise<ParseResult>
       const customerName = extractCustomerName(row, block.customerTitle, block.customerDetail);
 
       rawVisits.push({
+        user_id: normalizeUserId(creator),
         user_name: creator,
         department: department || "销售部",
         time,
@@ -192,6 +194,7 @@ export async function parseDingTalkExcel(filePath: string): Promise<ParseResult>
       );
 
       rawVisits.push({
+        user_id: normalizeUserId(creator),
         user_name: creator,
         department: department || "销售部",
         time: specialTime,
