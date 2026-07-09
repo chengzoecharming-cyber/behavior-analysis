@@ -23,7 +23,7 @@ async function main() {
 
   const rawRes = await pool.query(
     `SELECT approval_id, originator_userid, originator_user_name, originator_dept_name,
-            form_json, business_id, process_instance_id, title
+            form_json, title
      FROM raw_approvals
      WHERE source = 'dingtalk'
      ORDER BY approval_id`
@@ -44,8 +44,7 @@ async function main() {
       originator_user_name: row.originator_user_name || "-",
       originator_dept_name: row.originator_dept_name,
       form_component_values: row.form_json,
-      business_id: row.business_id,
-      process_instance_id: row.process_instance_id,
+      business_id: row.approval_id,
       title: row.title,
     };
 
