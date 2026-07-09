@@ -336,11 +336,16 @@ function App() {
                       )}
                       onClick={() => switchUser(u.user_id)}
                     >
-                      <span>
-                        {u.user_name}{" "}
+                      <span className="flex items-center gap-2">
+                        <span>{u.user_name}</span>
                         <span className="text-xs text-stone-500">
                           ({roleText[u.role] || u.role})
                         </span>
+                        {u.is_resigned && (
+                          <span className="rounded bg-stone-200 px-1.5 py-0.5 text-xs text-stone-600">
+                            已离职
+                          </span>
+                        )}
                       </span>
                       {currentUser?.user_id === u.user_id && (
                         <span className="text-xs text-stone-500">当前</span>

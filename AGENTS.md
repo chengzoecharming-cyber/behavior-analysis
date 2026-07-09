@@ -139,7 +139,7 @@ map/
 | NORMALIZED | `visits` | 标准化后的拜访记录（用户、时间、经纬度、客户等） |
 | DERIVED | `stops`、`routes`、`anomalies` | 分析计算结果：停留点、路径段、异常事件 |
 | 缓存/配置 | `risk_summary_cache`、`anomaly_weights`、`department_aliases` | 预计算缓存、异常规则、部门别名映射 |
-| 用户/权限 | `users`、`feedback`、`anomaly_exceptions` | 用户、角色、申诉、异常豁免 |
+| 用户/权限 | `users`（含 `is_resigned` 离职标记）、`feedback`、`anomaly_exceptions` | 用户、角色、申诉、异常豁免 |
 | 钉钉同步 | `dingtalk_departments`、`dingtalk_users` | 钉钉通讯录同步缓存 |
 
 **注意**：`backend/schema.sql` 是早期 P1 文档，只包含基础表。真实建表逻辑在 `backend/src/db.ts` 中，通过 `CREATE TABLE IF NOT EXISTS` 和 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 做幂等初始化。项目中没有独立的迁移框架。
@@ -407,7 +407,7 @@ docker compose logs -f postgres
 - 钉钉表单中的 `累计里程N` 是截至本次签到的累计值，系统统计时应按 `approval_id` 取 `MAX(reported_distance_km)`，不能直接 `SUM`。
 - 路线计算已按 `approval_id` 分组，控制台地图支持按审批单切换视图。
 - 里程读数异常上限通过环境变量 `MILEAGE_VALIDATION_MAX_KM`（后端）和 `VITE_MILEAGE_MAX_KM`（前端）配置，默认 5000 km。
-- 钉钉通讯录同步因应用可见范围不足已暂时放弃，改为依赖 `department_aliases` 映射。
+- 钉钉审批同步的 `originator_user_name` 可能为空，导致 `visits.user_name` 写入数字 userid。可通过 `backend/scripts/fixUserNames.ts` 修复：在职员工调用 `topapi/v2/user/get`，已离职员工回退到智能人事花名册 `topapi/smartwork/hrm/employee/list`，并自动标记 `users.is_resigned=true`。
 - 车辆/油卡/油耗模型（Step 4）已暂缓，相关表结构在 `PLAN.md` 中有设计但未实现。
 - 月维度数据导出（Step 5）尚未实现。
 

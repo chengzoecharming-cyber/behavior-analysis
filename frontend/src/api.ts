@@ -340,6 +340,7 @@ export interface AuthUser {
   department: string | null;
   role: "admin" | "manager" | "staff";
   manager_id: number | null;
+  is_resigned: boolean;
   created_at: string;
 }
 

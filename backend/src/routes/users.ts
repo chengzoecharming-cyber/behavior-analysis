@@ -49,7 +49,7 @@ router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
 });
 
 router.post("/", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
-  const { user_id, user_name, department, role, manager_id } = req.body;
+  const { user_id, user_name, department, role, manager_id, is_resigned } = req.body;
   if (!user_id || !user_name || !role) {
     res.status(400).json({ error: "Missing required fields" });
     return;
@@ -60,10 +60,10 @@ router.post("/", authMiddleware, requireRole("admin"), async (req: AuthRequest, 
   }
   try {
     const result = await pool.query(
-      `INSERT INTO users (user_id, user_name, department, role, manager_id)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO users (user_id, user_name, department, role, manager_id, is_resigned)
+       VALUES ($1, $2, $3, $4, $5, $6)
        RETURNING *`,
-      [user_id, user_name, department || null, role, manager_id || null]
+      [user_id, user_name, department || null, role, manager_id || null, !!is_resigned]
     );
     res.status(201).json(result.rows[0]);
   } catch (err: any) {
@@ -77,7 +77,7 @@ router.post("/", authMiddleware, requireRole("admin"), async (req: AuthRequest, 
 });
 
 router.put("/:id", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
-  const { user_name, department, role, manager_id } = req.body;
+  const { user_name, department, role, manager_id, is_resigned } = req.body;
   if (role && !["admin", "manager", "staff"].includes(role)) {
     res.status(400).json({ error: "Invalid role" });
     return;
@@ -88,10 +88,11 @@ router.put("/:id", authMiddleware, requireRole("admin"), async (req: AuthRequest
        SET user_name = COALESCE($1, user_name),
            department = COALESCE($2, department),
            role = COALESCE($3, role),
-           manager_id = COALESCE($4, manager_id)
-       WHERE id = $5
+           manager_id = COALESCE($4, manager_id),
+           is_resigned = COALESCE($5, is_resigned)
+       WHERE id = $6
        RETURNING *`,
-      [user_name, department, role, manager_id, req.params.id]
+      [user_name, department, role, manager_id, is_resigned, req.params.id]
     );
     if (result.rows.length === 0) {
       res.status(404).json({ error: "User not found" });

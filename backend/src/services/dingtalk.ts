@@ -132,6 +132,36 @@ export async function getUserNameById(userid: string): Promise<string | null> {
   }
 }
 
+/**
+ * 通过智能人事花名册查询员工姓名，主要用于已离职员工（通讯录接口返回 60121 时）。
+ */
+export async function getHrmUserNameById(userid: string): Promise<string | null> {
+  if (!userid) return null;
+
+  try {
+    const accessToken = await getAccessToken();
+    const data = await httpPost(
+      "/topapi/smartwork/hrm/employee/list",
+      { access_token: accessToken },
+      { userid_list: userid }
+    );
+
+    if (data.errcode !== 0) {
+      console.warn(`[DingTalk hrm/employee/list] failed for ${userid}: ${data.errmsg} (${data.errcode})`);
+      return null;
+    }
+
+    const result = data.result?.[0];
+    if (!result || !Array.isArray(result.field_list)) return null;
+
+    const nameField = result.field_list.find((f: any) => f.field_code === "sys00-name");
+    return nameField?.value || null;
+  } catch (err: any) {
+    console.warn(`[DingTalk hrm/employee/list] error for ${userid}:`, err.message);
+    return null;
+  }
+}
+
 export interface DingTalkDepartment {
   dept_id: number;
   parent_id?: number;

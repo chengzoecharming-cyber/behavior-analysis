@@ -7,18 +7,23 @@
  *
  * 逻辑：
  *   1. 取出 visits 中 user_name 看起来是钉钉数字 userid 的 distinct user_id。
- *   2. 调用钉钉 topapi/v2/user/get 批量查询真实姓名（需先开通通讯录权限）。
- *   3. 把查到的真实姓名写回 visits.user_name 和 users.user_name。
- *   4. 输出本次修复统计。
+ *   2. 优先调用钉钉通讯录 topapi/v2/user/get 查询真实姓名。
+ *   3. 通讯录查不到（如已离职员工）时，回退到智能人事花名册 topapi/smartwork/hrm/employee/list。
+ *   4. 通过智能人事查到的员工标记为 is_resigned=true。
+ *   5. 把查到的真实姓名写回 visits.user_name 和 users.user_name，并更新 users.is_resigned。
+ *   6. 输出本次修复统计。
  */
 import dotenv from "dotenv";
 import { pool } from "../src/db";
-import { getUserNameById } from "../src/services/dingtalk";
+import {
+  getUserNameById,
+  getHrmUserNameById,
+} from "../src/services/dingtalk";
 
 dotenv.config();
 
 const DRY_RUN = process.argv.slice(2).includes("--dry-run");
-const DELAY_MS = 100; // 钉钉 API 限流保护
+const DELAY_MS = 150; // 钉钉 API 限流保护
 
 function looksLikeNumericUserid(name: string | null): boolean {
   if (!name) return false;
@@ -56,17 +61,34 @@ async function main() {
 
   // 2. 查询钉钉真实姓名
   const nameMap = new Map<string, string>();
+  const resignedMap = new Map<string, boolean>();
   const failed: string[] = [];
 
   for (const row of candidates) {
     const userId = row.user_id as string;
     const current = row.user_name as string;
 
+    let realName: string | null = null;
+    let isResigned = false;
+
     try {
-      const realName = await getUserNameById(userId);
+      realName = await getUserNameById(userId);
+      if (!realName) {
+        // 通讯录查不到，尝试智能人事花名册（离职员工）
+        realName = await getHrmUserNameById(userId);
+        if (realName) {
+          isResigned = true;
+          console.log(`[fixUserNames] ${userId} -> ${realName} (via HRM, resigned)`);
+        }
+      } else {
+        console.log(`[fixUserNames] ${userId} -> ${realName}`);
+      }
+
       if (realName && realName !== current) {
         nameMap.set(userId, realName);
-        console.log(`[fixUserNames] ${userId} -> ${realName}`);
+        if (isResigned) {
+          resignedMap.set(userId, true);
+        }
       } else if (!realName) {
         failed.push(userId);
         console.warn(`[fixUserNames] ${userId}: no real name returned`);
@@ -85,6 +107,7 @@ async function main() {
   if (!DRY_RUN && nameMap.size > 0) {
     let visitsUpdated = 0;
     let usersUpdated = 0;
+    let usersResignedUpdated = 0;
 
     for (const [userId, realName] of nameMap.entries()) {
       const vRes = await pool.query(
@@ -95,22 +118,33 @@ async function main() {
       );
       visitsUpdated += vRes.rowCount || 0;
 
+      const isResigned = resignedMap.get(userId) || false;
       const uRes = await pool.query(
         `UPDATE users
-         SET user_name = $1
-         WHERE user_id = $2`,
-        [realName, userId]
+         SET user_name = $1,
+             is_resigned = $2
+         WHERE user_id = $3`,
+        [realName, isResigned, userId]
       );
       usersUpdated += uRes.rowCount || 0;
+
+      if (isResigned && uRes.rowCount && uRes.rowCount > 0) {
+        usersResignedUpdated += uRes.rowCount;
+      }
     }
 
     console.log(
-      `[fixUserNames] updated visits=${visitsUpdated}, users=${usersUpdated}`
+      `[fixUserNames] updated visits=${visitsUpdated}, users=${usersUpdated}, resigned=${usersResignedUpdated}`
     );
   } else if (DRY_RUN) {
     console.log(
       `[fixUserNames] dry-run: would update ${nameMap.size} users, skipped write`
     );
+    if (resignedMap.size > 0) {
+      console.log(
+        `[fixUserNames] dry-run: resigned users=${Array.from(resignedMap.keys()).join(", ")}`
+      );
+    }
   }
 
   if (failed.length > 0) {

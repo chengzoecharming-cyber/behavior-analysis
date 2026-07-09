@@ -214,6 +214,8 @@ export async function initDB(): Promise<void> {
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
 
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS is_resigned BOOLEAN NOT NULL DEFAULT false;
+
       CREATE INDEX IF NOT EXISTS idx_users_manager
         ON users(manager_id);
       CREATE INDEX IF NOT EXISTS idx_users_user_id
