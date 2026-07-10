@@ -238,7 +238,9 @@ export async function processParsedVisits(
         visit.reported_distance_km ?? null,
         visit.visit_note ?? null,
         visit.special_sign_reason ?? null,
-        visit.photos ?? null,
+        Array.isArray(visit.photos) && visit.photos.length > 0
+          ? JSON.stringify(visit.photos)
+          : "[]",
         geocodeStatus,
         visit.source_detail ?? null,
         businessDates[i],
