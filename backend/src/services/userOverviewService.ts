@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
+import { formatBeijingDate } from "../utils/timezone";
 
 export interface DailyOverview {
   date: string;
@@ -8,6 +9,7 @@ export interface DailyOverview {
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
+  has_mileage_reading_invalid?: boolean;
 }
 
 export interface UserOverviewAnomaly {
@@ -120,6 +122,14 @@ export async function computeUserOverview(
     [userId, startDate, endDate]
   );
 
+  // 标记存在里程读数异常的日期
+  const mileageInvalidDates = new Set<string>();
+  for (const row of anomalyDetailResult.rows) {
+    if (row.type === "mileage_reading_invalid") {
+      mileageInvalidDates.add(formatDate(row.anomaly_date));
+    }
+  }
+
   // 合并数据
   const dateMap = new Map<string, DailyOverview>();
 
@@ -156,6 +166,13 @@ export async function computeUserOverview(
   for (const row of anomalyCountResult.rows) {
     const d = ensureDay(formatDate(row.anomaly_date));
     d.anomaly_count = parseInt(row.anomaly_count, 10) || 0;
+  }
+
+  for (const date of mileageInvalidDates) {
+    const d = dateMap.get(date);
+    if (d) {
+      d.has_mileage_reading_invalid = true;
+    }
   }
 
   const daily = Array.from(dateMap.values()).sort((a, b) =>
@@ -210,6 +227,6 @@ export async function computeUserOverview(
 function formatDate(value: any): string {
   if (!value) return "";
   if (typeof value === "string") return value;
-  if (value instanceof Date) return value.toISOString().split("T")[0];
+  if (value instanceof Date) return formatBeijingDate(value);
   return String(value);
 }

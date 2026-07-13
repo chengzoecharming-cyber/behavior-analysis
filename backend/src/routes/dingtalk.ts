@@ -12,6 +12,8 @@ import {
   fetchAllDepartmentUsers,
   syncContacts,
   getUserDetail,
+  getDingTalkOrgUsers,
+  buildDingTalkOrgTree,
 } from "../services/dingtalk";
 import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getYesterdayBeijing } from "../utils/timezone";
 import { pool } from "../db";
@@ -265,16 +267,54 @@ router.get("/department-users", async (req: Request, res: Response) => {
   }
 });
 
+// GET /dingtalk/users
+// 返回已同步的钉钉用户列表（用于级联选择器）
+router.get("/users", async (_req: Request, res: Response) => {
+  try {
+    const users = await getDingTalkOrgUsers();
+    res.json({
+      success: true,
+      count: users.length,
+      users,
+    });
+  } catch (err: any) {
+    console.error("Failed to get DingTalk users:", err);
+    res.status(500).json({ error: err.message || "Failed to get users" });
+  }
+});
+
+// GET /dingtalk/org-tree
+// 返回已同步的钉钉组织架构树（用于级联选择器）
+router.get("/org-tree", async (_req: Request, res: Response) => {
+  try {
+    const tree = await buildDingTalkOrgTree();
+    res.json({
+      success: true,
+      count: tree.length,
+      tree,
+    });
+  } catch (err: any) {
+    console.error("Failed to build DingTalk org tree:", err);
+    res.status(500).json({ error: err.message || "Failed to build org tree" });
+  }
+});
+
 // POST /dingtalk/sync-contacts
+// body: { departmentNames?: string[] }
 // 同步通讯录到 dingtalk_departments / dingtalk_users 表
-router.post("/sync-contacts", async (_req: Request, res: Response) => {
+// 若传入 departmentNames，则只同步指定部门及其子部门
+router.post("/sync-contacts", async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
   }
 
+  const departmentNames = Array.isArray(req.body?.departmentNames)
+    ? req.body.departmentNames.filter((n: any) => typeof n === "string" && n.trim())
+    : undefined;
+
   try {
-    const result = await syncContacts();
+    const result = await syncContacts(departmentNames);
     res.json({
       success: true,
       departments: result.departments,

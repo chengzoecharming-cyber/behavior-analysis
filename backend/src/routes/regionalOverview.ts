@@ -31,6 +31,7 @@ interface HeatMapPoint {
 
 interface DepartmentStat {
   name: string;
+  key: string; // 可下钻的原始部门路径，如 "销售部-华东宁波"
   visitCount: number;
   employeeCount: number;
 }
@@ -117,6 +118,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
     const deptMap = new Map<string, DepartmentStat>();
     for (const row of deptResult.rows) {
       const name = await cleanDepartment(row.raw_department);
+      const raw = String(row.raw_department).split(",")[0].trim();
       const existing = deptMap.get(name);
       if (existing) {
         existing.visitCount += parseInt(row.visit_count, 10);
@@ -124,6 +126,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
       } else {
         deptMap.set(name, {
           name,
+          key: raw,
           visitCount: parseInt(row.visit_count, 10),
           employeeCount: parseInt(row.employee_count, 10),
         });

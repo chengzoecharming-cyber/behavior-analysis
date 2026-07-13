@@ -98,6 +98,7 @@ export interface DailyOverview {
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
+  has_mileage_reading_invalid?: boolean;
 }
 
 export interface UserOverviewAnomaly {
@@ -208,9 +209,66 @@ export interface RegionalOverviewResponse {
   totalLocations: number;
   departments: {
     name: string;
+    key: string;
     visitCount: number;
     employeeCount: number;
   }[];
+  heatMapPoints: {
+    lat: number;
+    lng: number;
+    count: number;
+    userName: string;
+    locationName: string;
+    address: string;
+    timestamp: string;
+  }[];
+}
+
+export interface OrgTreeNode {
+  name: string;
+  shortName: string;
+  level: number;
+  children: OrgTreeNode[];
+  userIds?: string[];
+}
+
+export interface OrgRankingItem {
+  key: string;
+  name: string;
+  level: "department" | "sub_department" | "person";
+  visitCount: number;
+  employeeCount: number;
+  reportedKm: number;
+  estimatedKm: number;
+  stopMinutes: number;
+  anomalyCount: number;
+}
+
+export interface OrgTrendItem {
+  date: string;
+  visitCount: number;
+  reportedKm: number;
+  estimatedKm: number;
+  stopMinutes: number;
+  anomalyCount: number;
+}
+
+export interface OrgOverviewResponse {
+  scope: "company" | "department" | "sub_department";
+  node: string;
+  start: string;
+  end: string;
+  stats: {
+    totalVisits: number;
+    totalEmployees: number;
+    totalLocations: number;
+    totalReportedKm: number;
+    totalEstimatedKm: number;
+    totalStopMinutes: number;
+    totalAnomalies: number;
+  };
+  ranking: OrgRankingItem[];
+  trend: OrgTrendItem[];
   heatMapPoints: {
     lat: number;
     lng: number;
@@ -229,6 +287,33 @@ export async function fetchRegionalOverview(
 ): Promise<RegionalOverviewResponse> {
   const res = await api.get("/analytics/regional-overview", {
     params: { start, end, department: department && department !== "all" ? department : undefined },
+  });
+  return res.data;
+}
+
+export async function fetchOrgTree(): Promise<OrgTreeNode[]> {
+  const res = await api.get("/analytics/org-tree");
+  return res.data;
+}
+
+export async function fetchDingTalkOrgTree(): Promise<OrgTreeNode[]> {
+  const res = await api.get("/dingtalk/org-tree");
+  return res.data.tree || [];
+}
+
+export async function fetchDingTalkOrgUsers(): Promise<User[]> {
+  const res = await api.get("/dingtalk/users");
+  return res.data.users || [];
+}
+
+export async function fetchOrgOverview(
+  scope: "company" | "department" | "sub_department",
+  node: string,
+  start: string,
+  end: string
+): Promise<OrgOverviewResponse> {
+  const res = await api.get("/analytics/org-overview", {
+    params: { scope, node, start, end },
   });
   return res.data;
 }

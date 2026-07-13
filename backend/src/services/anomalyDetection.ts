@@ -2,6 +2,7 @@ import { Visit, Stop, Route, Anomaly } from "../types";
 import { haversineDistance } from "./distance";
 import { computeMileageSegments } from "./mileageAnalysis";
 import { getEnabledAnomalyWeights, AnomalyWeight } from "./anomalyWeights";
+import { MAX_MILEAGE_KM } from "./mileageConfig";
 import {
   getBeijingWeekday,
   parseDateTimeAsBeijing,
@@ -307,6 +308,12 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
+  // 9. 里程读数异常（出发/终点读数缺失、非单调递增、超过上限）
+  const mileageReadingConfig = weights["mileage_reading_invalid"];
+  if (mileageReadingConfig) {
+    anomalies.push(...detectMileageReadingInvalid(visitsToday));
+  }
+
   // 8. 特殊签到未说明原因
   const missingReasonConfig = weights["missing_special_reason"];
   if (missingReasonConfig) {
@@ -332,6 +339,134 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
         });
       }
     }
+  }
+
+  return anomalies;
+}
+
+interface MileageReadingIssue {
+  sequence: number;
+  location_name: string;
+  issue_type: "missing_start" | "missing_end" | "end_before_start" | "exceeds_max" | "invalid_number";
+  start_odometer?: number | null;
+  end_odometer?: number | null;
+  computed_diff?: number;
+  description: string;
+}
+
+/**
+ * 检测里程读数异常：
+ * - 缺少出发读数
+ * - 缺少终点读数（含中间读数）
+ * - 终点读数 < 出发读数
+ * - 终点与出发读数差值超过 MAX_MILEAGE_KM
+ * - 读数不是有效数字
+ *
+ * 按审批单维度检测，一个审批单内多个问题合并为一个异常事件。
+ */
+function detectMileageReadingInvalid(visits: Visit[]): Anomaly[] {
+  const groups = new Map<string, Visit[]>();
+  for (const v of visits) {
+    if (!v.approval_id) continue;
+    if (!groups.has(v.approval_id)) groups.set(v.approval_id, []);
+    groups.get(v.approval_id)!.push(v);
+  }
+
+  const anomalies: Anomaly[] = [];
+
+  for (const [approvalId, groupVisits] of groups) {
+    // 只关心有里程读数相关字段的审批单
+    const hasOdometer = groupVisits.some(
+      (v) => v.start_odometer != null || v.end_odometer != null
+    );
+    if (!hasOdometer) continue;
+
+    const sorted = [...groupVisits].sort(
+      (a, b) => (a.sequence || 0) - (b.sequence || 0)
+    );
+    if (sorted.length === 0) continue;
+
+    const firstVisit = sorted[0];
+    const startOdometer = firstVisit.start_odometer;
+    const issues: MileageReadingIssue[] = [];
+
+    // 检查出发读数
+    if (startOdometer == null || !Number.isFinite(startOdometer)) {
+      issues.push({
+        sequence: firstVisit.sequence || 1,
+        location_name: firstVisit.location_name || "出发点",
+        issue_type: "missing_start",
+        start_odometer: startOdometer ?? null,
+        end_odometer: null,
+        description: `缺少出发里程读数`,
+      });
+    }
+
+    // 检查每个后续签到点的终点读数
+    for (let i = 1; i < sorted.length; i++) {
+      const visit = sorted[i];
+      const endOdometer = visit.end_odometer;
+      const seq = visit.sequence || i + 1;
+      const locationName = visit.location_name || `签到点${seq}`;
+
+      if (endOdometer == null || !Number.isFinite(endOdometer)) {
+        issues.push({
+          sequence: seq,
+          location_name: locationName,
+          issue_type: "missing_end",
+          start_odometer: startOdometer ?? null,
+          end_odometer: endOdometer ?? null,
+          description: `第 ${seq} 个签到点缺少终点里程读数`,
+        });
+        continue;
+      }
+
+      if (startOdometer != null && Number.isFinite(startOdometer)) {
+        const diff = endOdometer - startOdometer;
+        if (diff < 0) {
+          issues.push({
+            sequence: seq,
+            location_name: locationName,
+            issue_type: "end_before_start",
+            start_odometer: startOdometer,
+            end_odometer: endOdometer,
+            computed_diff: diff,
+            description: `终点里程读数（${endOdometer}）小于出发里程读数（${startOdometer}），差值 ${diff} km`,
+          });
+        } else if (diff > MAX_MILEAGE_KM) {
+          issues.push({
+            sequence: seq,
+            location_name: locationName,
+            issue_type: "exceeds_max",
+            start_odometer: startOdometer,
+            end_odometer: endOdometer,
+            computed_diff: diff,
+            description: `终点与出发读数差值（${diff} km）超过合理上限（${MAX_MILEAGE_KM} km）`,
+          });
+        }
+      }
+    }
+
+    if (issues.length === 0) continue;
+
+    const descriptionLines = issues.map((issue) => `• ${issue.description}`).join("；");
+    anomalies.push({
+      id: 0,
+      user_id: sorted[0].user_id,
+      type: "mileage_reading_invalid",
+      description: `审批单 ${approvalId} 里程读数异常：${descriptionLines}`,
+      start_time: null,
+      end_time: null,
+      lat: null,
+      lng: null,
+      severity: "low",
+      related_visit_ids: sorted.map((v) => v.id),
+      metadata: {
+        approval_id: approvalId,
+        issues,
+      },
+      created_at: new Date(),
+    });
   }
 
   return anomalies;

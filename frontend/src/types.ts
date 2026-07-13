@@ -69,6 +69,7 @@ export interface Anomaly {
   user_id: string;
   type: string;
   description: string;
+  anomaly_date?: string;
   start_time: string | null;
   end_time: string | null;
   lat: number | null;

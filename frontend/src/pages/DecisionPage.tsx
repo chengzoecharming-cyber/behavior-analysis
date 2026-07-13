@@ -571,6 +571,8 @@ function DecisionPage() {
             <Col span={16}>
               <Card
                 title="区域拜访热力图"
+                headerLine={false}
+                headerStyle={{ paddingBottom: 0 }}
                 bodyStyle={{ padding: 12, height: 520 }}
                 loading={regionalLoading}
               >
@@ -580,7 +582,9 @@ function DecisionPage() {
             <Col span={8}>
               <Card
                 title="部门分布"
-                bodyStyle={{ padding: 0, height: 520, overflow: "auto" }}
+                headerLine={false}
+                headerStyle={{ paddingBottom: 0 }}
+                bodyStyle={{ paddingTop: 12, height: 520, overflow: "auto" }}
                 loading={regionalLoading}
               >
                 <Table
@@ -589,7 +593,28 @@ function DecisionPage() {
                     {
                       title: "部门 / 区域",
                       dataIndex: "name",
-                      render: (text: string) => <Tag>{text}</Tag>,
+                      render: (text: string, record: any) => {
+                        const key = record.key as string;
+                        const isSub = key.includes("-");
+                        const params = new URLSearchParams();
+                        params.set("scope", isSub ? "sub_department" : "department");
+                        params.set("node", key);
+                        const start = dayjs.tz(regionalRange[0]).format("YYYY-MM-DD");
+                        const end = dayjs.tz(regionalRange[1]).format("YYYY-MM-DD");
+                        params.set("start", start);
+                        params.set("end", end);
+                        return (
+                          <a
+                            href={`/console?${params.toString()}`}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              window.open(`/console?${params.toString()}`, "_blank");
+                            }}
+                          >
+                            <Tag style={{ cursor: "pointer" }}>{text}</Tag>
+                          </a>
+                        );
+                      },
                     },
                     {
                       title: "拜访次数",

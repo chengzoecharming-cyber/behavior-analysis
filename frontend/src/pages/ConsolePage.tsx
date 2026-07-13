@@ -1,21 +1,26 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import {
-  Select,
   Row,
   Col,
   List,
   Tag,
-  Tabs,
-  TabPane,
   DatePicker,
   Toast,
+  Cascader,
+  Popover,
 } from "@douyinfe/semi-ui";
-import { IconPlayCircle, IconPause, IconRedo } from "@douyinfe/semi-icons";
+import {
+  IconPlayCircle,
+  IconPause,
+  IconRedo,
+  IconChevronDown,
+  IconChevronUp,
+  IconAlertTriangle,
+} from "@douyinfe/semi-icons";
 
 import dayjs from "dayjs";
 import {
-  fetchUsers,
   fetchAvailableDates,
   fetchVisits,
   fetchStops,
@@ -23,14 +28,18 @@ import {
   fetchMileage,
   fetchAnomalies,
   fetchUserOverview,
+  fetchDingTalkOrgTree,
+  fetchDingTalkOrgUsers,
   exportConsoleReport,
   AvailableDate,
   UserOverviewResult,
   DailyOverview,
+  OrgTreeNode,
 } from "../api";
 import { User, Visit, Stop, Route, Anomaly, MileageStats } from "../types";
 import MapContainer from "../components/MapContainer";
 import HeatMapContainer from "../components/HeatMapContainer";
+import OrgQueryPanel from "../components/OrgQueryPanel";
 import { Suspense, lazy } from "react";
 
 const OverviewChart = lazy(() => import("../components/OverviewChart"));
@@ -58,6 +67,157 @@ interface ApprovalGroup {
   mileage: MileageStats;
 }
 
+type QueryScope = "company" | "department" | "sub_department" | "person";
+
+interface CascaderDataItem {
+  value: string;
+  label: string;
+  children?: CascaderDataItem[];
+}
+
+function buildCascaderData(tree: OrgTreeNode[], users: User[]): CascaderDataItem[] {
+  const root: CascaderDataItem = {
+    value: "company|__ALL__",
+    label: "全公司",
+    children: [],
+  };
+
+  for (const dept of tree) {
+    const deptNode: CascaderDataItem = {
+      value: `dept|${dept.name}`,
+      label: dept.shortName,
+      children: [],
+    };
+
+    if (dept.children && dept.children.length > 0) {
+      for (const sub of dept.children) {
+        const subNode: CascaderDataItem = {
+          value: `sub|${dept.name}-${sub.name}`,
+          label: sub.shortName,
+          children: [],
+        };
+
+        const subUserIds = new Set(sub.userIds || []);
+        const subUsers = users.filter((u) => subUserIds.has(u.user_id));
+        for (const u of subUsers) {
+          subNode.children!.push({
+            value: `user|${u.user_id}`,
+            label: u.user_name || u.user_id,
+          });
+        }
+
+        deptNode.children!.push(subNode);
+      }
+    } else {
+      // 没有子部门的父部门，直接把用户挂下面
+      const deptUserIds = new Set(dept.userIds || []);
+      const deptUsers = users.filter((u) => deptUserIds.has(u.user_id));
+      for (const u of deptUsers) {
+        deptNode.children!.push({
+          value: `user|${u.user_id}`,
+          label: u.user_name || u.user_id,
+        });
+      }
+    }
+
+    root.children!.push(deptNode);
+  }
+
+  return [root];
+}
+
+function parseCascaderValue(value: string[]): {
+  scope: QueryScope;
+  node?: string;
+  userId?: string;
+} {
+  if (value.length === 0) {
+    return { scope: "company" };
+  }
+
+  const last = value[value.length - 1];
+  if (last === "company|__ALL__") {
+    return { scope: "company" };
+  }
+
+  const [type, id] = last.split("|");
+
+  if (type === "user") {
+    return { scope: "person", userId: id };
+  }
+  if (type === "sub") {
+    return { scope: "sub_department", node: id };
+  }
+  if (type === "dept") {
+    return { scope: "department", node: id };
+  }
+
+  return { scope: "company" };
+}
+
+function scopeLabel(scope: QueryScope): string {
+  switch (scope) {
+    case "company":
+      return "全公司";
+    case "department":
+      return "部门";
+    case "sub_department":
+      return "子部门";
+    case "person":
+      return "个人";
+  }
+}
+
+function nodeDisplayName(node?: string): string {
+  if (!node) return "";
+  return node.split("-").pop() || node;
+}
+
+function getCascaderValueFromState(
+  scope: QueryScope,
+  node?: string,
+  userId?: string,
+  tree?: OrgTreeNode[]
+): string[] {
+  if (scope === "company") return ["company|__ALL__"];
+
+  // 树还没加载完时，用当前 scope/node/userId 构造一个临时值，避免 cascaderValue 为空触发 onChange 回跳
+  if (!tree) {
+    if (scope === "person" && userId) return ["company|__ALL__", `user|${userId}`];
+    if ((scope === "department" || scope === "sub_department") && node) return ["company|__ALL__", `${scope === "department" ? "dept" : "sub"}|${node}`];
+    return ["company|__ALL__"];
+  }
+
+  if (scope === "person" && userId) {
+    for (const dept of tree) {
+      const targets = dept.children?.length ? dept.children : [dept];
+      for (const target of targets) {
+        if ((target.userIds || []).includes(userId)) {
+          if (dept.children?.length) {
+            return ["company|__ALL__", `dept|${dept.name}`, `sub|${dept.name}-${target.name}`, `user|${userId}`];
+          }
+          return ["company|__ALL__", `dept|${dept.name}`, `user|${userId}`];
+        }
+      }
+    }
+  }
+
+  if ((scope === "department" || scope === "sub_department") && node) {
+    for (const dept of tree) {
+      if (dept.name === node) {
+        return ["company|__ALL__", `dept|${node}`];
+      }
+      for (const sub of dept.children || []) {
+        if (`${dept.name}-${sub.name}` === node) {
+          return ["company|__ALL__", `dept|${dept.name}`, `sub|${node}`];
+        }
+      }
+    }
+  }
+
+  return [];
+}
+
 const statStyle: React.CSSProperties = {
   padding: 20,
   backgroundColor: "#fff",
@@ -78,16 +238,6 @@ const statValueStyle: React.CSSProperties = {
   fontWeight: 700,
   color: "#0f1419",
 };
-
-function getDefaultOverviewRange(): [string, string] {
-  const today = dayjs.tz();
-  const start = today.startOf("month").format("YYYY-MM-DD");
-  let end = today.subtract(1, "day").format("YYYY-MM-DD");
-  if (end < start) {
-    end = start;
-  }
-  return [start, end];
-}
 
 function fillDailyRange(
   daily: DailyOverview[],
@@ -116,9 +266,33 @@ function fillDailyRange(
 
 function ConsolePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+
+  // 组织架构与人员
   const [users, setUsers] = useState<User[]>([]);
-  const [userId, setUserId] = useState<string>();
-  const [viewMode, setViewMode] = useState<"calendar" | "overview">("calendar");
+  const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
+  const cascaderData = useMemo<CascaderDataItem[]>(
+    () => buildCascaderData(orgTree, users),
+    [orgTree, users]
+  );
+
+  // 查询范围状态
+  const [scope, setScope] = useState<QueryScope>("company");
+  const [node, setNode] = useState<string | undefined>(undefined);
+  const [userId, setUserId] = useState<string | undefined>(undefined);
+
+  // 级联选择器当前值（由 scope/node/userId/orgTree 派生，避免 useEffect 触发的 onChange 循环）
+  const cascaderValue = useMemo(
+    () => getCascaderValueFromState(scope, node, userId, orgTree),
+    [scope, node, userId, orgTree]
+  );
+
+  // 日期范围状态：统一使用范围，单日时 start === end
+  const [dateRange, setDateRange] = useState<[string, string]>(() => {
+    const yesterday = dayjs.tz().subtract(1, "day").format("YYYY-MM-DD");
+    return [yesterday, yesterday];
+  });
+
+  // 个人视图状态
   const [availableDateInfos, setAvailableDateInfos] = useState<AvailableDate[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
@@ -130,34 +304,84 @@ function ConsolePage() {
   const [playingRoutes, setPlayingRoutes] = useState<Set<string>>(new Set());
 
   // 周期总览状态
-  const [overviewRange, setOverviewRange] = useState<[string, string]>(() =>
-    getDefaultOverviewRange()
-  );
   const [overviewLoading, setOverviewLoading] = useState(false);
   const [overviewData, setOverviewData] = useState<UserOverviewResult | null>(null);
   const [overviewVisits, setOverviewVisits] = useState<Visit[]>([]);
 
+  const [dataLoading, setDataLoading] = useState(true);
+
+  // 初始化：加载人员和组织架构
   useEffect(() => {
     let cancelled = false;
-    fetchUsers().then((data) => {
-      if (!cancelled) setUsers(data);
-    });
+    setDataLoading(true);
+    Promise.all([fetchDingTalkOrgUsers(), fetchDingTalkOrgTree()])
+      .then(([userData, treeData]) => {
+        if (cancelled) return;
+        setUsers(userData);
+        setOrgTree(treeData);
+      })
+      .finally(() => {
+        if (!cancelled) setDataLoading(false);
+      });
     return () => {
       cancelled = true;
     };
   }, []);
 
+  // 从 URL 初始化查询条件
+  // 支持 user 参数为 user_id 或 user_name；如果是姓名，需等用户列表加载后解析为 user_id
+  const urlInitializedRef = useRef(false);
   useEffect(() => {
-    const userFromUrl = searchParams.get("user");
+    if (urlInitializedRef.current) return;
+
+    const scopeFromUrl = searchParams.get("scope") as QueryScope | null;
+    const nodeFromUrl = searchParams.get("node") || undefined;
+    const userFromUrl = searchParams.get("user") || undefined;
+    const startFromUrl = searchParams.get("start");
+    const endFromUrl = searchParams.get("end");
     const dateFromUrl = searchParams.get("date");
-    if (userFromUrl) setUserId(userFromUrl);
-    if (dateFromUrl) {
+
+    let initialScope: QueryScope = "company";
+    let initialNode: string | undefined;
+    let initialUser: string | undefined;
+
+    if (userFromUrl) {
+      initialScope = "person";
+      const looksLikeUserId = /^\d+$/.test(userFromUrl);
+      if (looksLikeUserId) {
+        initialUser = userFromUrl;
+      } else if (users.length > 0) {
+        const matched = users.find((u) => u.user_name === userFromUrl);
+        initialUser = matched?.user_id ?? userFromUrl;
+      } else {
+        // 用户列表尚未加载，等待下次 effect 执行
+        return;
+      }
+    } else if (scopeFromUrl && ["company", "department", "sub_department", "person"].includes(scopeFromUrl)) {
+      initialScope = scopeFromUrl;
+      initialNode = nodeFromUrl;
+    }
+
+    urlInitializedRef.current = true;
+    setScope(initialScope);
+    setNode(initialNode);
+    setUserId(initialUser);
+
+    // 日期优先用 start/end，否则回退到 date
+    if (startFromUrl && endFromUrl) {
+      setDateRange([startFromUrl, endFromUrl]);
+      if (initialScope === "person" && startFromUrl === endFromUrl) {
+        setSelectedDate(startFromUrl);
+      }
+    } else if (dateFromUrl) {
+      setDateRange([dateFromUrl, dateFromUrl]);
       setSelectedDate(dateFromUrl);
     }
-  }, [searchParams]);
+  }, [searchParams, users]);
 
+  // 当个人用户变化时，加载可用日期列表
   useEffect(() => {
-    if (!userId) {
+    if (scope !== "person" || !userId) {
       setAvailableDateInfos([]);
       return;
     }
@@ -167,25 +391,25 @@ function ConsolePage() {
         setSelectedDate(null);
         return;
       }
-      // 若当前选中日期不在列表中，默认选最近一天
-      const dateExists = infos.some((info) => info.date === selectedDate);
-      const targetDate = dateExists
-        ? selectedDate!
-        : infos[0].date;
-      setSelectedDate(targetDate);
-      const params = new URLSearchParams(searchParams);
-      params.set("date", targetDate);
-      setSearchParams(params);
+      // 单日模式下才需要选中日期
+      if (dateRange[0] === dateRange[1]) {
+        const currentDate = dateRange[0];
+        const dateExists = infos.some((info) => info.date === currentDate);
+        const targetDate = dateExists ? currentDate : infos[0].date;
+        setSelectedDate(targetDate);
+      } else {
+        setSelectedDate(null);
+      }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId]);
+  }, [scope, userId]);
 
-  // 选中用户或日期变化时自动加载当日数据
+  // 个人单日：选中用户或日期变化时自动加载当日数据
   useEffect(() => {
-    if (!userId || !selectedDate) return;
+    if (scope !== "person" || !userId || !selectedDate) return;
     loadDataFor(userId, selectedDate);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, selectedDate]);
+  }, [scope, userId, selectedDate]);
 
   const loadDataFor = async (targetUserId: string, targetDate: string) => {
     try {
@@ -225,11 +449,65 @@ function ConsolePage() {
     }
   };
 
+  const handleCascaderChange = (value: string[]) => {
+    // 数据加载完成前忽略级联选择器的 onChange，避免空值触发回跳
+    if (dataLoading) return;
+    // 防止 Cascader 因 value prop 变化误触发 onChange 导致状态回跳
+    if (JSON.stringify(value) === JSON.stringify(cascaderValue)) return;
+
+    const { scope: newScope, node: newNode, userId: newUserId } = parseCascaderValue(value);
+    setScope(newScope);
+    setNode(newNode);
+    setUserId(newUserId);
+
+    if (newScope !== "person") {
+      setVisits([]);
+      setStops([]);
+      setRoutes([]);
+      setAnomalies([]);
+      setMileage(null);
+      setSelectedDate(null);
+    }
+
+    const params = new URLSearchParams(searchParams);
+    params.set("scope", newScope);
+    if (newNode) params.set("node", newNode);
+    else params.delete("node");
+    if (newUserId) params.set("user", newUserId);
+    else params.delete("user");
+    params.set("start", dateRange[0]);
+    params.set("end", dateRange[1]);
+    params.delete("date");
+    setSearchParams(params);
+  };
+
+  const handleDateRangeChange = (dates: Date[] | null) => {
+    if (!dates || !dates[0] || !dates[1]) return;
+    const start = dayjs.tz(dates[0]).format("YYYY-MM-DD");
+    const end = dayjs.tz(dates[1]).format("YYYY-MM-DD");
+    setDateRange([start, end]);
+
+    const params = new URLSearchParams(searchParams);
+    params.set("start", start);
+    params.set("end", end);
+    params.delete("date");
+    setSearchParams(params);
+
+    if (scope === "person") {
+      if (start === end) {
+        setSelectedDate(start);
+      } else {
+        setSelectedDate(null);
+      }
+    }
+  };
+
+  // 个人周期：范围大于1天时加载周期总览
   useEffect(() => {
-    if (!userId || viewMode !== "overview") return;
-    loadOverview(userId, overviewRange[0], overviewRange[1]);
+    if (scope !== "person" || !userId || dateRange[0] === dateRange[1]) return;
+    loadOverview(userId, dateRange[0], dateRange[1]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [userId, viewMode, overviewRange]);
+  }, [scope, userId, dateRange]);
 
 
   const totalDistance = useMemo(() => {
@@ -460,16 +738,22 @@ function ConsolePage() {
           : prev
       ).date;
     setSelectedDate(target);
+    setDateRange([target, target]);
     const params = new URLSearchParams(searchParams);
-    params.set("date", target);
+    params.set("start", target);
+    params.set("end", target);
+    params.delete("date");
     setSearchParams(params);
   };
 
   const selectDate = (dateStr: string) => {
     if (!availableDateInfos.some((i) => i.date === dateStr)) return;
     setSelectedDate(dateStr);
+    setDateRange([dateStr, dateStr]);
     const params = new URLSearchParams(searchParams);
-    params.set("date", dateStr);
+    params.set("start", dateStr);
+    params.set("end", dateStr);
+    params.delete("date");
     setSearchParams(params);
   };
 
@@ -516,240 +800,194 @@ function ConsolePage() {
     <div>
       {/* 顶部查询区 */}
       <div style={{ paddingBottom: 12 }}>
-        {/* Tabs：距下方内容 12px */}
-        <div style={{ marginBottom: 12 }}>
-          <Tabs
-            type="line"
-            activeKey={viewMode}
-            onChange={(key) => setViewMode(key as "calendar" | "overview")}
-            style={{ marginBottom: 0 }}
-            contentStyle={{ padding: 0 }}
-          >
-            <TabPane itemKey="calendar" tab="日历视图" />
-            <TabPane itemKey="overview" tab="周期总览" />
-          </Tabs>
-        </div>
-
-        <Row type="flex" gutter={16} align="middle">
+        <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16 }}>
           <Col style={{ flex: "0 0 auto" }}>
-            <Select
-              placeholder="选择员工"
-              style={{ width: 200 }}
-              value={userId}
-              onChange={(value) => {
-                const v = value as string | undefined;
-                setUserId(v);
-                setVisits([]);
-                setStops([]);
-                setRoutes([]);
-                setAnomalies([]);
-                setMileage(null);
-                setSelectedDate(null);
-                setViewMode("calendar");
-                const params = new URLSearchParams(searchParams);
-                if (v) params.set("user", v);
-                else params.delete("user");
-                params.delete("date");
-                setSearchParams(params);
-              }}
-              optionList={users.map((u) => ({
-                value: u.user_id,
-                label: (
-                  <div>
-                    <div>{u.user_name}</div>
-                    {u.department && (
-                      <div style={{ fontSize: 12, color: "var(--semi-color-text-2)" }}>
-                        {u.department}
-                      </div>
-                    )}
-                  </div>
-                ),
-                user_name: u.user_name,
-                department: u.department,
-              }))}
-              renderSelectedItem={(option: any) => <span>{option.user_name}</span>}
+            <Cascader
+              style={{ width: 320 }}
+              dropdownClassName="console-scope-cascader"
+              placeholder={dataLoading ? "加载中..." : "选择查询范围"}
+              value={cascaderValue}
+              treeData={cascaderData}
+              onChange={(value) => handleCascaderChange(value as string[])}
+              changeOnSelect
+              showNext="hover"
+              disabled={dataLoading}
+              displayRender={(selected) =>
+                Array.isArray(selected) ? selected.join(" / ") : ""
+              }
+            />
+          </Col>
+          <Col style={{ flex: "0 0 auto" }}>
+            <DatePicker
+              type="dateRange"
+              value={[dayjs.tz(dateRange[0]).toDate(), dayjs.tz(dateRange[1]).toDate()]}
+              onChange={(dates) => handleDateRangeChange(dates as Date[] | null)}
+              disabledDate={(current) =>
+                !!current && dayjs.tz(current).isAfter(dayjs.tz(), "day")
+              }
             />
           </Col>
           <Col style={{ flex: "1", minWidth: 0 }}>
-            {viewMode === "calendar" && !userId && (
-              <div style={{ color: "#999" }}>请先选择员工</div>
-            )}
-
-            {viewMode === "calendar" && userId && calendarDates.length === 0 && (
-              <div style={{ color: "#999" }}>该员工暂无数据</div>
-            )}
-
-            {viewMode === "calendar" && userId && calendarDates.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                <button
-                  onClick={handleToday}
-                  style={{
-                    backgroundColor: "#fff",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 6,
-                    padding: "4px 12px",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  今天
-                </button>
-                <button
-                  onClick={() => jumpMonth("prev")}
-                  title="上一月"
-                  style={{
-                    backgroundColor: "#fff",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  &lt;&lt;
-                </button>
-                <button
-                  onClick={() => scrollDateAxis("left")}
-                  style={{
-                    backgroundColor: "#fff",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  &lt;
-                </button>
-                <div
-                  ref={dateAxisRef}
-                  style={{
-                    display: "flex",
-                    gap: 6,
-                    overflowX: "auto",
-                    flex: 1,
-                    padding: "4px 0",
-                  }}
-                >
-                  {calendarDates.map((info) => {
-                    const d = dayjs.tz(info.date);
-                    const hasData = availableDateInfos.some((i) => i.date === info.date);
-                    const isActive = selectedDate === info.date;
-                    return (
-                      <button
-                        key={info.date}
-                        data-date={info.date}
-                        onClick={() => selectDate(info.date)}
-                        disabled={!hasData}
-                        style={{
-                          flexShrink: 0,
-                          width: 56,
-                          padding: "6px 0",
-                          borderRadius: 8,
-                          border: "none",
-                          backgroundColor: isActive ? "#1890ff" : hasData ? "#fff" : "#f5f5f5",
-                          color: isActive ? "#fff" : hasData ? "#0f1419" : "#bbb",
-                          cursor: hasData ? "pointer" : "not-allowed",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          gap: 2,
-                          fontSize: 12,
-                          position: "relative",
-                        }}
-                      >
-                        <span>{weekdayLabels[d.day()]}</span>
-                        <span style={{ fontSize: 14, fontWeight: 600 }}>{d.format("MM-DD")}</span>
-                        {info.has_anomaly && (
-                          <span
-                            style={{
-                              position: "absolute",
-                              top: 2,
-                              right: 2,
-                              width: 6,
-                              height: 6,
-                              borderRadius: "50%",
-                              backgroundColor: "#F54C5C",
-                            }}
-                          />
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-                <button
-                  onClick={() => scrollDateAxis("right")}
-                  style={{
-                    backgroundColor: "#fff",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  &gt;
-                </button>
-                <button
-                  onClick={() => jumpMonth("next")}
-                  title="下一月"
-                  style={{
-                    backgroundColor: "#fff",
-                    border: "1px solid #d9d9d9",
-                    borderRadius: 6,
-                    padding: "4px 10px",
-                    cursor: "pointer",
-                    fontSize: 13,
-                  }}
-                >
-                  &gt;&gt;
-                </button>
-              </div>
-            )}
-
-            {viewMode === "overview" && !userId && (
-              <div style={{ color: "#999" }}>请先选择员工</div>
-            )}
-
-            {viewMode === "overview" && userId && (
-              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-                <DatePicker
-                  type="dateRange"
-                  value={[
-                    dayjs.tz(overviewRange[0]).toDate(),
-                    dayjs.tz(overviewRange[1]).toDate(),
-                  ]}
-                  onChange={(dates) => {
-                    const r = dates as Date[] | null;
-                    if (r && r[0] && r[1]) {
-                      setOverviewRange([
-                        dayjs.tz(r[0]).format("YYYY-MM-DD"),
-                        dayjs.tz(r[1]).format("YYYY-MM-DD"),
-                      ]);
-                    }
-                  }}
-                  disabledDate={(current) =>
-                    !!current && dayjs.tz(current).isAfter(dayjs.tz(), "day")
-                  }
-                />
-                {overviewLoading && <span style={{ color: "#999" }}>加载中...</span>}
-              </div>
-            )}
+            <span style={{ color: "#666" }}>
+              当前：{scopeLabel(scope)} {scope !== "company" ? (node ? nodeDisplayName(node) : (users.find((u) => u.user_id === userId)?.user_name || userId)) : ""}（
+              {dateRange[0]} ~ {dateRange[1]}）
+            </span>
+            {overviewLoading && <span style={{ color: "#999", marginLeft: 12 }}>加载中...</span>}
           </Col>
         </Row>
 
-        {viewMode === "overview" && userId && (
-          <OverviewPanel
-            userId={userId}
-            users={users}
-            range={overviewRange}
-            data={overviewData}
-            heatMapPoints={heatMapPoints}
-          />
+        {scope === "person" && dateRange[0] === dateRange[1] && (
+          <Row type="flex" gutter={16} align="middle">
+            <Col span={24}>
+              {!userId && <div style={{ color: "#999" }}>请先选择人员</div>}
+
+              {userId && calendarDates.length === 0 && (
+                <div style={{ color: "#999" }}>该员工暂无数据</div>
+              )}
+
+              {userId && calendarDates.length > 0 && (
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <button
+                    onClick={handleToday}
+                    style={{
+                      backgroundColor: "#fff",
+                      border: "1px solid #d9d9d9",
+                      borderRadius: 6,
+                      padding: "4px 12px",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    今天
+                  </button>
+                  <button
+                    onClick={() => jumpMonth("prev")}
+                    title="上一月"
+                    style={{
+                      backgroundColor: "#fff",
+                      border: "1px solid #d9d9d9",
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    &lt;&lt;
+                  </button>
+                  <button
+                    onClick={() => scrollDateAxis("left")}
+                    style={{
+                      backgroundColor: "#fff",
+                      border: "1px solid #d9d9d9",
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    &lt;
+                  </button>
+                  <div
+                    ref={dateAxisRef}
+                    style={{
+                      display: "flex",
+                      gap: 6,
+                      overflowX: "auto",
+                      flex: 1,
+                      padding: "4px 0",
+                    }}
+                  >
+                    {calendarDates.map((info) => {
+                      const d = dayjs.tz(info.date);
+                      const hasData = availableDateInfos.some((i) => i.date === info.date);
+                      const isActive = selectedDate === info.date;
+                      return (
+                        <button
+                          key={info.date}
+                          data-date={info.date}
+                          onClick={() => selectDate(info.date)}
+                          disabled={!hasData}
+                          style={{
+                            flexShrink: 0,
+                            width: 56,
+                            padding: "6px 0",
+                            borderRadius: 8,
+                            border: "none",
+                            backgroundColor: isActive ? "#1890ff" : hasData ? "#fff" : "#f5f5f5",
+                            color: isActive ? "#fff" : hasData ? "#0f1419" : "#bbb",
+                            cursor: hasData ? "pointer" : "not-allowed",
+                            display: "flex",
+                            flexDirection: "column",
+                            alignItems: "center",
+                            gap: 2,
+                            fontSize: 12,
+                            position: "relative",
+                          }}
+                        >
+                          <span>{weekdayLabels[d.day()]}</span>
+                          <span style={{ fontSize: 14, fontWeight: 600 }}>{d.format("MM-DD")}</span>
+                          {info.has_anomaly && (
+                            <span
+                              style={{
+                                position: "absolute",
+                                top: 2,
+                                right: 2,
+                                width: 6,
+                                height: 6,
+                                borderRadius: "50%",
+                                backgroundColor: "#F54C5C",
+                              }}
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <button
+                    onClick={() => scrollDateAxis("right")}
+                    style={{
+                      backgroundColor: "#fff",
+                      border: "1px solid #d9d9d9",
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    &gt;
+                  </button>
+                  <button
+                    onClick={() => jumpMonth("next")}
+                    title="下一月"
+                    style={{
+                      backgroundColor: "#fff",
+                      border: "1px solid #d9d9d9",
+                      borderRadius: 6,
+                      padding: "4px 10px",
+                      cursor: "pointer",
+                      fontSize: 13,
+                    }}
+                  >
+                    &gt;&gt;
+                  </button>
+                </div>
+              )}
+            </Col>
+          </Row>
         )}
       </div>
 
-      {viewMode === "calendar" && selectedDate && (
+      {scope !== "person" && (
+        <OrgQueryPanel
+          key={`${scope}-${node || "__ALL__"}-${dateRange[0]}-${dateRange[1]}`}
+          scope={scope}
+          nodeName={node || ""}
+          start={dateRange[0]}
+          end={dateRange[1]}
+        />
+      )}
+
+      {scope === "person" && dateRange[0] === dateRange[1] && selectedDate && (
         <>
           {/* 统计卡片 */}
           <Row gutter={16} style={{ marginBottom: 16 }}>
@@ -761,14 +999,50 @@ function ConsolePage() {
             </Col>
             <Col span={6}>
               <div style={statStyle}>
-                <span style={statLabelStyle}>总里程 vs 估算里程</span>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <span style={statLabelStyle}>总里程 vs 估算里程</span>
+                  {hasMileageReadingInvalid(overviewGroup.anomalies) && (
+                    <Popover
+                      content={
+                        <MileageAnomalyPopover
+                          anomalies={overviewGroup.anomalies}
+                          userName={
+                            users.find((u) => u.user_id === userId)?.user_name ||
+                            userId ||
+                            ""
+                          }
+                          approvalGroups={approvalGroups}
+                        />
+                      }
+                      position="topRight"
+                    >
+                      <Tag color="orange" style={{ marginLeft: 8, cursor: "pointer" }}>
+                        填报异常
+                      </Tag>
+                    </Popover>
+                  )}
+                </div>
                 <span style={statValueStyle}>
                   {overviewGroup.mileage.reportedDistanceKm === 0 &&
                   overviewGroup.mileage.totalKm === 0 ? (
                     <span style={{ color: "#999", fontSize: 16 }}>公共交通/无驾车</span>
                   ) : (
                     <>
-                      <span style={{ color: overviewGroup.mileage.reportedDistanceKm ? "#0f1419" : "#999" }}>
+                      <span
+                        style={{
+                          color: hasMileageReadingInvalid(overviewGroup.anomalies)
+                            ? "#fa8c16"
+                            : overviewGroup.mileage.reportedDistanceKm
+                            ? "#0f1419"
+                            : "#999",
+                        }}
+                      >
                         {overviewGroup.mileage.reportedDistanceKm || "未填报"}
                       </span>
                       <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
@@ -917,6 +1191,16 @@ function ConsolePage() {
           </Row>
         </>
       )}
+
+      {scope === "person" && dateRange[0] !== dateRange[1] && userId && (
+        <OverviewPanel
+          userId={userId}
+          users={users}
+          range={dateRange}
+          data={overviewData}
+          heatMapPoints={heatMapPoints}
+        />
+      )}
     </div>
   );
 }
@@ -1010,9 +1294,40 @@ function OverviewPanel({
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={6}>
               <div style={statStyle}>
-                <span style={statLabelStyle}>填报 / 估算里程</span>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "flex-start",
+                  }}
+                >
+                  <span style={statLabelStyle}>填报 / 估算里程</span>
+                  {hasMileageReadingInvalid(data?.anomalies ?? []) && (
+                    <Popover
+                      content={
+                        <MileageAnomalyPopover
+                          anomalies={data?.anomalies ?? []}
+                          userName={userName}
+                        />
+                      }
+                      position="topRight"
+                    >
+                      <Tag color="orange" style={{ marginLeft: 8, cursor: "pointer" }}>
+                        填报异常
+                      </Tag>
+                    </Popover>
+                  )}
+                </div>
                 <span style={statValueStyle}>
-                  <span>{totals?.reported_distance_km ?? 0}</span>
+                  <span
+                    style={{
+                      color: hasMileageReadingInvalid(data?.anomalies ?? [])
+                        ? "#fa8c16"
+                        : "#0f1419",
+                    }}
+                  >
+                    {totals?.reported_distance_km ?? 0}
+                  </span>
                   <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>/</span>
                   <span>{Math.round(totals?.estimated_distance_km ?? 0)}</span>
                   <span style={{ fontSize: 12, color: "#999" }}>km</span>
@@ -1065,8 +1380,18 @@ function OverviewPanel({
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
                   每日趋势
                 </div>
+                <MileageAnomalyAlert
+                  anomalies={data?.anomalies ?? []}
+                  userName={userName}
+                />
                 <Suspense fallback={<div style={{ height: 320 }}>加载图表中...</div>}>
-                  <OverviewChart data={chartData} />
+                  <OverviewChart
+                    data={chartData}
+                    anomalies={data?.anomalies ?? []}
+                    onDateClick={(date) => {
+                      window.open(`/console?user=${userId}&date=${date}`, "_blank");
+                    }}
+                  />
                 </Suspense>
               </div>
             </Col>
@@ -1203,6 +1528,245 @@ const ANOMALY_TYPE_TITLES: Record<string, string> = {
   long_stop: "停留过长",
   invalid_trip_type: "异常出行方式",
   missing_special_reason: "特殊签到缺原因",
+  mileage_reading_invalid: "里程读数异常",
 };
+
+function hasMileageReadingInvalid(
+  anomalies: Array<{ type: string }>
+): boolean {
+  return anomalies.some((a) => a.type === "mileage_reading_invalid");
+}
+
+function MileageAnomalyAlert({
+  anomalies,
+  userName,
+}: {
+  anomalies: Array<{
+    id: number;
+    type: string;
+    anomaly_date?: string;
+    metadata?: Record<string, any>;
+  }>;
+  userName: string;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const invalidAnomalies = anomalies.filter(
+    (a) => a.type === "mileage_reading_invalid"
+  );
+  if (invalidAnomalies.length === 0) return null;
+
+  // 按北京时间聚合异常日期，并去重排序
+  const dateSet = new Set<string>();
+  invalidAnomalies.forEach((a) => {
+    if (a.anomaly_date) {
+      dateSet.add(
+        dayjs(a.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
+      );
+    }
+  });
+  const dates = Array.from(dateSet).sort();
+
+  // 收起时只展示标题；展开后才展示人员+日期+描述明细
+  const visibleAnomalies = expanded ? invalidAnomalies : [];
+
+  const displayedDates = dates.slice(0, 3);
+  const hasMore = dates.length > 3;
+  const remaining = dates.length - 3;
+
+  return (
+    <div
+      style={{
+        marginBottom: 16,
+        padding: 16,
+        backgroundColor: "#fffbe6",
+        border: "1px solid #ffe58f",
+        borderRadius: 8,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 12,
+        fontSize: 14,
+      }}
+    >
+      <IconAlertTriangle
+        style={{
+          width: 14,
+          height: 14,
+          color: "#faad14",
+          flexShrink: 0,
+          marginTop: 2,
+        }}
+      />
+      <div style={{ flex: 1, textAlign: "left" }}>
+        <div
+          style={{
+            fontWeight: 500,
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+          }}
+        >
+          <span>异常日期：</span>
+          <span>{displayedDates.join("、")}</span>
+          {hasMore && (
+            <Tag
+              size="small"
+              style={{
+                backgroundColor: "#f0f0f0",
+                color: "#666",
+                border: "none",
+                borderRadius: 4,
+              }}
+            >
+              +{remaining}
+            </Tag>
+          )}
+        </div>
+        {visibleAnomalies.map((a, idx) => {
+          const approvalId = a.metadata?.approval_id as string | undefined;
+          const issues = (a.metadata?.issues as any[]) ?? [];
+          const isLast = idx === visibleAnomalies.length - 1;
+          return (
+            <div key={a.id} style={{ marginTop: 8, marginBottom: isLast ? 0 : 8 }}>
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  marginBottom: 4,
+                }}
+              >
+                <span style={{ fontWeight: 500 }}>
+                  {userName} ·{" "}
+                  {a.anomaly_date
+                    ? dayjs(a.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
+                    : ""}
+                </span>
+                <Tag
+                  size="small"
+                  style={{
+                    backgroundColor: "#f0f0f0",
+                    color: "#666",
+                    border: "none",
+                    borderRadius: 4,
+                  }}
+                >
+                  {approvalId ? approvalId.slice(-8) : "未知"}
+                </Tag>
+              </div>
+              <div style={{ color: "#666" }}>
+                {issues.map((issue, idx) => (
+                  <div key={idx}>• {issue.description}</div>
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {invalidAnomalies.length > 1 && (
+        <div
+          style={{
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            flexShrink: 0,
+            width: 20,
+            height: 20,
+            marginTop: 2,
+          }}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? (
+            <IconChevronUp style={{ width: 20, height: 20, color: "#999" }} />
+          ) : (
+            <IconChevronDown
+              style={{ width: 20, height: 20, color: "#1f2329" }}
+            />
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface MileageAnomalyPopoverProps {
+  anomalies: Array<{
+    id: number;
+    type: string;
+    description: string;
+    anomaly_date?: string;
+    metadata?: Record<string, any>;
+  }>;
+  userName: string;
+  approvalGroups?: ApprovalGroup[];
+}
+
+function MileageAnomalyPopover({
+  anomalies,
+  userName,
+  approvalGroups,
+}: MileageAnomalyPopoverProps) {
+  const invalidAnomalies = anomalies.filter(
+    (a) => a.type === "mileage_reading_invalid"
+  );
+  if (invalidAnomalies.length === 0) return null;
+
+  return (
+    <div style={{ maxWidth: 360, padding: 16 }}>
+      <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 10 }}>
+        填报异常
+      </div>
+      {invalidAnomalies.map((a) => {
+        const approvalId = a.metadata?.approval_id as string | undefined;
+        const estimatedKm =
+          approvalId && approvalGroups
+            ? approvalGroups.find((g) => g.key === approvalId)?.mileage.totalKm
+            : undefined;
+
+        return (
+          <div key={a.id} style={{ marginBottom: 12 }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 8,
+                marginBottom: 4,
+              }}
+            >
+              <span style={{ fontSize: 13, fontWeight: 500 }}>
+                {userName} ·{" "}
+                {a.anomaly_date
+                  ? dayjs(a.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
+                  : ""}
+              </span>
+              <Tag
+                size="small"
+                style={{
+                  backgroundColor: "#f0f0f0",
+                  color: "#666",
+                  border: "none",
+                  borderRadius: 4,
+                }}
+              >
+                {approvalId ? approvalId.slice(-8) : "未知"}
+              </Tag>
+            </div>
+            <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>
+              {(a.metadata?.issues as any[])?.map((issue, idx) => (
+                <div key={idx}>• {issue.description}</div>
+              ))}
+            </div>
+            {estimatedKm != null && estimatedKm > 0 && (
+              <div style={{ fontSize: 12, color: "#999", marginTop: 4 }}>
+                该审批单估算里程：{Math.round(estimatedKm)} km
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export default ConsolePage;

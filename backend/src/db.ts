@@ -292,7 +292,8 @@ export async function initDB(): Promise<void> {
         ('route_detour', '路径绕行', 0.10, 2.0, true, '实际距离>直线距离*2'),
         ('long_idle', '长时间未移动', 0.05, 180, true, '>180分钟无移动记录'),
         ('invalid_trip_type', '异常出行方式', 0.03, 5, true, '公共交通/特殊签到但填报较长里程'),
-        ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, '特殊签到未填写原因')
+        ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, '特殊签到未填写原因'),
+        ('mileage_reading_invalid', '里程读数异常', 0.02, NULL, true, '出发/终点里程读数缺失、非单调递增或超过合理上限')
       ON CONFLICT (rule_key) DO NOTHING;
 
       -- 钉钉通讯录同步（探测/缓存用）

@@ -4,6 +4,7 @@ import { pool } from "../db";
 import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { recomputeDerivedDataForVisits } from "./derivedComputation";
+import { OrgTreeNode } from "./orgService";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
 
@@ -248,7 +249,9 @@ export async function fetchAllDepartmentUsers(
   return users;
 }
 
-export async function syncContacts(): Promise<{
+export async function syncContacts(
+  targetDeptNames?: string[]
+): Promise<{
   departments: number;
   users: number;
   errors: string[];
@@ -269,6 +272,44 @@ export async function syncContacts(): Promise<{
   } catch (err: any) {
     errors.push(`拉取部门失败: ${err.message}`);
     throw err;
+  }
+
+  // 3. 如果指定了目标部门，只同步目标部门及其子部门
+  if (targetDeptNames && targetDeptNames.length > 0) {
+    const normalizedTargets = targetDeptNames.map((n) => n.trim()).filter(Boolean);
+    const childrenMap = new Map<number, number[]>();
+    const deptById = new Map<number, DingTalkDepartment>();
+
+    for (const dept of departments) {
+      deptById.set(dept.dept_id, dept);
+      if (dept.parent_id) {
+        const siblings = childrenMap.get(dept.parent_id) || [];
+        siblings.push(dept.dept_id);
+        childrenMap.set(dept.parent_id, siblings);
+      }
+    }
+
+    const collectSubtree = (deptId: number, collected: Set<number>) => {
+      if (collected.has(deptId)) return;
+      collected.add(deptId);
+      const children = childrenMap.get(deptId) || [];
+      for (const childId of children) {
+        collectSubtree(childId, collected);
+      }
+    };
+
+    const allowedIds = new Set<number>();
+    for (const dept of departments) {
+      if (normalizedTargets.includes(dept.name.trim())) {
+        collectSubtree(dept.dept_id, allowedIds);
+      }
+    }
+
+    if (allowedIds.size === 0) {
+      return { departments: 0, users: 0, errors: [`未找到目标部门: ${normalizedTargets.join(", ")}`] };
+    }
+
+    departments = departments.filter((d) => allowedIds.has(d.dept_id));
   }
 
   for (const dept of departments) {
@@ -329,6 +370,86 @@ export async function syncContacts(): Promise<{
     users: totalUsers,
     errors,
   };
+}
+
+export interface DingTalkOrgUser {
+  user_id: string;
+  user_name: string;
+  department?: string;
+}
+
+export async function getDingTalkOrgUsers(): Promise<DingTalkOrgUser[]> {
+  const result = await pool.query(
+    `SELECT u.userid, u.name, d.name AS department
+     FROM dingtalk_users u
+     LEFT JOIN dingtalk_departments d ON u.source_dept_id = d.dept_id
+     ORDER BY u.name`
+  );
+  return result.rows.map((row) => ({
+    user_id: row.userid,
+    user_name: row.name,
+    department: row.department || "",
+  }));
+}
+
+export async function buildDingTalkOrgTree(): Promise<OrgTreeNode[]> {
+  const [deptResult, userResult] = await Promise.all([
+    pool.query(`SELECT dept_id, parent_id, name FROM dingtalk_departments ORDER BY dept_id`),
+    pool.query(`SELECT userid, source_dept_id FROM dingtalk_users`),
+  ]);
+
+  const deptMap = new Map<number, OrgTreeNode>();
+  const childrenMap = new Map<number, number[]>();
+
+  for (const row of deptResult.rows) {
+    const deptId = parseInt(row.dept_id, 10);
+    const parentId = row.parent_id ? parseInt(row.parent_id, 10) : null;
+    deptMap.set(deptId, {
+      name: row.name,
+      shortName: row.name,
+      level: 0,
+      children: [],
+      userIds: [],
+    });
+    if (parentId) {
+      const siblings = childrenMap.get(parentId) || [];
+      siblings.push(deptId);
+      childrenMap.set(parentId, siblings);
+    }
+  }
+
+  for (const row of userResult.rows) {
+    const sourceDeptId = parseInt(row.source_dept_id, 10);
+    const node = deptMap.get(sourceDeptId);
+    if (node) {
+      node.userIds = node.userIds || [];
+      node.userIds.push(row.userid);
+    }
+  }
+
+  const buildNode = (deptId: number, level: number): OrgTreeNode | null => {
+    const node = deptMap.get(deptId);
+    if (!node) return null;
+    node.level = level;
+    const childIds = childrenMap.get(deptId) || [];
+    for (const childId of childIds) {
+      const child = buildNode(childId, level + 1);
+      if (child) node.children.push(child);
+    }
+    return node;
+  };
+
+  const roots: OrgTreeNode[] = [];
+  for (const row of deptResult.rows) {
+    const deptId = parseInt(row.dept_id, 10);
+    const parentId = row.parent_id ? parseInt(row.parent_id, 10) : null;
+    if (!parentId || parentId === 1 || !deptMap.has(parentId)) {
+      const root = buildNode(deptId, 1);
+      if (root) roots.push(root);
+    }
+  }
+
+  return roots;
 }
 
 export async function getApprovalInstances(
@@ -579,37 +700,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     stops.push({ index: i, parsed, isSpecial });
   }
 
-  if (stops.length === 0) {
-    // 空表单：生成一条兜底记录，避免用户以为数据未同步
-    const createTime = instance.create_time || instance.createTime;
-    const parsedTime = createTime
-      ? parseDateTimeAsBeijing(createTime).toISOString()
-      : null;
-    if (parsedTime) {
-      return [
-        {
-          user_id: originatorUserId,
-          user_name: userName,
-          department,
-          time: parsedTime,
-          location_name: "未填写签到地点",
-          address: "",
-          customer_name: "",
-          lat: null,
-          lng: null,
-          approval_id: approvalId,
-          sequence: 1,
-          trip_type: tripType || "",
-          vehicle: vehicleInfo?.vehicle || "",
-          visit_note: "表单未填写完整",
-          special_sign_reason: "",
-          photos: [],
-          source_detail: "empty_form",
-        },
-      ];
-    }
-    return [];
-  }
+  if (stops.length === 0) return [];
 
   const vehicle = vehicleInfo?.vehicle;
 
@@ -653,18 +744,27 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     let endOdometer: number | null = null;
     let reportedDistanceKm: number | null = null;
     let mileageNote = "";
-    if (i === 0 && !isNaN(startOdometer)) {
-      // 第一个点是出发点，不生成 visit，或仅记录为起点
+    if (i === 0) {
+      // 第一个点是出发点，只记录出发里程；缺少出发里程时打标
+      if (isNaN(startOdometer)) {
+        mileageNote = " [缺少出发里程读数]";
+      }
     } else {
       const odoRaw = findNearby(stop.index, /^终点里程读数/);
       endOdometer = odoRaw && odoRaw !== "null" ? parseFloat(odoRaw) : null;
-      if (endOdometer != null && !isNaN(startOdometer)) {
+      if (endOdometer == null || isNaN(endOdometer)) {
+        mileageNote = ` [第${sequence}个签到点缺少终点里程读数]`;
+      } else if (!isNaN(startOdometer)) {
         const diff = endOdometer - startOdometer;
         if (diff >= 0 && diff <= MAX_MILEAGE_KM) {
           reportedDistanceKm = diff;
+        } else if (diff < 0) {
+          mileageNote = ` [里程读数异常：终点${endOdometer} < 出发${startOdometer}]`;
         } else {
-          mileageNote = " [里程读数异常]";
+          mileageNote = ` [里程读数异常：差值${diff}km 超上限]`;
         }
+      } else {
+        mileageNote = " [缺少出发里程读数，无法计算终点里程]";
       }
     }
 

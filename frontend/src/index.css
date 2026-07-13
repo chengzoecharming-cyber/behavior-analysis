@@ -115,3 +115,32 @@ a {
 .risk-modal .semi-modal-content {
   background-color: #F6F8FC !important;
 }
+
+/* 控制台级联选择器：单选圆点样式 */
+.console-scope-cascader .semi-cascader-option-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.console-scope-cascader .semi-cascader-option-icon-empty::before,
+.console-scope-cascader .semi-cascader-option-icon-active::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid var(--semi-color-text-2);
+  background-color: transparent;
+  box-sizing: border-box;
+}
+
+.console-scope-cascader .semi-cascader-option-icon-active::before {
+  border-color: var(--semi-color-primary);
+  background-color: var(--semi-color-primary);
+}
+
+/* 隐藏默认对勾，用圆点替代 */
+.console-scope-cascader .semi-cascader-option-icon-active svg {
+  display: none;
+}
