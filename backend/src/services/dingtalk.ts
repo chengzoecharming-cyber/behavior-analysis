@@ -579,7 +579,37 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     stops.push({ index: i, parsed, isSpecial });
   }
 
-  if (stops.length === 0) return [];
+  if (stops.length === 0) {
+    // 空表单：生成一条兜底记录，避免用户以为数据未同步
+    const createTime = instance.create_time || instance.createTime;
+    const parsedTime = createTime
+      ? parseDateTimeAsBeijing(createTime).toISOString()
+      : null;
+    if (parsedTime) {
+      return [
+        {
+          user_id: originatorUserId,
+          user_name: userName,
+          department,
+          time: parsedTime,
+          location_name: "未填写签到地点",
+          address: "",
+          customer_name: "",
+          lat: null,
+          lng: null,
+          approval_id: approvalId,
+          sequence: 1,
+          trip_type: tripType || "",
+          vehicle: vehicleInfo?.vehicle || "",
+          visit_note: "表单未填写完整",
+          special_sign_reason: "",
+          photos: [],
+          source_detail: "empty_form",
+        },
+      ];
+    }
+    return [];
+  }
 
   const vehicle = vehicleInfo?.vehicle;
 
