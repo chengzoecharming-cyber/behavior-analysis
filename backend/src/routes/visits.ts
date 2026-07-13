@@ -74,13 +74,18 @@ router.get("/users", async (_req: Request, res: Response) => {
   try {
     // 同一 user_id 可能因部门字段写法不同出现重复，按出现次数取最常用的一条
     const result = await pool.query(
-      `SELECT user_id, user_name, department
-       FROM (
-         SELECT user_id, user_name, department,
-                ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC) AS rn
+      `WITH grouped AS (
+         SELECT user_id, user_name, department, COUNT(*) AS cnt
          FROM visits
          GROUP BY user_id, user_name, department
-       ) t
+       ),
+       ranked AS (
+         SELECT user_id, user_name, department, cnt,
+                ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY cnt DESC) AS rn
+         FROM grouped
+       )
+       SELECT user_id, user_name, department
+       FROM ranked
        WHERE rn = 1
        ORDER BY user_name`
     );
