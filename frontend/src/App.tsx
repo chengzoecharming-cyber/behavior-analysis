@@ -143,7 +143,7 @@ function App() {
               className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-[#0f1419] transition hover:text-stone-600"
             >
               <img
-                src="/logo.png"
+                src="/logo.png?v=2"
                 alt="销售外勤行为分析系统"
                 className="h-8 w-8 shrink-0 rounded-lg object-contain"
               />
