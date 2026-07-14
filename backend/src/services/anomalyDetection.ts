@@ -364,7 +364,7 @@ interface MileageReadingIssue {
  *
  * 按审批单维度检测，一个审批单内多个问题合并为一个异常事件。
  */
-function detectMileageReadingInvalid(visits: Visit[]): Anomaly[] {
+export function detectMileageReadingInvalid(visits: Visit[]): Anomaly[] {
   const groups = new Map<string, Visit[]>();
   for (const v of visits) {
     if (!v.approval_id) continue;
