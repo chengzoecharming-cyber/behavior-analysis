@@ -48,6 +48,8 @@ map/
 │   ├── mock-visits.xlsx        # 示例拜访数据
 │   └── generate_mock.py        # 示例数据生成脚本
 ├── docker-compose.yml
+├── docker-compose.ghcr.yml
+├── DEPLOY.md
 └── README.md
 ```
 
@@ -152,6 +154,12 @@ curl -X POST http://localhost:3000/upload-excel \
 
 - 用户名：`admin`
 - 密码：`admin123`
+
+## 生产部署
+
+生产环境使用 GitHub Actions 构建镜像并推送到 GHCR，服务器直接拉取镜像运行，无需在服务器编译代码。
+
+详细步骤见 [`DEPLOY.md`](./DEPLOY.md)。
 
 ## 注意事项
 

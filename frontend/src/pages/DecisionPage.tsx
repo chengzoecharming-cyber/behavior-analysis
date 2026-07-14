@@ -380,7 +380,7 @@ function DecisionPage() {
       {/* Title */}
       <div style={{ marginBottom: 12 }}>
         <Title heading={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
-          销售外勤行为决策系统
+          销售外勤行为分析系统
         </Title>
         <Text type="tertiary" style={{ fontSize: 14 }}>
           帮助管理者 10 秒内发现今日风险员工

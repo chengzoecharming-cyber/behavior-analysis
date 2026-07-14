@@ -37,8 +37,8 @@ interface NavItem {
 }
 
 const navItems: NavItem[] = [
-  { path: "/", label: "决策系统", icon: Home },
-  { path: "/console", label: "控制台", icon: MapPin },
+  { path: "/", label: "总览", icon: Home },
+  { path: "/console", label: "数据&分析", icon: MapPin },
   { path: "/sync", label: "数据同步", icon: RefreshCw },
   { path: "/rules", label: "规则配置", icon: Settings },
 ];
@@ -144,10 +144,10 @@ function App() {
             >
               <img
                 src="/logo.png"
-                alt="销售外勤行为决策系统"
+                alt="销售外勤行为分析系统"
                 className="h-8 w-8 shrink-0 rounded-lg object-contain"
               />
-              <span className="text-base font-medium">销售外勤行为决策系统</span>
+              <span className="text-base font-medium">销售外勤行为分析系统</span>
             </Link>
 
             {/* Mobile menu button */}
@@ -272,7 +272,7 @@ function App() {
               <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#0f1419]">
                 <MapPin className="h-4 w-4 text-white" />
               </div>
-              销售外勤行为决策系统
+              销售外勤行为分析系统
             </div>
             <nav className="flex flex-col gap-1">
               {navItems.map((item) => {

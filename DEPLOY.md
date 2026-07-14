@@ -1,21 +1,23 @@
-# 服务器部署指南（零基础版）
+# 服务器部署指南（GHCR 镜像版）
 
-> 目标：把你的代码部署到一台 Alibaba Linux 2C4G 服务器上，让同事可以通过浏览器访问。
+> 目标：把 GitHub Actions 自动构建好的 Docker 镜像部署到 Linux 服务器，让同事可以通过浏览器访问。
 
 ## 整体流程
 
-```
-你的代码 → 推送到 GitHub → GitHub 自动构建镜像 → 服务器下载镜像 → 启动运行
+```text
+代码 push 到 main → GitHub Actions 构建镜像 → 推送到 GHCR
+                                ↓
+服务器登录 GHCR → 拉取镜像 → docker compose 启动
 ```
 
-**你不需要在服务器上写代码、编译代码，只需要复制粘贴命令。**
+你不需要在服务器上编译代码，只需要复制粘贴命令。
 
 ---
 
 ## 第一步：把代码推送到 GitHub
 
 1. 去 [GitHub](https://github.com) 注册/登录账号。
-2. 新建一个仓库，例如 `sales-map`。
+2. 新建一个仓库，例如 `behavior-analysis`。
 3. 把本地代码推上去：
 
 ```bash
@@ -24,115 +26,208 @@ git init
 git add .
 git commit -m "initial"
 git branch -M main
-git remote add origin https://github.com/你的用户名/sales-map.git
+git remote add origin https://github.com/你的用户名/behavior-analysis.git
 git push -u origin main
 ```
-
-> 如果你不会用 git，也可以直接把项目文件夹拖拽到 GitHub 网页上传。
 
 ---
 
 ## 第二步：在 GitHub 添加密钥
 
-1. 打开仓库页面 → 点击右上角 **Settings** → 左侧 **Secrets and variables** → **Actions**。
-2. 点击 **New repository secret**，添加下面这个密钥：
+打开仓库页面 → **Settings** → **Secrets and variables** → **Actions** → **New repository secret**：
 
 | 名称 | 值 | 说明 |
 |------|-----|------|
-| `VITE_AMAP_KEY` | 你的高德地图 Key | 前端地图需要 |
+| `VITE_AMAP_KEY` | 你的高德 JS API Key | 前端地图需要，构建时固化到镜像里 |
 
-> 高德 Key 获取：[高德开放平台](https://console.amap.com/dev/key/app) → 创建应用 → 添加 Web端(JS API) Key。
-
-添加好后，每次你推送代码到 `main` 分支，GitHub 就会自动构建 backend 和 frontend 的 Docker 镜像，并推送到 GitHub Container Registry（免费）。
+后端需要的 `AMAP_KEY` 是运行时通过服务器 `.env` 注入的，不需要放在 GitHub Secrets 里。
 
 ---
 
 ## 第三步：准备服务器
 
-你需要一台 Linux 服务器，例如：
-- 阿里云 ECS
-- 腾讯云 CVM
-- 华为云 ECS
+你需要一台 Linux 服务器（阿里云 ECS / 腾讯云 CVM / 华为云 ECS 等）。
 
-**最低配置**：1 核 2G 就能跑，建议 2 核 4G。
+**最低配置**：1 核 2G，建议 2 核 4G。
 
-你需要拿到以下信息：
-- 服务器公网 IP（例如 `123.45.67.89`）
-- root 密码（或 SSH 密钥）
+需要放行以下端口：
+
+- `5173`：前端页面
+- `3000`：后端 API
+- `5433`：PostgreSQL（可选，仅外部管理时需要）
 
 ---
 
-## 第四步：生成 GitHub Token
+## 第四步：生成 GitHub Token（用于拉取镜像）
 
 1. 打开 [https://github.com/settings/tokens](https://github.com/settings/tokens)
 2. 点击 **Generate new token (classic)**
-3. 勾选以下权限：
-   - `read:packages`（拉取镜像）
-   - `write:packages`（如果需要手动推送镜像）
-4. 点击 Generate，**复制并保存好这个 token**（只会显示一次）
+3. 勾选 `read:packages`
+4. 点击 **Generate**，复制并保存好 token
+
+> 如果 GHCR 包是私有的，确保你的账号对该包有读取权限（仓库 owner 默认有）。
 
 ---
 
-## 第五步：登录服务器并执行部署
+## 第五步：登录服务器并部署
 
-### 5.1 登录服务器
-
-Mac 用户打开终端，Windows 用户可以用 PowerShell 或 XShell，执行：
+### 5.1 SSH 登录服务器
 
 ```bash
 ssh root@你的服务器IP
 ```
 
-输入 root 密码登录。
-
-### 5.2 下载并编辑部署脚本
+### 5.2 创建项目目录和 `.env`
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/你的用户名/sales-map/main/scripts/deploy.sh -o /root/deploy.sh
+mkdir -p /root/sales-map
+cd /root/sales-map
+
+cat > .env << 'EOF'
+GHCR_OWNER=你的GitHub用户名
+AMAP_KEY=你的高德Web服务Key
+
+# 钉钉同步相关（不需要钉钉同步可留空）
+DINGTALK_APP_KEY=
+DINGTALK_APP_SECRET=
+DINGTALK_PROCESS_CODE=
+
+# 钉钉导出机器人相关（不需要可留空）
+DINGTALK_EXPORT_CHAT_ID=
+DINGTALK_EXPORT_ROBOT_WEBHOOK=
+DINGTALK_EXPORT_ROBOT_SECRET=
+EOF
 ```
 
-然后用编辑器打开：
+> `GHCR_OWNER` 是你的 GitHub 用户名或组织名，镜像路径是 `ghcr.io/${GHCR_OWNER}/sales-map-backend`。
+> `AMAP_KEY` 必须是**高德 Web 服务 Key**（不是 JS API Key）。
+
+### 5.3 创建 `docker-compose.ghcr.yml`
+
+服务器上不需要安装 git，直接创建文件：
 
 ```bash
-vi /root/deploy.sh
+cat > /root/sales-map/docker-compose.ghcr.yml << 'EOF'
+# 使用 GitHub Container Registry 上预构建的镜像
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: sales-map-postgres
+    environment:
+      POSTGRES_USER: sales
+      POSTGRES_PASSWORD: sales123
+      POSTGRES_DB: sales_map
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sales -d sales_map"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    image: ghcr.io/${GHCR_OWNER}/sales-map-backend:latest
+    container_name: sales-map-backend
+    environment:
+      DATABASE_URL: postgresql://sales:sales123@postgres:5432/sales_map
+      AMAP_KEY: ${AMAP_KEY}
+      AMAP_ROUTE_TIMEOUT_MS: ${AMAP_ROUTE_TIMEOUT_MS:-15000}
+      AMAP_ROUTE_RETRY_COUNT: ${AMAP_ROUTE_RETRY_COUNT:-5}
+      HTTP_PROXY: ${HTTP_PROXY:-}
+      HTTPS_PROXY: ${HTTPS_PROXY:-}
+      NO_PROXY: ${NO_PROXY:-postgres,localhost,127.0.0.1}
+      DINGTALK_APP_KEY: ${DINGTALK_APP_KEY:-}
+      DINGTALK_APP_SECRET: ${DINGTALK_APP_SECRET:-}
+      DINGTALK_PROCESS_CODE: ${DINGTALK_PROCESS_CODE:-}
+      DINGTALK_EXPORT_CHAT_ID: ${DINGTALK_EXPORT_CHAT_ID:-}
+      DINGTALK_EXPORT_ROBOT_WEBHOOK: ${DINGTALK_EXPORT_ROBOT_WEBHOOK:-}
+      DINGTALK_EXPORT_ROBOT_SECRET: ${DINGTALK_EXPORT_ROBOT_SECRET:-}
+      PORT: 3000
+      NODE_ENV: production
+    ports:
+      - "3000:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - backend_uploads:/app/uploads
+    restart: unless-stopped
+
+  frontend:
+    image: ghcr.io/${GHCR_OWNER}/sales-map-frontend:latest
+    container_name: sales-map-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  backend_uploads:
+EOF
 ```
 
-找到开头这几行，改成你自己的信息：
+### 5.4 登录 GitHub Container Registry
 
 ```bash
-GHCR_OWNER="你的GitHub用户名"
-GITHUB_TOKEN="你的GitHub Token"
-AMAP_KEY="你的高德地图Key"
-SERVER_IP="你的服务器公网IP"
+docker login ghcr.io -u 你的GitHub用户名
 ```
 
-按 `i` 进入编辑，改好后按 `Esc`，再输入 `:wq` 保存退出。
+提示 `Password:` 时粘贴你的 GitHub Token（输入不显示）。
 
-> 如果你不会用 vi，可以用下面这个命令直接替换（把值改成你的）：
->
-> ```bash
-> sed -i 's/你的GitHub用户名/zhangsan/g; s/你的GitHub Token/ghp_xxxx/g; s/你的高德地图Key/xxxxxxxx/g; s/你的服务器公网IP/123.45.67.89/g' /root/deploy.sh
-> ```
+看到 `Login Succeeded` 即可。
 
-### 5.3 执行部署
+### 5.5 拉取并启动服务
 
 ```bash
-bash /root/deploy.sh
+cd /root/sales-map
+
+# 清理可能存在的失败容器
+docker rm -f sales-map-backend sales-map-frontend 2>/dev/null || true
+
+# 拉取镜像
+docker compose -f docker-compose.ghcr.yml pull backend frontend
+
+# 启动所有服务
+docker compose -f docker-compose.ghcr.yml up -d
 ```
 
-等待几分钟，看到 `✅ 部署完成！` 就是成功了。
+### 5.6 验证
 
----
-
-## 第六步：访问系统
-
-打开浏览器，访问：
-
+```bash
+docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+curl -s http://localhost:3000/health
+curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5173
 ```
+
+正常应该看到：
+
+- `sales-map-postgres`：healthy
+- `sales-map-backend`：Up，`/health` 返回 `{"status":"ok"}`
+- `sales-map-frontend`：Up，`5173` 返回 `200`
+
+然后浏览器访问：
+
+```text
 http://你的服务器IP:5173
 ```
 
-例如：`http://123.45.67.89:5173`
+---
+
+## 第六步：更新代码后重新部署
+
+推送新代码到 `main` 分支，等待 GitHub Actions 构建完成后，在服务器执行：
+
+```bash
+cd /root/sales-map
+docker compose -f docker-compose.ghcr.yml pull backend frontend
+docker compose -f docker-compose.ghcr.yml up -d
+```
+
+数据库数据会保留，不需要重新导入。
 
 ---
 
@@ -140,43 +235,55 @@ http://你的服务器IP:5173
 
 ### 1. 端口访问不了
 
-检查服务器安全组/防火墙是否放行了 5173、3000、5433 端口。
+检查服务器安全组/防火墙是否放行了 `5173`、`3000`、`5433`。
 
-阿里云路径：ECS 控制台 → 安全组 → 配置规则 → 入方向 → 添加规则。
+### 2. `invalid reference format`
 
-### 2. 忘记数据库密码
-
-密码保存在服务器 `/root/sales-map/.env` 文件中：
+`.env` 里没有 `GHCR_OWNER`。检查：
 
 ```bash
-cat /root/sales-map/.env
+grep GHCR_OWNER /root/sales-map/.env
 ```
 
-### 3. 怎么看日志
+没有的话加上：
+
+```bash
+echo "GHCR_OWNER=你的GitHub用户名" >> /root/sales-map/.env
+```
+
+### 3. `password authentication failed for user "sales"`
+
+说明 postgres 里 `sales` 用户的密码不是 `sales123`（例如之前用 `scripts/deploy.sh` 部署过，它使用了随机密码）。
+
+修复方法：把密码改成 `sales123`：
+
+```bash
+docker exec -i sales-map-postgres psql -U sales -d sales_map -c "ALTER USER sales WITH PASSWORD 'sales123';"
+docker compose -f docker-compose.ghcr.yml up -d --force-recreate backend
+```
+
+### 4. 忘记数据库密码
+
+密码就是 `sales123`（本指南固定值）。如果你之前改过，可以进容器查看：
+
+```bash
+docker inspect sales-map-postgres -f '{{range .Config.Env}}{{.}}{{"\n"}}{{end}}'
+```
+
+### 5. 怎么看日志
 
 ```bash
 cd /root/sales-map
-docker compose logs -f backend   # 后端日志
-docker compose logs -f frontend  # 前端日志
-docker compose logs -f postgres  # 数据库日志
+docker compose -f docker-compose.ghcr.yml logs -f backend
+docker compose -f docker-compose.ghcr.yml logs -f frontend
+docker compose -f docker-compose.ghcr.yml logs -f postgres
 ```
 
-### 4. 更新了代码怎么重新部署
+### 6. `scripts/deploy.sh` 还能用吗？
 
-只需要把新代码推送到 GitHub，等待 GitHub Actions 构建完成（约 5~10 分钟），然后在服务器执行：
+`scripts/deploy.sh` 仅适合**首次全新部署**。它会：
 
-```bash
-cd /root/sales-map
-docker compose pull
-docker compose up -d
-```
+- 每次生成随机数据库密码
+- 覆盖 `docker-compose.yml`
 
----
-
-## 需要我帮你做什么？
-
-如果你还是不会，可以把下面信息发给我，我可以继续帮你：
-1. GitHub 用户名
-2. 高德地图 Key
-3. 服务器公网 IP
-4. 是否有 GitHub 仓库了？
+如果服务器上已经有 postgres 数据，直接运行会导致后端连不上数据库。**有数据后请使用本指南的手动步骤。**

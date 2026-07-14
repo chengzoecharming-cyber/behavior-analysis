@@ -387,22 +387,25 @@ function ConsolePage() {
     }
     fetchAvailableDates(userId, true).then((infos) => {
       setAvailableDateInfos(infos);
-      if (infos.length === 0) {
-        setSelectedDate(null);
-        return;
-      }
-      // 单日模式下才需要选中日期
-      if (dateRange[0] === dateRange[1]) {
-        const currentDate = dateRange[0];
-        const dateExists = infos.some((info) => info.date === currentDate);
-        const targetDate = dateExists ? currentDate : infos[0].date;
-        setSelectedDate(targetDate);
-      } else {
-        setSelectedDate(null);
-      }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, userId]);
+
+  // 单日模式下，根据当前 dateRange 和可用日期列表确定选中日期
+  useEffect(() => {
+    if (scope !== "person" || !userId) return;
+    if (availableDateInfos.length === 0) {
+      setSelectedDate(null);
+      return;
+    }
+    if (dateRange[0] === dateRange[1]) {
+      const currentDate = dateRange[0];
+      const dateExists = availableDateInfos.some((info) => info.date === currentDate);
+      const targetDate = dateExists ? currentDate : availableDateInfos[0].date;
+      setSelectedDate(targetDate);
+    } else {
+      setSelectedDate(null);
+    }
+  }, [scope, userId, dateRange, availableDateInfos]);
 
   // 个人单日：选中用户或日期变化时自动加载当日数据
   useEffect(() => {

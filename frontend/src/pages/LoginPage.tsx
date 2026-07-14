@@ -32,7 +32,7 @@ export default function LoginPage() {
     <div className="flex h-screen w-full items-center justify-center bg-[#F6F8FC]">
       <div className="w-[400px] max-w-[calc(100%-2rem)] rounded-2xl bg-white p-8 shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
         <h2 className="text-center text-2xl font-medium text-[#0f1419]">
-          销售外勤行为决策系统
+          销售外勤行为分析系统
         </h2>
         <p className="mt-2 text-center text-sm text-[#72808a]">请登录</p>
 

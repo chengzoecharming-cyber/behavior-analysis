@@ -361,32 +361,41 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 
 ### 服务器部署
 
-参考 `DEPLOY.md` 和 `scripts/deploy.sh`。
+生产环境推荐使用仓库里的 `docker-compose.ghcr.yml` 直接拉取 GHCR 镜像，服务器上不需要 git，也不需要本地编译。详细步骤见 `DEPLOY.md`。
 
-**注意**：`scripts/deploy.sh` 当前硬编码了 `GHCR_OWNER`、`AMAP_KEY`、`SERVER_IP`，生产部署前务必修改为外部注入或私有配置。
+关键点：
+
+- `.env` 中必须包含 `GHCR_OWNER` 和 `AMAP_KEY`（高德 Web 服务 Key）。
+- GHCR 镜像如果是私有的，需要先用 `docker login ghcr.io` 登录（Token 需要 `read:packages`）。
+- 如果服务器上已有 postgres 数据，但初始化时的密码不是 `sales123`，后端会报 `password authentication failed`。修复：
+  ```bash
+  docker exec -i sales-map-postgres psql -U sales -d sales_map -c "ALTER USER sales WITH PASSWORD 'sales123';"
+  docker compose -f docker-compose.ghcr.yml up -d --force-recreate backend
+  ```
+- `scripts/deploy.sh` 每次都会生成随机数据库密码并覆盖 `docker-compose.yml`，仅适合**首次全新部署**；服务器上已有数据后不要使用，请按 `DEPLOY.md` 操作。
 
 更新代码后重新部署：
 
 ```bash
 cd /root/sales-map
-docker compose pull
-docker compose up -d
+docker compose -f docker-compose.ghcr.yml pull backend frontend
+docker compose -f docker-compose.ghcr.yml up -d
 ```
 
 查看日志：
 
 ```bash
 cd /root/sales-map
-docker compose logs -f backend
-docker compose logs -f frontend
-docker compose logs -f postgres
+docker compose -f docker-compose.ghcr.yml logs -f backend
+docker compose -f docker-compose.ghcr.yml logs -f frontend
+docker compose -f docker-compose.ghcr.yml logs -f postgres
 ```
 
 ## 安全注意事项
 
 1. **不要把真实 Key 提交到仓库**：`AMAP_KEY`、`VITE_AMAP_KEY`、钉钉 `APP_SECRET`、`GITHUB_TOKEN` 等敏感信息只应出现在 `.env`、GitHub Secrets 或服务器环境变量中。`.gitignore` 已排除 `.env`、`.env.local`。
 
-2. **部署脚本硬编码问题**：`scripts/deploy.sh` 中当前写死了 `AMAP_KEY` 和服务器 IP，生产环境应改为外部传入或从安全存储读取。
+2. **部署脚本问题**：`scripts/deploy.sh` 中硬编码了 `AMAP_KEY` 和服务器 IP，且每次运行都会生成随机数据库密码。它只适合首次全新部署；服务器上已有 postgres 数据时直接运行会导致后端连不上数据库。有数据后请按 `DEPLOY.md` 使用 `docker-compose.ghcr.yml` 部署。
 
 3. **认证机制较弱**：当前通过 `X-User-Id` header 识别用户，没有 JWT/Cookie/Session。任何人只要知道用户 ID 就能模拟该用户。如果对外开放，必须替换为正式认证方案。
 
