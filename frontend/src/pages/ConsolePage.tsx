@@ -16,6 +16,7 @@ import {
   IconRedo,
   IconChevronDown,
   IconChevronUp,
+  IconChevronRight,
   IconAlertTriangle,
 } from "@douyinfe/semi-icons";
 
@@ -40,6 +41,8 @@ import { User, Visit, Stop, Route, Anomaly, MileageStats } from "../types";
 import MapContainer from "../components/MapContainer";
 import HeatMapContainer from "../components/HeatMapContainer";
 import OrgQueryPanel from "../components/OrgQueryPanel";
+import TrajectoryTimeline from "../components/TrajectoryTimeline";
+import { AnomalyItem } from "../components/AnomalyItem";
 import { Suspense, lazy } from "react";
 
 const OverviewChart = lazy(() => import("../components/OverviewChart"));
@@ -75,6 +78,27 @@ interface CascaderDataItem {
   children?: CascaderDataItem[];
 }
 
+/** F10：不展示在级联选择器中的顶层部门 */
+const EXCLUDED_TOP_DEPARTMENTS = new Set([
+  "财务",
+  "人力资源部",
+  "市场营销",
+  "销售渠道",
+  "销售渠道2",
+  "供应商",
+  "渠道及销售管理部",
+  "研发部",
+]);
+
+function isExcludedTopDepartment(name: string): boolean {
+  for (const excluded of EXCLUDED_TOP_DEPARTMENTS) {
+    if (name.startsWith(excluded)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function buildCascaderData(tree: OrgTreeNode[], users: User[]): CascaderDataItem[] {
   const root: CascaderDataItem = {
     value: "company|__ALL__",
@@ -83,6 +107,7 @@ function buildCascaderData(tree: OrgTreeNode[], users: User[]): CascaderDataItem
   };
 
   for (const dept of tree) {
+    if (isExcludedTopDepartment(dept.name)) continue;
     const deptNode: CascaderDataItem = {
       value: `dept|${dept.name}`,
       label: dept.shortName,
@@ -310,6 +335,10 @@ function ConsolePage() {
 
   const [dataLoading, setDataLoading] = useState(true);
 
+  // 轨迹内容与异常事件卡片的展开状态
+  const [trajectoryExpanded, setTrajectoryExpanded] = useState(true);
+  const [anomalyExpanded, setAnomalyExpanded] = useState(false);
+
   // 初始化：加载人员和组织架构
   useEffect(() => {
     let cancelled = false;
@@ -512,28 +541,11 @@ function ConsolePage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, userId, dateRange]);
 
-
-  const totalDistance = useMemo(() => {
-    // 过滤公共交通 visits，避免直线距离估算失真
-    const nonPublicVisits = visits.filter(
-      (v) => !(v.trip_type || "").includes("公共交通")
-    );
-    let total = 0;
-    for (let i = 1; i < nonPublicVisits.length; i++) {
-      total += haversine(
-        nonPublicVisits[i - 1].lat,
-        nonPublicVisits[i - 1].lng,
-        nonPublicVisits[i].lat,
-        nonPublicVisits[i].lng
-      );
-    }
-    return total.toFixed(2);
-  }, [visits]);
-
   // 按 approval_id 分组，支持按审批单切换轨迹视图
   const approvalGroups = useMemo<ApprovalGroup[]>(() => {
     const groups = new Map<string, ApprovalGroup>();
     const allKey = "__ALL__";
+    const allRoutesTotalKm = routes.reduce((sum, r) => sum + r.distance_km, 0);
     groups.set(allKey, {
       key: allKey,
       label: "全天总览",
@@ -543,10 +555,10 @@ function ConsolePage() {
       anomalies,
       mileage: mileage ?? {
         user_id: userId || "",
-        totalKm: parseFloat(totalDistance) || 0,
+        totalKm: parseFloat(allRoutesTotalKm.toFixed(2)),
         reportedDistanceKm: 0,
         segmentCount: routes.length,
-        estimatedFuelCost: parseFloat((parseFloat(totalDistance) * 0.8).toFixed(2)) || 0,
+        estimatedFuelCost: parseFloat((allRoutesTotalKm * 0.8).toFixed(2)),
       },
     });
 
@@ -592,7 +604,7 @@ function ConsolePage() {
     }
 
     return Array.from(groups.values());
-  }, [visits, routes, stops, anomalies, mileage, userId, totalDistance]);
+  }, [visits, routes, stops, anomalies, mileage, userId]);
 
   const overviewGroup =
     approvalGroups.find((g) => g.key === "__ALL__") || approvalGroups[0];
@@ -1079,42 +1091,103 @@ function ConsolePage() {
           {/* Anomalies + Map */}
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={8}>
-              <div style={{ padding: 20, backgroundColor: "#fff", borderRadius: 16, height: "100%" }}>
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 12,
-                  }}
-                >
-                  <div style={{ fontSize: 15, fontWeight: 600, color: "#0f1419" }}>异常事件</div>
-                  <div
-                    style={{
-                      fontSize: 24,
-                      fontWeight: 700,
-                      color: overviewGroup.anomalies.length > 0 ? "#F54C5C" : "#27C39D",
-                    }}
-                  >
-                    {overviewGroup.anomalies.length}
+              <div
+                style={{
+                  padding: 20,
+                  backgroundColor: "#fff",
+                  borderRadius: 16,
+                  height: "100%",
+                  display: "flex",
+                  flexDirection: "column",
+                  maxHeight: 500,
+                  overflow: "hidden",
+                }}
+              >
+                <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
+                  {/* 轨迹内容 */}
+                  <div style={{ marginBottom: 40 }}>
+                    <div
+                      onClick={() => setTrajectoryExpanded(!trajectoryExpanded)}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        cursor: "pointer",
+                        marginBottom: trajectoryExpanded ? 12 : 0,
+                        userSelect: "none",
+                      }}
+                    >
+                      <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
+                        轨迹内容
+                      </span>
+                      {trajectoryExpanded ? (
+                        <IconChevronDown style={{ color: "#72808a" }} />
+                      ) : (
+                        <IconChevronRight style={{ color: "#72808a" }} />
+                      )}
+                    </div>
+                    {trajectoryExpanded && (
+                      <TrajectoryTimeline
+                        visits={overviewGroup.visits}
+                        routes={overviewGroup.routes}
+                        anomalies={overviewGroup.anomalies}
+                      />
+                    )}
+                  </div>
+
+                  {/* 异常事件 */}
+                  <div>
+                    <div
+                      onClick={() => setAnomalyExpanded(!anomalyExpanded)}
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        alignItems: "center",
+                        cursor: "pointer",
+                        marginBottom: anomalyExpanded ? 12 : 0,
+                        userSelect: "none",
+                      }}
+                    >
+                      <span style={{ fontSize: 16, fontWeight: 600, color: "#0f1419" }}>
+                        异常事件
+                        {overviewGroup.anomalies.length > 0 && (
+                          <span style={{ fontSize: 13, color: "#F54C5C", marginLeft: 8 }}>
+                            {overviewGroup.anomalies.length}
+                          </span>
+                        )}
+                      </span>
+                      {anomalyExpanded ? (
+                        <IconChevronDown style={{ color: "#72808a" }} />
+                      ) : (
+                        <IconChevronRight style={{ color: "#72808a" }} />
+                      )}
+                    </div>
+                    {anomalyExpanded && (
+                      <>
+                        {overviewGroup.anomalies.length === 0 ? (
+                          <div style={{ color: "#999", fontSize: 14 }}>暂无异常</div>
+                        ) : (
+                          <List
+                            size="small"
+                            dataSource={overviewGroup.anomalies}
+                            split={false}
+                            renderItem={(item) => (
+                            <List.Item style={{ padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
+                              <AnomalyItem item={item} />
+                            </List.Item>
+                          )}
+                          />
+                        )}
+                      </>
+                    )}
                   </div>
                 </div>
-                {overviewGroup.anomalies.length === 0 ? (
-                  <div style={{ color: "#999", fontSize: 14 }}>暂无异常</div>
-                ) : (
-                  <List
-                    size="small"
-                    dataSource={overviewGroup.anomalies}
-                    split={false}
-                    renderItem={(item) => <AnomalyItem item={item} />}
-                  />
-                )}
               </div>
             </Col>
             <Col span={16}>
               <div
                 style={{
-                  padding: 12,
+                  padding: 20,
                   backgroundColor: "#fff",
                   borderRadius: 16,
                   height: "500px",
@@ -1122,7 +1195,7 @@ function ConsolePage() {
                   flexDirection: "column",
                 }}
               >
-                <div style={{ fontSize: 15, fontWeight: 600, color: "#0f1419", marginBottom: 8 }}>
+                <div style={{ fontSize: 16, fontWeight: 600, color: "#0f1419", marginBottom: 12 }}>
                   轨迹地图
                 </div>
                 <div style={{ flex: 1, minHeight: 0, position: "relative" }}>
@@ -1426,113 +1499,6 @@ function OverviewPanel({
     </div>
   );
 }
-
-function haversine(lat1: number, lng1: number, lat2: number, lng2: number): number {
-  const R = 6371;
-  const dLat = ((lat2 - lat1) * Math.PI) / 180;
-  const dLng = ((lng2 - lng1) * Math.PI) / 180;
-  const a =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-}
-
-const anomalySeverityText = {
-  high: "高",
-  medium: "中",
-  low: "低",
-};
-
-const anomalySeverityColor = {
-  high: "red",
-  medium: "orange",
-  low: "green",
-};
-
-function AnomalyItem({ item }: { item: Anomaly }) {
-  const m = item.metadata || {};
-
-  // 涉及两地：mileage_deviation / route_detour
-  if (m.from_location && m.to_location) {
-    const isMileage = item.type === "mileage_deviation";
-    const title = `${m.from_location} → ${m.to_location}`;
-    const description = isMileage
-      ? `填报 ${m.reported_distance_km ?? "-"}km vs 高德 ${
-          m.gaode_distance_km != null ? Math.round(m.gaode_distance_km) : "-"
-        }km · 偏差 ${
-          m.deviation_rate != null ? `${(m.deviation_rate * 100).toFixed(1)}%` : "-"
-        }`
-      : `实际 ${Math.round(m.actual_distance_km ?? 0)}km vs 直线 ${Math.round(
-          m.straight_distance_km ?? 0
-        )}km`;
-    return renderAnomalyRow(item.severity, title, description);
-  }
-
-  // 长时间未移动
-  if (item.type === "long_idle" && item.start_time && item.end_time) {
-    const start = dayjs.tz(item.start_time);
-    const end = dayjs.tz(item.end_time);
-    const minutes = end.diff(start, "minute");
-    const title = `${minutes}min无移动记录`;
-    const description = `${start.format("YYYY-MM-DD HH:mm")} - ${end.format("YYYY-MM-DD HH:mm")}`;
-    return renderAnomalyRow(item.severity, title, description);
-  }
-
-  // 签到次数不足
-  if (item.type === "low_visit_count") {
-    const match = item.description.match(/过去\s*5\s*个工作日累计签到\s*(\d+)\s*次/);
-    const count = match ? match[1] : "?";
-    const title = "签到次数不足";
-    const description = `过去 5 个工作日累计签到 ${count} 次`;
-    return renderAnomalyRow(item.severity, title, description);
-  }
-
-  // 其他异常：按类型给出标题
-  const title = ANOMALY_TYPE_TITLES[item.type] || "异常";
-  return renderAnomalyRow(item.severity, title, item.description);
-}
-
-function renderAnomalyRow(
-  severity: "low" | "medium" | "high",
-  title: string,
-  description: string
-) {
-  return (
-    <List.Item style={{ padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
-      <div style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%" }}>
-        <Tag color={anomalySeverityColor[severity] as any} style={{ flexShrink: 0, marginTop: 2 }}>
-          {anomalySeverityText[severity]}
-        </Tag>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div
-            style={{
-              fontSize: 14,
-              fontWeight: 600,
-              color: "#0f1419",
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-            title={title}
-          >
-            {title}
-          </div>
-          <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{description}</div>
-        </div>
-      </div>
-    </List.Item>
-  );
-}
-
-const ANOMALY_TYPE_TITLES: Record<string, string> = {
-  duplicate_location: "重复签到",
-  long_stop: "停留过长",
-  invalid_trip_type: "异常出行方式",
-  missing_special_reason: "特殊签到缺原因",
-  mileage_reading_invalid: "里程读数异常",
-};
 
 function hasMileageReadingInvalid(
   anomalies: Array<{ type: string }>

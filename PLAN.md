@@ -1,7 +1,7 @@
 # 销售外勤行为分析系统 - 开发计划
 
-> 最后更新：2026-07-14
-> 当前重点：一期反馈需求——统一查询页 Dashboard 下钻、组织排行榜行内展开、部门数据治理（等 HR 输入）。
+> 最后更新：2026-07-15
+> 当前重点：一期反馈需求——统一查询页 Dashboard 下钻、**销售部部门归属治理已完成**、**组织排行榜行内展开已完成**。
 
 ## P0 热修复（当前冲刺）
 
@@ -312,13 +312,60 @@
   - 全公司 / 部门 / 子部门 / 个人周期报告均支持生成
   - 发送目标暂定为当前群聊
 
-- [ ] **F10. 组织排行榜行内展开下钻**
-  - 后端：`/analytics/org-overview` 在 `scope=company` 返回的每个部门项中增加 `hasSubDepartments: boolean`（基于当前日期范围内是否存在 `部门名-xxx` 的拜访记录）。
-  - 前端：`OrgQueryPanel` 的排行榜表格支持行内展开（Semi Table `expandedRowRender`）。
-  - 展开路径：`公司 → 部门 →（子部门 或 人）→ 人`。部门行有子部门时展开子部门，无子部门时直接展开人员。
-  - UI 细节：自定义 stroke 风格展开箭头；嵌套表格缩进 4px；表格尺寸 `size="small"`；内容超出卡片宽度时内部横向滚动，不撑破布局。
-  - 数据口径：本期保持现有 `orgService` 统计逻辑不变；HR 部门树整理后再决定是否需要统一按「用户最终归属部门」聚合。
-  - 销售渠道处理：暂保留在组织排行榜中，不特殊排除。
+- [x] **F9.5 全公司部门归属与角色治理（F10 前置阻塞项）**
+  - 背景：系统需支持全公司员工，不只销售部。部分销售人员因客户群管理同时挂在销售渠道，但其拜访数据应归属销售部子部门。`visits.user_id` 存在姓名/离职/测试账号等异常情况，需要统一对齐钉钉 `userid`。leader 角色需具体到部门，并预留 `super_admin`（老板/管理员）角色。
+  - 目标：
+    - 全公司员工 `user_id` 统一对齐钉钉 `userid`，离职人员标记，测试/车辆账号标记无效；
+    - 仅将「销售渠道」中同时也是销售部子部门员工的数据，按人合并到对应销售部子部门；
+    - 其他部门（软件业务部、产品部、供应链管理部等）数据保持原样；
+    - 在 `users` 表中增加 `leader_dept_ids` 和 `is_super_admin` 字段，并初始化。
+  - 治理步骤（按此顺序执行）：
+    1. **user_id 归一化**（`npm run f9:normalize-user-ids`）：
+       - 精确匹配：visits.user_id = dingtalk_users.userid；
+       - 姓名匹配：visits.user_name = dingtalk_users.name；
+       - 已离职且对不上：标记 `is_resigned = true`；
+       - 车辆/测试账号：标记 `is_invalid = true`；
+       - 同步更新 `routes`、`stops` 的 `user_id`。
+    2. **角色字段初始化**（`npm run f9:init-leader-roles`）：
+       - `users` 表增加 `leader_dept_ids BIGINT[]` 和 `is_super_admin BOOLEAN`；
+       - 从钉钉 `dept_manager_userid_list` 读取各部门 leader；
+       - 设置 `super_admin`：陈盐、陈列。
+    3. **销售渠道数据归并**（`npm run f9:merge-sales-channel`）：
+       - 仅处理 `visits.department` 属于销售渠道相关字符串的记录；
+       - 优先按用户是 leader 的销售部子部门归并，其次按钉钉中属于的销售部子部门归并；
+       - 同时修正所有 `销售部-%` 记录中错误的子部门归属；
+       - 非销售部员工（含客户公司、渠道管理部）的记录保持原样。
+    4. **重算派生数据**：
+       - `npm run recompute:anomalies`（内部会刷新 `risk_summary_cache`）。
+  - 输出物：3 个治理脚本 + 部署执行文档。
+  - 本地验证结果（2026-07-15）：
+    - 同步 144 部门 / 268 用户；
+    - 32 个 visits 用户中，30 精确匹配、2 按姓名匹配、2 已离职、2 无效；
+    - 销售渠道 398 条记录全部归并到销售部子部门；
+    - 初始化 23 位 leader、2 位 super_admin；
+    - 跨部门用户数为 0，销售渠道无残留记录。
+
+- [x] **F10. 组织排行榜行内展开下钻（F9.5 完成后实施）**
+  - 前置条件：F9.5 完成。
+  - 展示规则：
+    - **销售部**：全部子部门都展示，包括暂无数据的海外业务部、软件业务部；
+    - **以下部门不展示**：财务、人力资源、市场营销、销售渠道、销售渠道2、供应商、渠道及销售管理部、研发；
+    - **其他部门**：有外勤数据时展示，无数据时不展示。
+  - 后端：`/analytics/org-overview` 支持按部门节点聚合，返回节点是否有下一级可展开；销售部子部门始终返回，被排除部门过滤，其他部门按当前日期范围内是否有数据决定是否返回。
+    - 实现：`backend/src/services/orgService.ts` 增加 `hasChildren` 字段、`EXCLUDED_TOP_DEPARTMENTS` 过滤、销售部子部门兜底查询。
+  - 前端：`OrgQueryPanel` 的排行榜表格支持行内展开（Semi Table `expandedRowRender`），懒加载下一级数据；展开路径跟随上述规则。
+    - 实现：`frontend/src/components/OrgQueryPanel.tsx` 维护 `expandedKeys`、`childMap`、`loadingChildren`，按需调用 `fetchOrgOverview`。
+  - 交互：行首展开箭头用于行内浏览，名称列继续新标签页下钻；人员名称按普通文字链接展示，不使用 Tag。
+  - UI 细节：Semi UI 默认 stroke 风格展开箭头（`IconChevronRight`/`IconChevronDown`）；嵌套表格缩进 4px；表格尺寸 `size="small"`；内容超出卡片宽度时内部横向滚动，不撑破布局。
+  - 补充修正（级联选择器）：控制台 `ConsolePage` 的查询范围级联选择器与后端 `/analytics/org-tree` 同步应用 `EXCLUDED_TOP_DEPARTMENTS` 过滤，财务、人力资源等被排除部门不再出现在选择器中。
+    - 实现：`backend/src/services/orgService.ts#buildOrgTree` 过滤被排除父部门；`frontend/src/pages/ConsolePage.tsx#buildCascaderData` 再次兜底过滤。
+    - 匹配规则：支持前缀匹配，因此「财务部」「人力资源」「市场营销部」「销售渠道2」「销售渠道-xxx」等变体均会被过滤。
+  - 本地验证结果（2026-07-15）：
+    - 公司视角返回销售部（置顶）、供应链管理部、产品部；
+    - 销售部展开返回 7 个子部门（含海外业务部、软件业务部 0 数据）；
+    - 子部门展开返回人员列表；
+    - `/analytics/org-tree` 仅返回产品部、供应链管理部、销售部；
+    - 前后端 `npm run build` 通过。
 
 ### 架构落地后待继续细化的原始需求
 
@@ -326,7 +373,7 @@
 
 - [ ] **手动同步会失败**：排查钉钉同步失败根因，增加错误提示与重试机制。
 - [ ] **首页布局优化**：Dashboard 进一步突出热力图，优化信息层级。
-- [ ] **单人单日轨迹内容展示**：把「异常事件」扩展为「轨迹内容 & 异常」，展示起点/途径点/终点、停留时长，<30min 停留标异常。
+- [x] **单人单日轨迹内容展示**：把「异常事件」扩展为「轨迹内容 & 异常」，展示起点/途径点/终点、客户名称、相邻点高德距离；异常事件拆分为「轨迹内容」和「异常事件」两个区块；Timeline 上仅展示可解释清楚的异常 tag（里程异常、异常出行、缺原因）。详见下方「轨迹内容 & 异常卡片设计」。
 - [ ] **住址/办公室白名单**：管理员维护白名单地址/坐标，重复签到检测时排除。
 - [ ] **周期总览导出并发钉钉**：个人/组织报告均支持发送到当前群聊。
 - [ ] **日历视图页面优化**：调整单日视图布局。
@@ -339,6 +386,63 @@
 - **个人单独发送钉钉**：延后。
 - **新的高德 API 调用**：本期不涉及。
 - **车辆 / 油卡 / 油耗模型**：维持暂缓状态。
+
+---
+
+## 已完成的细化设计：轨迹内容 & 异常卡片
+
+> 完成时间：2026-07-14
+> 相关文件：`frontend/src/components/TrajectoryTimeline.tsx`、`frontend/src/pages/ConsolePage.tsx`
+
+### 设计结论
+
+1. **卡片结构**
+   - 左侧卡片标题改为「轨迹内容」
+   - 内部分为「轨迹内容」和「异常事件」两个可折叠区块
+   - 「轨迹内容」默认展开，右侧显示 stroke 风格展开/收起 icon
+   - 「异常事件」默认收起，右侧显示 stroke 风格展开/收起 icon，展开后展示当天异常列表
+   - 轨迹内容使用 Timeline 组件，节点标记与右侧地图 marker 完全对应
+
+2. **Timeline 节点字段**
+   - 时间：`HH:mm`（不显示秒）
+   - 地址：`visit.address` 或 `visit.location_name`，超过 20 字省略，hover 显示全部
+   - 客户名称：`visit.customer_name`（有则展示）
+   - 下一段距离：`routes.distance_km`，用灰色 tag 展示
+   - 起/途/终 mark 颜色与地图一致：起=绿 `#52c41a`、途=蓝 `#1890ff`、终=红 `#ff4d4f`、公=紫 `#722ed1`
+
+3. **Timeline 异常 tag**
+   - 橙色主题（浅橙背景 `#fff7e6`、橙边框 `#ffbb96`、橙文字 `#fa8c16`）
+   - 所有异常 tag 统一样式，无 icon
+   - hover tag 展示详情
+   - 仅展示三类 tag：
+     - 里程异常（合并 `mileage_deviation` / `route_detour` / `mileage_reading_invalid`）
+     - 异常出行（`invalid_trip_type`）
+     - 缺原因（`missing_special_reason`）
+
+4. **不展示的异常（保留在异常事件列表）**
+   - 停留过长 / 长时间未移动：打卡时间无法区分到达/离开，口径不清
+   - 重复签到：需要住址/办公室白名单
+   - 拜访量不足：跨日期聚合，不适合单日 Timeline
+
+### 后端规则清理
+
+- [x] 删除 `route_detour` 异常规则，弃用两点直线距离
+- [x] `mileage_deviation` 改名为「里程异常」，权重调整为 0.30
+- [x] 清理 Excel 上传结果中的 `totalDistanceKm` 直线距离摘要
+- [x] 清理 `ConsolePage.tsx` 中的直线距离 fallback 计算
+- [x] 新增 `backend/scripts/recomputeAnomalies.ts`，用于重新跑历史异常检测
+- [ ] 待执行：本地/线上分别运行 `npm run recompute:anomalies`
+
+### 待业务同事补充的规则
+
+- [ ] 停留时长/停留过长口径：打卡时间是到达还是离开，是否需要 30 分钟阈值
+- [ ] 重复签到白名单：住址/办公室地址排除
+- [ ] 异常出行方式阈值：目前 5 km 是否合适
+
+### 数据治理方向
+
+- 后续治理目标：**一个成员对应一个部门**
+- 当前跨部门记录先保留，等 HR 部门树整理后再统一处理
 
 ---
 

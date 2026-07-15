@@ -20,7 +20,6 @@ interface UploadResponse {
   rawInserted?: number;
   normalizedInserted?: number;
   skipped?: number;
-  totalDistanceKm?: number;
   preview?: ParsedVisit[];
   isDingTalk?: boolean;
   geocodeFailures?: GeocodeFailure[];
@@ -95,7 +94,6 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
       rawInserted: processResult.rawInserted,
       normalizedInserted: processResult.normalizedInserted,
       skipped: processResult.skipped,
-      totalDistanceKm: processResult.totalDistanceKm,
       geocodeFailures: processResult.geocodeFailures,
       geocodeFailureSamples: processResult.geocodeFailures.slice(0, 5),
     };

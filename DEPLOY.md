@@ -229,6 +229,57 @@ docker compose -f docker-compose.ghcr.yml up -d
 
 数据库数据会保留，不需要重新导入。
 
+### 本次更新（轨迹内容 & 异常卡片）需额外执行
+
+本次后端改动删除了 `route_detour` 异常规则，并合并了里程相关异常口径。部署后需要重新跑历史异常检测，否则旧数据仍会保留已废弃的「路径绕行」异常：
+
+```bash
+cd /root/sales-map
+# 进入 backend 容器执行重跑脚本（基于已有 routes 数据，不会重新调用高德 API）
+docker exec -it sales-map-backend npm run recompute:anomalies
+```
+
+如果希望同时重新计算所有 routes（会调用高德 API，耗时较长），可执行：
+
+```bash
+docker exec -it sales-map-backend npm run recompute:routes
+# 然后再重新跑异常
+docker exec -it sales-map-backend npm run recompute:anomalies
+```
+
+本地开发环境也需要单独执行一次上述命令。
+
+---
+
+## F9.5 部门归属与角色治理（生产环境执行一次）
+
+本次治理涉及 `visits.user_id`、`visits.department`、`users` 表及派生数据。部署新版本后，需要在生产环境按以下顺序执行一次：
+
+```bash
+cd /root/sales-map
+
+# 1. 先同步最新钉钉通讯录
+docker exec -it sales-map-backend npm run sync:contacts
+
+# 2. user_id 归一化
+docker exec -it sales-map-backend npm run f9:normalize-user-ids
+
+# 3. 初始化 leader / super_admin
+docker exec -it sales-map-backend npm run f9:init-leader-roles
+
+# 4. 销售渠道数据并入销售部
+docker exec -it sales-map-backend npm run f9:merge-sales-channel
+
+# 5. 重算异常与风险缓存
+docker exec -it sales-map-backend npm run recompute:anomalies
+```
+
+**注意**：
+- 执行前建议备份数据库；
+- 如果生产环境已有历史数据且 `visits.user_id` 已经对齐钉钉 userid，第 2 步会跳过大部分记录；
+- 第 4 步会把「销售渠道」中同时也是销售部员工的数据，按人合并到对应的销售部子部门；
+- 第 5 步会基于新的 `user_id` / `department` 重新计算异常事件和风险摘要，不会重新调用高德 API。
+
 ---
 
 ## 常见问题

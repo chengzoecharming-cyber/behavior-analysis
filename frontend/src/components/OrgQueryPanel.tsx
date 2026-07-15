@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { Row, Col, Table, Spin, Typography } from "@douyinfe/semi-ui";
+import { useEffect, useMemo, useState, useCallback } from "react";
+import { Row, Col, Table, Spin, Typography, Tag } from "@douyinfe/semi-ui";
 import dayjs from "dayjs";
 import { fetchOrgOverview, OrgOverviewResponse, OrgRankingItem } from "../api";
 import HeatMapContainer from "./HeatMapContainer";
@@ -41,9 +41,34 @@ function formatKm(value: number): string {
   return `${Math.round(value)}`;
 }
 
+function buildConsoleHref(record: OrgRankingItem, start: string, end: string): string {
+  const params = new URLSearchParams();
+  params.set("start", start);
+  params.set("end", end);
+  if (record.level === "person") {
+    params.set("user", record.key);
+  } else {
+    params.set("scope", record.level === "department" ? "department" : "sub_department");
+    params.set("node", record.key);
+  }
+  return `/console?${params.toString()}`;
+}
+
 function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<OrgOverviewResponse | null>(null);
+
+  // 行内展开状态
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const [childMap, setChildMap] = useState<Record<string, OrgRankingItem[]>>({});
+  const [loadingChildren, setLoadingChildren] = useState<Set<string>>(new Set());
+
+  // 当查询条件变化时重置展开状态
+  useEffect(() => {
+    setExpandedKeys(new Set());
+    setChildMap({});
+    setLoadingChildren(new Set());
+  }, [scope, nodeName, start, end]);
 
   useEffect(() => {
     setLoading(true);
@@ -92,52 +117,131 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     return (data.stats.totalEstimatedKm * 0.8).toFixed(2);
   }, [data]);
 
-  const rankingColumns = [
-    {
-      title: "名称",
-      dataIndex: "name",
-      render: (_: any, record: OrgRankingItem) => {
-        const params = new URLSearchParams();
-        params.set("start", start);
-        params.set("end", end);
-        if (record.level === "person") {
-          params.set("user", record.key);
-        } else if (record.level === "department") {
-          params.set("scope", "department");
-          params.set("node", record.key);
-        } else if (record.level === "sub_department") {
-          params.set("scope", "sub_department");
-          params.set("node", record.key);
+  // 懒加载下一级数据
+  const loadChildren = useCallback(
+    async (record: OrgRankingItem) => {
+      if (record.level === "person" || childMap[record.key] || loadingChildren.has(record.key)) {
+        return;
+      }
+      const childScope = record.level === "department" ? "department" : "sub_department";
+
+      setLoadingChildren((prev) => {
+        const next = new Set(prev);
+        next.add(record.key);
+        return next;
+      });
+
+      try {
+        const res = await fetchOrgOverview(childScope, record.key, start, end);
+        setChildMap((prev) => ({ ...prev, [record.key]: res.ranking }));
+      } catch (err) {
+        console.error("Failed to load children for", record.key, err);
+      } finally {
+        setLoadingChildren((prev) => {
+          const next = new Set(prev);
+          next.delete(record.key);
+          return next;
+        });
+      }
+    },
+    [childMap, loadingChildren, start, end]
+  );
+
+  const handleExpand = useCallback(
+    (expanded?: boolean, record?: any) => {
+      if (!record || !record.key) return;
+      setExpandedKeys((prev) => {
+        const next = new Set(prev);
+        if (expanded) {
+          next.add(record.key);
+          loadChildren(record as OrgRankingItem);
+        } else {
+          next.delete(record.key);
         }
-        const href = `/console?${params.toString()}`;
-        return (
-          <a
-            href={href}
-            onClick={(e) => {
-              e.preventDefault();
-              window.open(href, "_blank");
-            }}
-          >
-            {record.name}
-          </a>
-        );
+        return next;
+      });
+    },
+    [loadChildren]
+  );
+
+  const renderName = useCallback(
+    (record: OrgRankingItem) => {
+      const href = buildConsoleHref(record, start, end);
+      return (
+        <a
+          href={href}
+          onClick={(e) => {
+            e.preventDefault();
+            window.open(href, "_blank");
+          }}
+        >
+          {record.level === "person" ? (
+            <span style={{ color: "#0066ff" }}>{record.name}</span>
+          ) : (
+            <Tag style={{ cursor: "pointer" }}>{record.name}</Tag>
+          )}
+        </a>
+      );
+    },
+    [start, end]
+  );
+
+  const rankingColumns = useMemo(
+    () => [
+      {
+        title: "名称",
+        dataIndex: "name",
+        render: (_: any, record: OrgRankingItem) => renderName(record),
       },
+      {
+        title: "拜访次数",
+        dataIndex: "visitCount",
+        sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
+          (a?.visitCount ?? 0) - (b?.visitCount ?? 0),
+      },
+      {
+        title: "填报/估算里程",
+        dataIndex: "reportedKm",
+        render: (_: any, record: OrgRankingItem) =>
+          `${formatKm(record.reportedKm)} / ${formatKm(record.estimatedKm)}`,
+        sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
+          (a?.reportedKm ?? 0) - (b?.reportedKm ?? 0),
+      },
+    ],
+    [renderName]
+  );
+
+  const expandedRowRender = useCallback(
+    (record?: OrgRankingItem) => {
+      if (!record) return null;
+      const children = childMap[record.key];
+      if (loadingChildren.has(record.key) || !children) {
+        return (
+          <div style={{ padding: "8px 0 8px 4px" }}>
+            <Spin size="small" />
+          </div>
+        );
+      }
+      return (
+        <div style={{ paddingLeft: 4 }}>
+          <Table
+            columns={rankingColumns}
+            dataSource={children}
+            pagination={false}
+            rowKey="key"
+            size="small"
+            showHeader={false}
+            scroll={{ x: "max-content" }}
+            expandedRowRender={expandedRowRender}
+            rowExpandable={(r?: OrgRankingItem) => !!r?.hasChildren}
+            expandedRowKeys={Array.from(expandedKeys)}
+            onExpand={handleExpand}
+          />
+        </div>
+      );
     },
-    {
-      title: "拜访次数",
-      dataIndex: "visitCount",
-      sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
-        (a?.visitCount ?? 0) - (b?.visitCount ?? 0),
-    },
-    {
-      title: "填报/估算里程",
-      dataIndex: "reportedKm",
-      render: (_: any, record: OrgRankingItem) =>
-        `${formatKm(record.reportedKm)} / ${formatKm(record.estimatedKm)}`,
-      sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
-        (a?.reportedKm ?? 0) - (b?.reportedKm ?? 0),
-    },
-  ];
+    [childMap, loadingChildren, rankingColumns, expandedKeys, handleExpand]
+  );
 
   if (loading) {
     return (
@@ -275,6 +379,12 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
                 dataSource={data.ranking}
                 pagination={false}
                 rowKey="key"
+                size="small"
+                scroll={{ x: "max-content" }}
+                expandedRowRender={expandedRowRender}
+                rowExpandable={(record?: OrgRankingItem) => !!record?.hasChildren}
+                expandedRowKeys={Array.from(expandedKeys)}
+                onExpand={handleExpand}
               />
             </div>
           </div>

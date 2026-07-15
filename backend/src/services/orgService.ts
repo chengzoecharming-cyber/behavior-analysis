@@ -2,6 +2,31 @@ import { pool } from "../db";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { formatBeijingDate } from "../utils/timezone";
 
+/** F10：公司视角排行榜中不展示的顶层部门 */
+const EXCLUDED_TOP_DEPARTMENTS = new Set([
+  "财务",
+  "人力资源部",
+  "市场营销",
+  "销售渠道",
+  "销售渠道2",
+  "供应商",
+  "渠道及销售管理部",
+  "研发部",
+]);
+
+/** 销售部在业务口径中的固定名称 */
+const SALES_DEPARTMENT_NAME = "销售部";
+
+/** 判断顶层部门是否应被排除（支持「部」后缀、子部门前缀等变体） */
+function isExcludedTopDepartment(name: string): boolean {
+  for (const excluded of EXCLUDED_TOP_DEPARTMENTS) {
+    if (name.startsWith(excluded)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 /**
  * 组织架构服务
  *
@@ -40,6 +65,8 @@ export interface OrgRankingItem {
   estimatedKm: number;
   stopMinutes: number;
   anomalyCount: number;
+  /** 该节点是否还有可展开的下一级 */
+  hasChildren: boolean;
 }
 
 export interface OrgTrendItem {
@@ -96,6 +123,7 @@ export async function buildOrgTree(): Promise<OrgTreeNode[]> {
     if (segments.length === 1) {
       // 没有子部门的叶子节点
       const name = segments[0];
+      if (isExcludedTopDepartment(name)) continue;
       if (!roots.has(name)) {
         roots.set(name, {
           name,
@@ -107,6 +135,7 @@ export async function buildOrgTree(): Promise<OrgTreeNode[]> {
       }
     } else {
       const parentName = segments[0];
+      if (isExcludedTopDepartment(parentName)) continue;
       const childName = segments.slice(1).join("-");
 
       if (!roots.has(parentName)) {
@@ -188,6 +217,60 @@ async function getUserIdsUnderNode(nodeName: string): Promise<string[]> {
     [nodeName]
   );
   return result.rows.map((r) => r.user_id);
+}
+
+/**
+ * 获取销售部在钉钉中的 dept_id。
+ */
+async function getSalesDeptId(): Promise<number | null> {
+  const result = await pool.query(
+    `SELECT dept_id FROM dingtalk_departments WHERE name = $1 LIMIT 1`,
+    [SALES_DEPARTMENT_NAME]
+  );
+  if (result.rows.length === 0) return null;
+  return parseInt(result.rows[0].dept_id, 10);
+}
+
+/**
+ * 获取销售部下的所有子部门名称（按钉钉通讯录）。
+ * 若钉钉表未同步，则退而求其次从 visits.department 解析。
+ */
+async function getSalesSubDepartments(): Promise<string[]> {
+  const salesDeptId = await getSalesDeptId();
+  if (salesDeptId) {
+    const result = await pool.query(
+      `SELECT name FROM dingtalk_departments WHERE parent_id = $1 ORDER BY name`,
+      [salesDeptId]
+    );
+    if (result.rows.length > 0) {
+      return result.rows.map((r) => String(r.name));
+    }
+  }
+
+  // 兜底：从 visits 解析
+  const result = await pool.query(
+    `SELECT DISTINCT SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) AS sub_name
+     FROM visits
+     WHERE department LIKE $1 || '-%'
+     ORDER BY sub_name`,
+    [SALES_DEPARTMENT_NAME]
+  );
+  return result.rows.map((r) => String(r.sub_name)).filter(Boolean);
+}
+
+/**
+ * 判断指定节点在指定日期范围内是否还有下一级可展开。
+ * - 人员节点：永远无
+ * - 父部门/子部门：看其下是否有用户（不限于日期范围，保证展开入口稳定）
+ */
+async function nodeHasChildren(nodeName: string, level: "department" | "sub_department"): Promise<boolean> {
+  if (level === "sub_department") {
+    const userIds = await getUserIdsByOrgNode(nodeName);
+    return userIds.length > 0;
+  }
+  // department 级别：有直属用户 或 有子部门用户
+  const userIds = await getUserIdsUnderNode(nodeName);
+  return userIds.length > 0;
 }
 
 /**
@@ -364,7 +447,7 @@ async function computeRanking(
   userIds: string[]
 ): Promise<OrgRankingItem[]> {
   if (scope === "company") {
-    // 按父部门分组
+    // 按父部门分组；过滤白名单，并强制保留销售部
     const result = await pool.query(
       `SELECT
          SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) AS dept_name,
@@ -378,12 +461,15 @@ async function computeRanking(
       [startDate, endDate, userIds]
     );
 
-    const items: OrgRankingItem[] = [];
+    // 收集有数据的非排除父部门
+    const itemMap = new Map<string, OrgRankingItem>();
     for (const row of result.rows) {
-      const deptName = row.dept_name;
+      const deptName = String(row.dept_name);
+      if (isExcludedTopDepartment(deptName)) continue;
+
       const childUserIds = await getUserIdsUnderNode(deptName);
       const childStats = await getScopeStats(childUserIds, startDate, endDate);
-      items.push({
+      itemMap.set(deptName, {
         key: deptName,
         name: deptName,
         level: "department",
@@ -393,13 +479,93 @@ async function computeRanking(
         estimatedKm: childStats.estimatedKm,
         stopMinutes: childStats.stopMinutes,
         anomalyCount: childStats.anomalyCount,
+        hasChildren: await nodeHasChildren(deptName, "department"),
       });
     }
-    return items;
+
+    // 销售部始终展示，即使没有数据
+    if (!itemMap.has(SALES_DEPARTMENT_NAME)) {
+      const salesUserIds = await getUserIdsUnderNode(SALES_DEPARTMENT_NAME);
+      const salesStats = await getScopeStats(salesUserIds, startDate, endDate);
+      itemMap.set(SALES_DEPARTMENT_NAME, {
+        key: SALES_DEPARTMENT_NAME,
+        name: SALES_DEPARTMENT_NAME,
+        level: "department",
+        visitCount: 0,
+        employeeCount: 0,
+        reportedKm: salesStats.reportedKm,
+        estimatedKm: salesStats.estimatedKm,
+        stopMinutes: salesStats.stopMinutes,
+        anomalyCount: salesStats.anomalyCount,
+        hasChildren: true, // 销售部固定可展开
+      });
+    } else {
+      // 确保销售部标记为可展开
+      itemMap.get(SALES_DEPARTMENT_NAME)!.hasChildren = true;
+    }
+
+    // 销售部置顶，其余按拜访量降序
+    const salesItem = itemMap.get(SALES_DEPARTMENT_NAME)!;
+    itemMap.delete(SALES_DEPARTMENT_NAME);
+    const sorted = Array.from(itemMap.values()).sort((a, b) => b.visitCount - a.visitCount);
+    return [salesItem, ...sorted];
   }
 
   if (scope === "department") {
-    // 按子部门分组
+    // 销售部：展示全部子部门（包括暂无数据的）
+    if (nodeName === SALES_DEPARTMENT_NAME) {
+      const salesSubDepts = await getSalesSubDepartments();
+      const fullSubDeptNames = salesSubDepts.map((n) => `${SALES_DEPARTMENT_NAME}-${n}`);
+
+      // 查询这些子部门在日期范围内的实际数据
+      const result = await pool.query(
+        `SELECT
+           SPLIT_PART(department, ',', 1) AS sub_dept_name,
+           COUNT(*) AS visit_count,
+           COUNT(DISTINCT user_id) AS employee_count
+         FROM visits
+         WHERE business_date >= $1::date AND business_date <= $2::date
+           AND user_id = ANY($3)
+           AND SPLIT_PART(department, ',', 1) LIKE $4 || '-%'
+         GROUP BY sub_dept_name
+         ORDER BY visit_count DESC`,
+        [startDate, endDate, userIds, nodeName]
+      );
+
+      const dataMap = new Map<string, { visitCount: number; employeeCount: number }>();
+      for (const row of result.rows) {
+        dataMap.set(String(row.sub_dept_name), {
+          visitCount: parseInt(row.visit_count, 10),
+          employeeCount: parseInt(row.employee_count, 10),
+        });
+      }
+
+      const items: OrgRankingItem[] = [];
+      for (const fullName of fullSubDeptNames) {
+        const data = dataMap.get(fullName);
+        const childUserIds = await getUserIdsByOrgNode(fullName);
+        const childStats = await getScopeStats(childUserIds, startDate, endDate);
+        items.push({
+          key: fullName,
+          name: fullName.replace(`${nodeName}-`, ""),
+          level: "sub_department",
+          visitCount: data?.visitCount ?? 0,
+          employeeCount: data?.employeeCount ?? 0,
+          reportedKm: childStats.reportedKm,
+          estimatedKm: childStats.estimatedKm,
+          stopMinutes: childStats.stopMinutes,
+          anomalyCount: childStats.anomalyCount,
+          hasChildren: await nodeHasChildren(fullName, "sub_department"),
+        });
+      }
+      // 有数据的在前，无数据的在后，均保持内部名称排序
+      return items.sort((a, b) => {
+        if (b.visitCount !== a.visitCount) return b.visitCount - a.visitCount;
+        return a.name.localeCompare(b.name, "zh-CN");
+      });
+    }
+
+    // 其它父部门：仅展示有数据的子部门
     const result = await pool.query(
       `SELECT
          SPLIT_PART(department, ',', 1) AS sub_dept_name,
@@ -429,6 +595,7 @@ async function computeRanking(
         estimatedKm: childStats.estimatedKm,
         stopMinutes: childStats.stopMinutes,
         anomalyCount: childStats.anomalyCount,
+        hasChildren: await nodeHasChildren(subDeptName, "sub_department"),
       });
     }
     return items;
@@ -461,6 +628,7 @@ async function computeRanking(
       estimatedKm: childStats.estimatedKm,
       stopMinutes: childStats.stopMinutes,
       anomalyCount: childStats.anomalyCount,
+      hasChildren: false,
     });
   }
   return items;

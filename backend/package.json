@@ -8,7 +8,14 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "ts-node scripts/seed.ts",
-    "fix:names": "ts-node scripts/fixUserNames.ts"
+    "fix:names": "ts-node scripts/fixUserNames.ts",
+    "recompute:anomalies": "ts-node scripts/recomputeAnomalies.ts",
+    "recompute:routes": "ts-node scripts/recomputeMileageAndRoutes.ts",
+    "audit:org": "ts-node scripts/orgDataAudit.ts",
+    "sync:contacts": "ts-node scripts/syncDingTalkContacts.ts",
+    "f9:normalize-user-ids": "ts-node scripts/f9NormalizeUserIds.ts",
+    "f9:merge-sales-channel": "ts-node scripts/f9MergeSalesChannelVisits.ts",
+    "f9:init-leader-roles": "ts-node scripts/f9InitLeaderRoles.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -15,7 +15,6 @@ export function UploadPanel() {
     success: boolean;
     rawInserted: number;
     normalizedInserted: number;
-    totalDistanceKm: number;
     geocodeFailures?: GeocodeFailure[];
     geocodeFailureSamples?: GeocodeFailure[];
   } | null>(null);
@@ -137,7 +136,7 @@ export function UploadPanel() {
           <Alert
             style={{ marginTop: 16, borderRadius: 12 }}
             message="导入成功"
-            description={`RAW 层写入 ${result.rawInserted} 条，NORMALIZED 层写入 ${result.normalizedInserted} 条，预估总里程 ${result.totalDistanceKm} km`}
+            description={`RAW 层写入 ${result.rawInserted} 条，NORMALIZED 层写入 ${result.normalizedInserted} 条`}
             type="success"
             showIcon
           />

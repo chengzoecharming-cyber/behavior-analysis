@@ -1,5 +1,4 @@
 import { Visit, Stop, Route, Anomaly } from "../types";
-import { haversineDistance } from "./distance";
 import { computeMileageSegments } from "./mileageAnalysis";
 import { getEnabledAnomalyWeights, AnomalyWeight } from "./anomalyWeights";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
@@ -201,54 +200,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
-  // 5. 路径异常绕行
-  const detourConfig = weights["route_detour"];
-  if (detourConfig) {
-    const threshold = getThreshold(detourConfig, 2.0);
-    for (const route of routesToday) {
-      const from = visitsToday.find((v) => v.id === route.from_visit_id);
-      const to = visitsToday.find((v) => v.id === route.to_visit_id);
-      if (!from || !to) continue;
-
-      // 公共交通不生成 route，此处额外保险
-      if (
-        from.trip_type?.includes("公共交通") ||
-        to.trip_type?.includes("公共交通")
-      ) {
-        continue;
-      }
-
-      if (from.lat == null || from.lng == null || to.lat == null || to.lng == null) {
-        continue;
-      }
-      const straightKm = haversineDistance(from.lat, from.lng, to.lat, to.lng);
-      if (straightKm > 0.5 && route.distance_km > straightKm * threshold) {
-        anomalies.push({
-          id: 0,
-          user_id: ctx.userId,
-          type: "route_detour",
-          description: `从「${from.location_name}」到「${to.location_name}」实际行驶 ${route.distance_km.toFixed(
-            2
-          )} km，直线距离 ${straightKm.toFixed(2)} km，疑似绕行`,
-          start_time: null,
-          end_time: null,
-          lat: null,
-          lng: null,
-          severity: route.distance_km > straightKm * threshold * 1.5 ? "high" : "medium",
-          related_visit_ids: [from.id, to.id],
-          metadata: {
-            from_location: from.location_name,
-            to_location: to.location_name,
-            actual_distance_km: route.distance_km,
-            straight_distance_km: straightKm,
-          },
-          created_at: new Date(),
-        });
-      }
-    }
-  }
-
-  // 6. 填报里程与高德推荐里程偏差过大
+  // 5. 填报里程与高德推荐里程偏差过大
   const mileageConfig = weights["mileage_deviation"];
   if (mileageConfig) {
     const threshold = getThreshold(mileageConfig, 0.3);
@@ -279,7 +231,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
-  // 7. 异常出行方式：公共交通/特殊签到但有较长填报里程
+  // 6. 异常出行方式：公共交通/特殊签到但有较长填报里程
   const invalidTripConfig = weights["invalid_trip_type"];
   if (invalidTripConfig) {
     const threshold = getThreshold(invalidTripConfig, 5);
@@ -308,7 +260,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
-  // 9. 里程读数异常（出发/终点读数缺失、非单调递增、超过上限）
+  // 7. 里程读数异常（出发/终点读数缺失、非单调递增、超过上限）
   const mileageReadingConfig = weights["mileage_reading_invalid"];
   if (mileageReadingConfig) {
     anomalies.push(...detectMileageReadingInvalid(visitsToday));

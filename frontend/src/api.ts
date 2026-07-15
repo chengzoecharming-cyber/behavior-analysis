@@ -242,6 +242,8 @@ export interface OrgRankingItem {
   estimatedKm: number;
   stopMinutes: number;
   anomalyCount: number;
+  /** 该节点是否还有可展开的下一级 */
+  hasChildren: boolean;
 }
 
 export interface OrgTrendItem {
@@ -377,7 +379,6 @@ export async function uploadExcel(file: File): Promise<{
   success: boolean;
   rawInserted: number;
   normalizedInserted: number;
-  totalDistanceKm: number;
   geocodeFailures?: GeocodeFailure[];
   geocodeFailureSamples?: GeocodeFailure[];
 }> {
@@ -407,7 +408,6 @@ export interface DingTalkSyncResult {
   rawInserted: number;
   normalizedInserted: number;
   skipped: number;
-  totalDistanceKm: number;
   geocodeFailures: { row: number; location: string; user: string }[];
   error?: string;
 }

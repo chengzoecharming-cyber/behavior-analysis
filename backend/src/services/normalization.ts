@@ -1,7 +1,6 @@
 import * as XLSX from "xlsx";
 import { pool } from "../db";
 import { ParsedVisit } from "../types";
-import { totalDistanceKm } from "./distance";
 import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
 
 export interface GeocodeFailure {
@@ -19,7 +18,6 @@ export interface ProcessResult {
   rawInserted: number;
   normalizedInserted: number;
   skipped: number;
-  totalDistanceKm: number;
   geocodeFailures: GeocodeFailure[];
   affectedUserDates: AffectedUserDate[];
 }
@@ -154,7 +152,6 @@ export async function processParsedVisits(
   const insertedRaw: number[] = [];
   const insertedNormalized: number[] = [];
   let skippedCount = 0;
-  const userPointsMap: Record<string, { lat: number; lng: number }[]> = {};
   const geocodeFailures: GeocodeFailure[] = [];
   const affectedUserDates = new Set<string>();
   const businessDates = await computeBusinessDates(parsedVisits, source);
@@ -250,23 +247,12 @@ export async function processParsedVisits(
     affectedUserDates.add(
       JSON.stringify({ user_id: userId, business_date: businessDates[i] })
     );
-
-    if (!userPointsMap[userId]) userPointsMap[userId] = [];
-    if (lat != null && lng != null) {
-      userPointsMap[userId].push({ lat, lng });
-    }
-  }
-
-  let totalDistance = 0;
-  for (const uid of Object.keys(userPointsMap)) {
-    totalDistance += totalDistanceKm(userPointsMap[uid]);
   }
 
   return {
     rawInserted: insertedRaw.length,
     normalizedInserted: insertedNormalized.length,
     skipped: skippedCount,
-    totalDistanceKm: parseFloat(totalDistance.toFixed(2)),
     geocodeFailures,
     affectedUserDates: Array.from(affectedUserDates).map((s) => JSON.parse(s)),
   };
