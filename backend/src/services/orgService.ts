@@ -293,7 +293,7 @@ function departmentMatchesNode(department: string | null, nodeName: string): boo
 /**
  * 获取指定范围下的用户ID列表
  */
-async function resolveUserIdsForScope(
+export async function resolveUserIdsForScope(
   scope: "company" | "department" | "sub_department",
   nodeName: string
 ): Promise<string[]> {

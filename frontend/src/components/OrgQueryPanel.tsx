@@ -107,6 +107,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     return e.diff(s, "day") + 1;
   }, [start, end]);
 
+  const isSingleDay = dayCount === 1;
+
   const visitFrequency = useMemo(() => {
     if (!data || dayCount <= 0) return "0";
     return (data.stats.totalVisits / dayCount).toFixed(2);
@@ -292,49 +294,51 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         </Col>
       </Row>
 
-      {/* 趋势图 */}
-      <div
-        style={{
-          backgroundColor: "#fff",
-          borderRadius: 16,
-          padding: 20,
-          marginBottom: 16,
-          height: 380,
-          display: "flex",
-          flexDirection: "column",
-        }}
-      >
-        <Title heading={6} style={{ marginBottom: 16 }}>
-          趋势分析
-        </Title>
-        {trendData.length === 0 ? (
-          <div style={{ color: "#999", flex: 1 }}>暂无趋势数据</div>
-        ) : (
-          <div
-            style={{
-              flex: 1,
-              minHeight: 0,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <Suspense fallback={<Spin />}>
-              <OverviewChart
-                data={trendData}
-                height="100%"
-                onDateClick={(date) => {
-                  const params = new URLSearchParams();
-                  params.set("scope", scope);
-                  if (nodeName) params.set("node", nodeName);
-                  params.set("start", date);
-                  params.set("end", date);
-                  window.open(`/console?${params.toString()}`, "_blank");
-                }}
-              />
-            </Suspense>
-          </div>
-        )}
-      </div>
+      {/* 趋势图：仅时间段展示 */}
+      {!isSingleDay && (
+        <div
+          style={{
+            backgroundColor: "#fff",
+            borderRadius: 16,
+            padding: 20,
+            marginBottom: 16,
+            height: 380,
+            display: "flex",
+            flexDirection: "column",
+          }}
+        >
+          <Title heading={6} style={{ marginBottom: 16 }}>
+            趋势分析
+          </Title>
+          {trendData.length === 0 ? (
+            <div style={{ color: "#999", flex: 1 }}>暂无趋势数据</div>
+          ) : (
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <Suspense fallback={<Spin />}>
+                <OverviewChart
+                  data={trendData}
+                  height="100%"
+                  onDateClick={(date) => {
+                    const params = new URLSearchParams();
+                    params.set("scope", scope);
+                    if (nodeName) params.set("node", nodeName);
+                    params.set("start", date);
+                    params.set("end", date);
+                    window.open(`/console?${params.toString()}`, "_blank");
+                  }}
+                />
+              </Suspense>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* 热力图 + 排行榜 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>

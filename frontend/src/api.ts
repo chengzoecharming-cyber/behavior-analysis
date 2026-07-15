@@ -34,12 +34,19 @@ export interface AvailableDate {
 }
 
 export async function fetchAvailableDates(
-  userId: string,
+  options:
+    | { userId: string; scope?: never; node?: never }
+    | { userId?: never; scope: "company" | "department" | "sub_department"; node?: string },
   withAnomaly = false
 ): Promise<AvailableDate[]> {
-  const res = await api.get("/visits/available-dates", {
-    params: { user: userId, with_anomaly: withAnomaly },
-  });
+  const params: Record<string, any> = { with_anomaly: withAnomaly };
+  if (options.userId) {
+    params.user = options.userId;
+  } else {
+    params.scope = options.scope;
+    if (options.node) params.node = options.node;
+  }
+  const res = await api.get("/visits/available-dates", { params });
   // 兼容旧版返回字符串数组
   if (Array.isArray(res.data) && typeof res.data[0] === "string") {
     return res.data.map((d: string) => ({ date: d, has_anomaly: false }));

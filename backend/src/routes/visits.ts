@@ -8,6 +8,7 @@ import {
   formatBeijingDate,
 } from "../utils/timezone";
 import { getCanonicalDepartment } from "../services/departmentAliasService";
+import { resolveUserIdsForScope } from "../services/orgService";
 
 const router = Router();
 
@@ -105,22 +106,36 @@ router.get("/users", async (_req: Request, res: Response) => {
   }
 });
 
-// 获取某用户有数据的日期列表
+// 获取某用户/组织维度有数据的日期列表
 router.get("/available-dates", async (req: Request, res: Response) => {
-  const { user, with_anomaly } = req.query;
-
-  if (!user) {
-    res.status(400).json({ error: "Missing user parameter" });
-    return;
-  }
+  const { user, scope, node, with_anomaly } = req.query;
 
   try {
+    let userIds: string[] = [];
+
+    if (user) {
+      userIds = [user as string];
+    } else if (scope) {
+      const validScope =
+        scope === "department" || scope === "sub_department" ? scope : "company";
+      const nodeName = typeof node === "string" && node ? node : "__ALL__";
+      userIds = await resolveUserIdsForScope(validScope, nodeName);
+    } else {
+      res.status(400).json({ error: "Missing user or scope parameter" });
+      return;
+    }
+
+    if (userIds.length === 0) {
+      res.json([]);
+      return;
+    }
+
     const result = await pool.query(
       `SELECT DISTINCT business_date as date
        FROM visits
-       WHERE user_id = $1 AND business_date IS NOT NULL
+       WHERE user_id = ANY($1::text[]) AND business_date IS NOT NULL
        ORDER BY date DESC`,
-      [user]
+      [userIds]
     );
     const dates = result.rows.map((r) => formatBeijingDate(r.date));
 
@@ -128,8 +143,8 @@ router.get("/available-dates", async (req: Request, res: Response) => {
       const anomalyResult = await pool.query(
         `SELECT DISTINCT anomaly_date as date
          FROM anomalies
-         WHERE user_id = $1 AND anomaly_date IS NOT NULL`,
-        [user]
+         WHERE user_id = ANY($1::text[]) AND anomaly_date IS NOT NULL`,
+        [userIds]
       );
       const anomalyDates = new Set(
         anomalyResult.rows.map((r) => formatBeijingDate(r.date))

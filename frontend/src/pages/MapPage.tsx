@@ -67,7 +67,7 @@ function MapPage() {
       setDate(null);
       return;
     }
-    fetchAvailableDates(userId).then((dates) => {
+    fetchAvailableDates({ userId }).then((dates) => {
       setAvailableDates(dates);
       if (dates.length > 0) {
         setDate(dayjs.tz(dates[0].date));

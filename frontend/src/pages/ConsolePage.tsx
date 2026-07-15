@@ -408,20 +408,25 @@ function ConsolePage() {
     }
   }, [searchParams, users]);
 
-  // 当个人用户变化时，加载可用日期列表
+  // 当查询范围变化时，加载可用日期列表
   useEffect(() => {
-    if (scope !== "person" || !userId) {
-      setAvailableDateInfos([]);
-      return;
+    if (scope === "person") {
+      if (!userId) {
+        setAvailableDateInfos([]);
+        return;
+      }
+      fetchAvailableDates({ userId }, true).then((infos) => {
+        setAvailableDateInfos(infos);
+      });
+    } else {
+      fetchAvailableDates({ scope, node }, true).then((infos) => {
+        setAvailableDateInfos(infos);
+      });
     }
-    fetchAvailableDates(userId, true).then((infos) => {
-      setAvailableDateInfos(infos);
-    });
-  }, [scope, userId]);
+  }, [scope, node, userId]);
 
   // 单日模式下，根据当前 dateRange 和可用日期列表确定选中日期
   useEffect(() => {
-    if (scope !== "person" || !userId) return;
     if (availableDateInfos.length === 0) {
       setSelectedDate(null);
       return;
@@ -434,7 +439,7 @@ function ConsolePage() {
     } else {
       setSelectedDate(null);
     }
-  }, [scope, userId, dateRange, availableDateInfos]);
+  }, [dateRange, availableDateInfos]);
 
   // 个人单日：选中用户或日期变化时自动加载当日数据
   useEffect(() => {
@@ -742,6 +747,7 @@ function ConsolePage() {
   };
 
   const handleToday = () => {
+    if (availableDateInfos.length === 0) return;
     const today = dayjs.tz().format("YYYY-MM-DD");
     // 优先选今天；今天无数据则选最近的有数据日期
     const target =
@@ -851,16 +857,16 @@ function ConsolePage() {
           </Col>
         </Row>
 
-        {scope === "person" && dateRange[0] === dateRange[1] && (
+        {dateRange[0] === dateRange[1] && (
           <Row type="flex" gutter={16} align="middle">
             <Col span={24}>
-              {!userId && <div style={{ color: "#999" }}>请先选择人员</div>}
-
-              {userId && calendarDates.length === 0 && (
-                <div style={{ color: "#999" }}>该员工暂无数据</div>
+              {calendarDates.length === 0 && (
+                <div style={{ color: "#999" }}>
+                  {scope === "person" ? "该员工暂无数据" : "该范围暂无数据"}
+                </div>
               )}
 
-              {userId && calendarDates.length > 0 && (
+              {calendarDates.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                   <button
                     onClick={handleToday}
