@@ -43,6 +43,7 @@ import HeatMapContainer from "../components/HeatMapContainer";
 import OrgQueryPanel from "../components/OrgQueryPanel";
 import TrajectoryTimeline from "../components/TrajectoryTimeline";
 import { AnomalyItem } from "../components/AnomalyItem";
+import DateAxis from "../components/DateAxis";
 import { Suspense, lazy } from "react";
 
 const OverviewChart = lazy(() => import("../components/OverviewChart"));
@@ -50,14 +51,14 @@ const OverviewChart = lazy(() => import("../components/OverviewChart"));
 const MAX_MILEAGE_KM = parseFloat(import.meta.env.VITE_MILEAGE_MAX_KM || "5000");
 
 const ROUTE_COLORS = [
-  "#1890ff",
-  "#fadb14",
-  "#52c41a",
-  "#fa8c16",
-  "#722ed1",
-  "#eb2f96",
-  "#13c2c2",
-  "#f5222d",
+  "#1677ff", // 亮蓝
+  "#9e1068", // 玫红
+  "#135200", // 暗绿
+  "#531dab", // 紫色
+  "#006d75", // 墨青
+  "#262626", // 近黑（作为中性高对比锚点）
+  "#08979c", // 青
+  "#780650", // 深洋红
 ];
 
 interface ApprovalGroup {
@@ -99,6 +100,8 @@ function isExcludedTopDepartment(name: string): boolean {
   return false;
 }
 
+const DIRECT_SUFFIX = "__DIRECT__";
+
 function buildCascaderData(tree: OrgTreeNode[], users: User[]): CascaderDataItem[] {
   const root: CascaderDataItem = {
     value: "company|__ALL__",
@@ -115,6 +118,7 @@ function buildCascaderData(tree: OrgTreeNode[], users: User[]): CascaderDataItem
     };
 
     if (dept.children && dept.children.length > 0) {
+      // 子部门及子部门下人员
       for (const sub of dept.children) {
         const subNode: CascaderDataItem = {
           value: `sub|${dept.name}-${sub.name}`,
@@ -132,6 +136,24 @@ function buildCascaderData(tree: OrgTreeNode[], users: User[]): CascaderDataItem
         }
 
         deptNode.children!.push(subNode);
+      }
+
+      // 父部门直属人员（如总 leader、sub leader）单独放一个「直属」节点
+      const directUserIds = new Set(dept.userIds || []);
+      const directUsers = users.filter((u) => directUserIds.has(u.user_id));
+      if (directUsers.length > 0) {
+        const directNode: CascaderDataItem = {
+          value: `sub|${dept.name}-${DIRECT_SUFFIX}`,
+          label: "直属",
+          children: [],
+        };
+        for (const u of directUsers) {
+          directNode.children!.push({
+            value: `user|${u.user_id}`,
+            label: u.user_name || u.user_id,
+          });
+        }
+        deptNode.children!.push(directNode);
       }
     } else {
       // 没有子部门的父部门，直接把用户挂下面
@@ -171,6 +193,11 @@ function parseCascaderValue(value: string[]): {
     return { scope: "person", userId: id };
   }
   if (type === "sub") {
+    // 「直属」虚拟节点按部门范围查询
+    if (id.endsWith(`-${DIRECT_SUFFIX}`)) {
+      const deptName = id.slice(0, -(DIRECT_SUFFIX.length + 1));
+      return { scope: "department", node: deptName };
+    }
     return { scope: "sub_department", node: id };
   }
   if (type === "dept") {
@@ -215,13 +242,17 @@ function getCascaderValueFromState(
 
   if (scope === "person" && userId) {
     for (const dept of tree) {
-      const targets = dept.children?.length ? dept.children : [dept];
-      for (const target of targets) {
-        if ((target.userIds || []).includes(userId)) {
-          if (dept.children?.length) {
-            return ["company|__ALL__", `dept|${dept.name}`, `sub|${dept.name}-${target.name}`, `user|${userId}`];
-          }
-          return ["company|__ALL__", `dept|${dept.name}`, `user|${userId}`];
+      // 先检查父部门直属人员
+      if ((dept.userIds || []).includes(userId)) {
+        if (dept.children?.length) {
+          return ["company|__ALL__", `dept|${dept.name}`, `sub|${dept.name}-${DIRECT_SUFFIX}`, `user|${userId}`];
+        }
+        return ["company|__ALL__", `dept|${dept.name}`, `user|${userId}`];
+      }
+      // 再检查子部门
+      for (const sub of dept.children || []) {
+        if ((sub.userIds || []).includes(userId)) {
+          return ["company|__ALL__", `dept|${dept.name}`, `sub|${dept.name}-${sub.name}`, `user|${userId}`];
         }
       }
     }
@@ -699,75 +730,7 @@ function ConsolePage() {
     return () => cancelAnimationFrame(animationFrameId);
   }, [playingRoutes]);
 
-  // 日历视图：生成连续日期轴（从最早到最晚有数据日期），无数据置灰
-  const calendarDates = useMemo(() => {
-    if (availableDateInfos.length === 0) return [];
-    const sorted = [...availableDateInfos].sort((a, b) => a.date.localeCompare(b.date));
-    const min = dayjs.tz(sorted[0].date);
-    const max = dayjs.tz(sorted[sorted.length - 1].date);
-    const infoMap = new Map(availableDateInfos.map((i) => [i.date, i]));
-    const dates: AvailableDate[] = [];
-    for (let d = min; d.isBefore(max) || d.isSame(max); d = d.add(1, "day")) {
-      const dateStr = d.format("YYYY-MM-DD");
-      const info = infoMap.get(dateStr);
-      dates.push(info ?? { date: dateStr, has_anomaly: false });
-    }
-    return dates;
-  }, [availableDateInfos]);
-
-  const dateAxisRef = useRef<HTMLDivElement>(null);
-
-  const scrollDateAxis = (direction: "left" | "right") => {
-    if (!dateAxisRef.current) return;
-    const scrollAmount = 200;
-    dateAxisRef.current.scrollBy({
-      left: direction === "left" ? -scrollAmount : scrollAmount,
-      behavior: "smooth",
-    });
-  };
-
-  const jumpMonth = (direction: "prev" | "next") => {
-    if (!selectedDate || availableDateInfos.length === 0) return;
-    const current = dayjs.tz(selectedDate);
-    const targetMonth =
-      direction === "prev" ? current.subtract(1, "month") : current.add(1, "month");
-    const datesInMonth = availableDateInfos
-      .map((i) => i.date)
-      .filter((d) => {
-        const dt = dayjs.tz(d);
-        return dt.year() === targetMonth.year() && dt.month() === targetMonth.month();
-      })
-      .sort();
-    if (datesInMonth.length === 0) return;
-    const target =
-      direction === "prev"
-        ? datesInMonth[datesInMonth.length - 1]
-        : datesInMonth[0];
-    selectDate(target);
-  };
-
-  const handleToday = () => {
-    if (availableDateInfos.length === 0) return;
-    const today = dayjs.tz().format("YYYY-MM-DD");
-    // 优先选今天；今天无数据则选最近的有数据日期
-    const target =
-      availableDateInfos.find((i) => i.date === today)?.date ||
-      availableDateInfos.reduce((prev, curr) =>
-        Math.abs(dayjs.tz(curr.date).diff(today, "day")) <
-        Math.abs(dayjs.tz(prev.date).diff(today, "day"))
-          ? curr
-          : prev
-      ).date;
-    setSelectedDate(target);
-    setDateRange([target, target]);
-    const params = new URLSearchParams(searchParams);
-    params.set("start", target);
-    params.set("end", target);
-    params.delete("date");
-    setSearchParams(params);
-  };
-
-  const selectDate = (dateStr: string) => {
+  const handleSelectDate = (dateStr: string) => {
     if (!availableDateInfos.some((i) => i.date === dateStr)) return;
     setSelectedDate(dateStr);
     setDateRange([dateStr, dateStr]);
@@ -777,22 +740,6 @@ function ConsolePage() {
     params.delete("date");
     setSearchParams(params);
   };
-
-  // 选中日期变化时，自动滚动日期轴让该日期居中可见
-  useEffect(() => {
-    if (!selectedDate || !dateAxisRef.current) return;
-    const timer = setTimeout(() => {
-      const activeBtn = dateAxisRef.current?.querySelector(
-        `[data-date="${selectedDate}"]`
-      ) as HTMLElement | null;
-      if (activeBtn) {
-        activeBtn.scrollIntoView({ behavior: "smooth", inline: "center", block: "nearest" });
-      }
-    }, 50);
-    return () => clearTimeout(timer);
-  }, [selectedDate]);
-
-  const weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"];
 
   const toggleRoutePlaying = (key: string) => {
     setPlayingRoutes((prev) => {
@@ -860,139 +807,12 @@ function ConsolePage() {
         {dateRange[0] === dateRange[1] && (
           <Row type="flex" gutter={16} align="middle">
             <Col span={24}>
-              {calendarDates.length === 0 && (
-                <div style={{ color: "#999" }}>
-                  {scope === "person" ? "该员工暂无数据" : "该范围暂无数据"}
-                </div>
-              )}
-
-              {calendarDates.length > 0 && (
-                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                  <button
-                    onClick={handleToday}
-                    style={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #d9d9d9",
-                      borderRadius: 6,
-                      padding: "4px 12px",
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    今天
-                  </button>
-                  <button
-                    onClick={() => jumpMonth("prev")}
-                    title="上一月"
-                    style={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #d9d9d9",
-                      borderRadius: 6,
-                      padding: "4px 10px",
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    &lt;&lt;
-                  </button>
-                  <button
-                    onClick={() => scrollDateAxis("left")}
-                    style={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #d9d9d9",
-                      borderRadius: 6,
-                      padding: "4px 10px",
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    &lt;
-                  </button>
-                  <div
-                    ref={dateAxisRef}
-                    style={{
-                      display: "flex",
-                      gap: 6,
-                      overflowX: "auto",
-                      flex: 1,
-                      padding: "4px 0",
-                    }}
-                  >
-                    {calendarDates.map((info) => {
-                      const d = dayjs.tz(info.date);
-                      const hasData = availableDateInfos.some((i) => i.date === info.date);
-                      const isActive = selectedDate === info.date;
-                      return (
-                        <button
-                          key={info.date}
-                          data-date={info.date}
-                          onClick={() => selectDate(info.date)}
-                          disabled={!hasData}
-                          style={{
-                            flexShrink: 0,
-                            width: 56,
-                            padding: "6px 0",
-                            borderRadius: 8,
-                            border: "none",
-                            backgroundColor: isActive ? "#1890ff" : hasData ? "#fff" : "#f5f5f5",
-                            color: isActive ? "#fff" : hasData ? "#0f1419" : "#bbb",
-                            cursor: hasData ? "pointer" : "not-allowed",
-                            display: "flex",
-                            flexDirection: "column",
-                            alignItems: "center",
-                            gap: 2,
-                            fontSize: 12,
-                            position: "relative",
-                          }}
-                        >
-                          <span>{weekdayLabels[d.day()]}</span>
-                          <span style={{ fontSize: 14, fontWeight: 600 }}>{d.format("MM-DD")}</span>
-                          {info.has_anomaly && (
-                            <span
-                              style={{
-                                position: "absolute",
-                                top: 2,
-                                right: 2,
-                                width: 6,
-                                height: 6,
-                                borderRadius: "50%",
-                                backgroundColor: "#F54C5C",
-                              }}
-                            />
-                          )}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <button
-                    onClick={() => scrollDateAxis("right")}
-                    style={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #d9d9d9",
-                      borderRadius: 6,
-                      padding: "4px 10px",
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    &gt;
-                  </button>
-                  <button
-                    onClick={() => jumpMonth("next")}
-                    title="下一月"
-                    style={{
-                      backgroundColor: "#fff",
-                      border: "1px solid #d9d9d9",
-                      borderRadius: 6,
-                      padding: "4px 10px",
-                      cursor: "pointer",
-                      fontSize: 13,
-                    }}
-                  >
-                    &gt;&gt;
-                  </button>
-                </div>
-              )}
+              <DateAxis
+                availableDateInfos={availableDateInfos}
+                selectedDate={selectedDate}
+                onSelectDate={handleSelectDate}
+                emptyText={scope === "person" ? "该员工暂无数据" : "该范围暂无数据"}
+              />
             </Col>
           </Row>
         )}
@@ -1133,11 +953,51 @@ function ConsolePage() {
                       )}
                     </div>
                     {trajectoryExpanded && (
-                      <TrajectoryTimeline
-                        visits={overviewGroup.visits}
-                        routes={overviewGroup.routes}
-                        anomalies={overviewGroup.anomalies}
-                      />
+                      <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+                        {routeGroups.length > 1 ? (
+                          routeGroups.map((g) => (
+                            <div key={g.key}>
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 8,
+                                  marginBottom: 12,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width: 10,
+                                    height: 10,
+                                    borderRadius: "50%",
+                                    backgroundColor: g.color,
+                                  }}
+                                />
+                                <span
+                                  style={{
+                                    fontSize: 13,
+                                    fontWeight: 600,
+                                    color: "#0f1419",
+                                  }}
+                                >
+                                  {g.label}
+                                </span>
+                              </div>
+                              <TrajectoryTimeline
+                                visits={g.visits}
+                                routes={g.routes}
+                                anomalies={g.anomalies}
+                              />
+                            </div>
+                          ))
+                        ) : (
+                          <TrajectoryTimeline
+                            visits={overviewGroup.visits}
+                            routes={overviewGroup.routes}
+                            anomalies={overviewGroup.anomalies}
+                          />
+                        )}
+                      </div>
                     )}
                   </div>
 

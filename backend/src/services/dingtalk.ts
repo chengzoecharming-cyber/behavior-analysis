@@ -4,7 +4,7 @@ import { pool } from "../db";
 import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { recomputeDerivedDataForVisits } from "./derivedComputation";
-import { OrgTreeNode } from "./orgService";
+import { OrgTreeNode, isExcludedTopDepartment } from "./orgService";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
 
@@ -171,6 +171,135 @@ export interface DingTalkDepartment {
   auto_add_user?: boolean;
 }
 
+/** 解析钉钉用户返回的 dept_id_list（支持 number[] / JSON 数组字符串 / PostgreSQL 数组文本 / 逗号分隔） */
+function parseDeptIdList(value: string | number[] | undefined | null): number[] {
+  if (!value) return [];
+
+  // 钉钉 API 实际返回的是 number[]
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => (typeof item === "number" ? item : parseInt(String(item), 10)))
+      .filter((n) => !isNaN(n));
+  }
+
+  if (typeof value !== "string") return [];
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+
+  // JSON 数组格式：[1,2,3] 或 ["1","2","3"]
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item: any) => (typeof item === "number" ? item : parseInt(String(item), 10)))
+          .filter((n: number) => !isNaN(n));
+      }
+    } catch {
+      // fall through
+    }
+  }
+
+  // PostgreSQL 数组文本格式：{1,2,3} 或 {"1","2","3"}
+  if (trimmed.startsWith("{") && trimmed.endsWith("}")) {
+    const inner = trimmed.slice(1, -1);
+    return inner
+      .split(",")
+      .map((s) => s.trim().replace(/^"|"$/g, ""))
+      .map((s) => parseInt(s, 10))
+      .filter((n) => !isNaN(n));
+  }
+
+  // 逗号分隔：1,2,3
+  return trimmed
+    .split(",")
+    .map((s) => parseInt(s.trim(), 10))
+    .filter((n) => !isNaN(n));
+}
+
+/** 根据部门父子关系计算每个部门的深度（根部门深度为 1） */
+function buildDepthMap(departments: DingTalkDepartment[]): Map<number, number> {
+  const parentMap = new Map<number, number | null>();
+  const depthMap = new Map<number, number>();
+
+  for (const d of departments) {
+    parentMap.set(d.dept_id, d.parent_id ?? null);
+  }
+
+  const getDepth = (deptId: number, visiting = new Set<number>()): number => {
+    if (visiting.has(deptId)) return 1;
+    const cached = depthMap.get(deptId);
+    if (cached != null) return cached;
+
+    visiting.add(deptId);
+    const parentId = parentMap.get(deptId);
+    let depth = 1;
+    if (parentId && parentId !== 1 && parentMap.has(parentId)) {
+      depth = getDepth(parentId, visiting) + 1;
+    }
+    depthMap.set(deptId, depth);
+    return depth;
+  };
+
+  for (const d of departments) {
+    getDepth(d.dept_id);
+  }
+
+  return depthMap;
+}
+
+/** 根据部门父子关系找到指定部门的顶层部门（防环） */
+function getTopDepartment(
+  deptId: number,
+  deptMap: Map<number, DingTalkDepartment>,
+  visiting = new Set<number>()
+): DingTalkDepartment | null {
+  if (visiting.has(deptId)) return null;
+  visiting.add(deptId);
+  const dept = deptMap.get(deptId);
+  if (!dept) return null;
+  if (!dept.parent_id || dept.parent_id === 1) return dept;
+  return getTopDepartment(dept.parent_id, deptMap, visiting);
+}
+
+/** 从用户的 dept_id_list 中选择 source_dept_id
+ *  策略：优先选择「顶层部门未被排除」的部门中层级最深的；
+ *  若所有部门都在被排除的顶层下，则回退到全局最深。
+ *  这样可避免「销售渠道」等辅助组织把销售部人员抢走，
+ *  同时让真正挂在销售部子部门的人员落到子部门。
+ */
+function pickSourceDeptId(
+  deptIdListStr: string | number[] | undefined | null,
+  depthMap: Map<number, number>,
+  deptMap: Map<number, DingTalkDepartment>
+): number | null {
+  const ids = parseDeptIdList(deptIdListStr);
+  if (ids.length === 0) return null;
+
+  let eligible = ids.filter((id) => {
+    const top = getTopDepartment(id, deptMap);
+    return top && !isExcludedTopDepartment(top.name);
+  });
+
+  // 如果所有部门都在被排除的顶层下，回退到全部部门
+  if (eligible.length === 0) {
+    eligible = ids;
+  }
+
+  let deepestId = eligible[0];
+  let deepestDepth = depthMap.get(deepestId) || 1;
+
+  for (const id of eligible) {
+    const depth = depthMap.get(id) || 1;
+    if (depth > deepestDepth) {
+      deepestDepth = depth;
+      deepestId = id;
+    }
+  }
+
+  return deepestId;
+}
+
 export async function getDepartmentList(
   parentDeptId = 1
 ): Promise<DingTalkDepartment[]> {
@@ -203,7 +332,7 @@ export interface DingTalkUser {
   name: string;
   mobile?: string;
   title?: string;
-  dept_id_list?: string;
+  dept_id_list?: string | number[];
   dept_order?: number;
   hide_mobile?: boolean;
   senior?: boolean;
@@ -327,41 +456,67 @@ export async function syncContacts(
     }
   }
 
-  // 3. 拉取每个部门的用户
-  let totalUsers = 0;
-  const seenUserIds = new Set<string>();
+  // 3. 拉取每个部门的用户，按用户聚合其完整 dept_id_list
+  const userMap = new Map<string, DingTalkUser>();
 
   for (const dept of departments) {
     try {
       const users = await fetchAllDepartmentUsers(dept.dept_id);
       for (const user of users) {
-        if (seenUserIds.has(user.userid)) continue;
-        seenUserIds.add(user.userid);
-
-        await pool.query(
-          `INSERT INTO dingtalk_users
-           (userid, name, mobile, title, dept_id_list, source_dept_id)
-           VALUES ($1, $2, $3, $4, $5, $6)
-           ON CONFLICT (userid) DO UPDATE SET
-             name = EXCLUDED.name,
-             mobile = EXCLUDED.mobile,
-             title = EXCLUDED.title,
-             dept_id_list = EXCLUDED.dept_id_list,
-             source_dept_id = EXCLUDED.source_dept_id,
-             updated_at = NOW()`,
-          [
-            user.userid,
-            user.name,
-            user.mobile || null,
-            user.title || null,
-            user.dept_id_list || null,
-            dept.dept_id,
-          ]
-        );
-        totalUsers++;
+        const existing = userMap.get(user.userid);
+        if (!existing) {
+          userMap.set(user.userid, { ...user });
+        } else if (user.dept_id_list) {
+          // 合并多个部门返回的 dept_id_list，避免信息丢失
+          const mergedIds = new Set(parseDeptIdList(existing.dept_id_list));
+          for (const id of parseDeptIdList(user.dept_id_list)) {
+            mergedIds.add(id);
+          }
+          // 统一存为 JSON 字符串数组格式，便于后续解析
+          existing.dept_id_list = JSON.stringify(Array.from(mergedIds));
+        }
       }
     } catch (err: any) {
       errors.push(`拉取部门 ${dept.name}(${dept.dept_id}) 用户失败: ${err.message}`);
+    }
+  }
+
+  // 4. 根据部门深度计算每个用户的 source_dept_id，并写入数据库
+  // 原则：用户同时在父部门和子部门时，优先归入层级最深的部门；
+  // 仅挂在父部门的人员（如总 leader）仍保留在父部门；
+  // 顶层被排除的部门（如销售渠道）不作为首选来源。
+  const depthMap = buildDepthMap(departments);
+  const deptMap = new Map<number, DingTalkDepartment>();
+  for (const d of departments) deptMap.set(d.dept_id, d);
+  let totalUsers = 0;
+
+  for (const [userid, user] of userMap) {
+    try {
+      const sourceDeptId = pickSourceDeptId(user.dept_id_list, depthMap, deptMap);
+
+      await pool.query(
+        `INSERT INTO dingtalk_users
+         (userid, name, mobile, title, dept_id_list, source_dept_id)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (userid) DO UPDATE SET
+           name = EXCLUDED.name,
+           mobile = EXCLUDED.mobile,
+           title = EXCLUDED.title,
+           dept_id_list = EXCLUDED.dept_id_list,
+           source_dept_id = EXCLUDED.source_dept_id,
+           updated_at = NOW()`,
+        [
+          user.userid,
+          user.name,
+          user.mobile || null,
+          user.title || null,
+          user.dept_id_list || null,
+          sourceDeptId,
+        ]
+      );
+      totalUsers++;
+    } catch (err: any) {
+      errors.push(`保存用户 ${user.name}(${userid}) 失败: ${err.message}`);
     }
   }
 

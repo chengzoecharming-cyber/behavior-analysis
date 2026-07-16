@@ -68,7 +68,22 @@ function renderAnomalyRow(
   return (
     <div style={{ width: "100%" }}>
       <div style={{ display: "flex", gap: 10, alignItems: "flex-start", width: "100%" }}>
-        <Tag color={anomalySeverityColor[severity] as any} style={{ flexShrink: 0, marginTop: 2 }}>
+        <Tag
+          color={anomalySeverityColor[severity] as any}
+          style={{
+            flexShrink: 0,
+            width: 28,
+            height: 16,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+            fontSize: 12,
+            fontWeight: 600,
+            textAlign: "center",
+            lineHeight: "16px",
+          }}
+        >
           {anomalySeverityText[severity]}
         </Tag>
         <div style={{ flex: 1, minWidth: 0 }}>
@@ -85,7 +100,7 @@ function renderAnomalyRow(
           >
             {title}
           </div>
-          <div style={{ fontSize: 13, color: "#666", marginTop: 4 }}>{description}</div>
+          <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>{description}</div>
         </div>
       </div>
     </div>

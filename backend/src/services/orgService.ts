@@ -3,7 +3,7 @@ import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { formatBeijingDate } from "../utils/timezone";
 
 /** F10：公司视角排行榜中不展示的顶层部门 */
-const EXCLUDED_TOP_DEPARTMENTS = new Set([
+export const EXCLUDED_TOP_DEPARTMENTS = new Set([
   "财务",
   "人力资源部",
   "市场营销",
@@ -18,7 +18,7 @@ const EXCLUDED_TOP_DEPARTMENTS = new Set([
 const SALES_DEPARTMENT_NAME = "销售部";
 
 /** 判断顶层部门是否应被排除（支持「部」后缀、子部门前缀等变体） */
-function isExcludedTopDepartment(name: string): boolean {
+export function isExcludedTopDepartment(name: string): boolean {
   for (const excluded of EXCLUDED_TOP_DEPARTMENTS) {
     if (name.startsWith(excluded)) {
       return true;

@@ -80,6 +80,21 @@ a {
   border-radius: 16px !important;
 }
 
+/* 个人轨迹时间轴：让 dot 与内容间距和异常事件列表的 icon-title 间距一致（10px） */
+.person-trajectory-timeline .semi-timeline-item-content {
+  margin-left: 29px !important;
+}
+
+/* 轨迹内容异常 tag 的 hover 浮窗固定宽度 500px */
+.trajectory-tag-popover {
+  width: 500px !important;
+}
+
+/* 轨迹时间轴连线改为浅灰色 */
+.person-trajectory-timeline .semi-timeline-item-tail {
+  border-left-color: #e0e0e0 !important;
+}
+
 /* 决策系统员工卡片网格 */
 .employee-grid {
   display: grid;
@@ -143,4 +158,47 @@ a {
 /* 隐藏默认对勾，用圆点替代 */
 .console-scope-cascader .semi-cascader-option-icon-active svg {
   display: none;
+}
+
+/* 排行榜卡片：固定表格布局，确保父子表格列宽一致 */
+.org-ranking-card .semi-table {
+  table-layout: fixed !important;
+}
+
+/* 名称列展开图标与文字间距 8px */
+.org-ranking-card .semi-table-expand-icon {
+  margin-right: 8px;
+}
+
+/* 名称列按层级整体缩进（图标和文字一起移动） */
+.org-ranking-card .semi-table-tbody > .semi-table-row.ranking-row-level-0 > .semi-table-row-cell:first-child {
+  padding-left: 16px !important;
+}
+.org-ranking-card .semi-table-tbody > .semi-table-row.ranking-row-level-1 > .semi-table-row-cell:first-child {
+  padding-left: 36px !important;
+}
+.org-ranking-card .semi-table-tbody > .semi-table-row.ranking-row-level-2 > .semi-table-row-cell:first-child {
+  padding-left: 56px !important;
+}
+
+/* 排行榜卡片：展开行容器背景使用很浅的灰色、去掉内边距 */
+.org-ranking-card .semi-table-tbody > .semi-table-row.semi-table-row-expand > .semi-table-row-cell {
+  background-color: #fafafa !important;
+  padding: 0 !important;
+}
+
+/* 展开行内的子表格单元格同样使用很浅灰色 */
+.org-ranking-card .semi-table-row-expand .semi-table-tbody > .semi-table-row > .semi-table-row-cell {
+  background-color: #fafafa;
+}
+
+/* 子表格 hover 时使用 Semi hover 灰，确保仍有 hover 反馈 */
+.org-ranking-card .semi-table-row-expand .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell {
+  background-color: var(--semi-color-bg-0);
+  background-image: linear-gradient(0deg, var(--semi-color-fill-0), var(--semi-color-fill-0));
+}
+
+/* 排行榜卡片：末列单元格右内边距置零，让内容严格对齐卡片 20px 右内边距 */
+.org-ranking-card .semi-table-row-cell:last-child {
+  padding-right: 0 !important;
 }

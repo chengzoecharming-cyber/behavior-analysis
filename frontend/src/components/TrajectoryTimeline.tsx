@@ -1,4 +1,5 @@
 import { Timeline, Tag, Popover } from "@douyinfe/semi-ui";
+import type { CSSProperties } from "react";
 import dayjs from "dayjs";
 import { Visit, Route, Anomaly } from "../types";
 import { AnomalyItem } from "./AnomalyItem";
@@ -23,9 +24,14 @@ interface AnomalyTagItem {
   anomaly: Anomaly;
 }
 
-const TAG_BORDER = "#ffbb96";
-const TAG_BG = "#fff7e6";
-const TAG_TEXT = "#fa8c16";
+const tagBaseStyle: CSSProperties = {
+  fontSize: 12,
+  height: 20,
+  padding: "2px 8px",
+  display: "inline-flex",
+  alignItems: "center",
+  cursor: "default",
+};
 
 const MARK_COLORS = {
   start: "#52c41a",
@@ -38,10 +44,8 @@ function isPublicTransportVisit(visit: Visit): boolean {
   return (visit.trip_type || "").includes("公共交通");
 }
 
-function formatAddress(value?: string | null, maxLen = 20): string {
-  if (!value) return "未知地址";
-  if (value.length <= maxLen) return value;
-  return value.slice(0, maxLen - 3) + "...";
+function formatAddress(value?: string | null): string {
+  return value && value.trim() ? value.trim() : "未知地址";
 }
 
 function buildTagForAnomaly(anomaly: Anomaly): AnomalyTagItem | null {
@@ -146,12 +150,14 @@ export default function TrajectoryTimeline({
   });
 
   return (
-    <Timeline>
+    <Timeline className="person-trajectory-timeline">
       {nodes.map((node) => {
         const v = node.visit;
         const timeStr = dayjs.tz(v.timestamp).format("HH:mm");
         const address = v.address || v.location_name;
         const displayAddress = formatAddress(address);
+
+
 
         const dotContent = (
           <div
@@ -164,10 +170,9 @@ export default function TrajectoryTimeline({
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              fontSize: 13,
+              fontSize: 11,
               fontWeight: 600,
               border: "2px solid #fff",
-              boxShadow: "0 1px 4px rgba(0,0,0,.35)",
             }}
           >
             {node.sequenceLabel}
@@ -176,7 +181,8 @@ export default function TrajectoryTimeline({
 
         return (
           <Timeline.Item key={v.id} dot={dotContent}>
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {/* 地点 + 时间，时间靠最右 */}
               <div
                 style={{
                   display: "flex",
@@ -184,77 +190,74 @@ export default function TrajectoryTimeline({
                   gap: 8,
                 }}
               >
-                <div
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 8,
-                    width: 240,
-                    flexShrink: 0,
-                  }}
-                >
-                  <span
-                    style={{
-                      fontSize: 14,
-                      color: "#0f1419",
-                      fontWeight: 500,
-                      width: 44,
-                      flexShrink: 0,
-                    }}
-                  >
-                    {timeStr}
-                  </span>
+                <div style={{ flex: 1, minWidth: 0, overflow: "hidden" }}>
                   <Popover content={address || "未知地址"} showArrow>
                     <span
                       style={{
                         fontSize: 14,
+                        fontWeight: 600,
                         color: "#0f1419",
                         cursor: "default",
                         overflow: "hidden",
                         textOverflow: "ellipsis",
                         whiteSpace: "nowrap",
-                        flex: 1,
+                        display: "block",
                       }}
+                      title={address || "未知地址"}
                     >
                       {displayAddress}
                     </span>
                   </Popover>
                 </div>
+                <span
+                  style={{
+                    fontSize: 14,
+                    color: "#0f1419",
+                    fontWeight: 500,
+                    flexShrink: 0,
+                  }}
+                >
+                  {timeStr}
+                </span>
+              </div>
+
+              {/* 异常标签 */}
+              {node.tags.length > 0 && (
                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   {node.tags.map((tag) => (
-                    <Popover key={tag.key} content={<AnomalyItem item={tag.anomaly} />} showArrow>
-                      <Tag
-                        style={{
-                          backgroundColor: TAG_BG,
-                          border: `1px solid ${TAG_BORDER}`,
-                          color: TAG_TEXT,
-                          fontSize: 12,
-                          padding: "2px 8px",
-                          cursor: "default",
-                        }}
-                      >
+                    <Popover key={tag.key} content={<AnomalyItem item={tag.anomaly} />} showArrow contentClassName="trajectory-tag-popover">
+                      <Tag color="orange" style={{ ...tagBaseStyle, cursor: "pointer" }}>
                         {tag.label}
                       </Tag>
                     </Popover>
                   ))}
                 </div>
-              </div>
+              )}
 
               {v.customer_name && (
-                <div style={{ fontSize: 13, color: "#666" }}>
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "#666",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={v.customer_name}
+                >
                   客户：{v.customer_name}
                 </div>
               )}
 
+              {/* 行驶里程 */}
               {node.nextDistanceKm != null && (
                 <div>
                   <Tag
-                    size="small"
                     style={{
+                      ...tagBaseStyle,
                       backgroundColor: "#f5f5f5",
                       border: "1px solid #d9d9d9",
-                      color: "#595959",
-                      fontSize: 12,
+                      color: "#333333",
                     }}
                   >
                     {node.nextDistanceKm.toFixed(1)} km

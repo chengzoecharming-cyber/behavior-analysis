@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback, useRef } from "react";
 import { Row, Col, Table, Spin, Typography, Tag } from "@douyinfe/semi-ui";
 import dayjs from "dayjs";
 import { fetchOrgOverview, OrgOverviewResponse, OrgRankingItem } from "../api";
@@ -64,10 +64,12 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
   const [loadingChildren, setLoadingChildren] = useState<Set<string>>(new Set());
 
   // 当查询条件变化时重置展开状态
+  const initializedDataRef = useRef<OrgOverviewResponse | null>(null);
   useEffect(() => {
     setExpandedKeys(new Set());
     setChildMap({});
     setLoadingChildren(new Set());
+    initializedDataRef.current = null;
   }, [scope, nodeName, start, end]);
 
   useEffect(() => {
@@ -100,6 +102,36 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
       count: p.count,
     }));
   }, [data]);
+
+  // 默认展开“销售部”
+  useEffect(() => {
+    if (!data || initializedDataRef.current === data) return;
+    initializedDataRef.current = data;
+    const sales = data.ranking.find((r) => r.name === "销售部" && r.hasChildren);
+    if (!sales) return;
+    setExpandedKeys(new Set([sales.key]));
+    if (childMap[sales.key] || loadingChildren.has(sales.key)) return;
+    setLoadingChildren((prev) => {
+      const next = new Set(prev);
+      next.add(sales.key);
+      return next;
+    });
+    const childScope = sales.level === "department" ? "department" : "sub_department";
+    fetchOrgOverview(childScope, sales.key, start, end)
+      .then((res) => {
+        setChildMap((prev) => ({ ...prev, [sales.key]: res.ranking }));
+      })
+      .catch((err) => {
+        console.error("Failed to load children for 销售部:", err);
+      })
+      .finally(() => {
+        setLoadingChildren((prev) => {
+          const next = new Set(prev);
+          next.delete(sales.key);
+          return next;
+        });
+      });
+  }, [data, childMap, loadingChildren, start, end]);
 
   const dayCount = useMemo(() => {
     const s = dayjs.tz(start);
@@ -188,29 +220,101 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     [start, end]
   );
 
+  // 名称列按层级缩进：每深一级缩进 20px
+  const getNameIndent = useCallback(
+    (record: OrgRankingItem) => {
+      const levelOrder = ["company", "department", "sub_department", "person"];
+      const levelIndex = levelOrder.indexOf(record.level);
+      const scopeIndex = levelOrder.indexOf(scope);
+      return Math.max(0, levelIndex - scopeIndex - 1) * 20;
+    },
+    [scope]
+  );
+
+  const getRelativeLevel = useCallback(
+    (record: OrgRankingItem) => {
+      const levelOrder = ["company", "department", "sub_department", "person"];
+      const levelIndex = levelOrder.indexOf(record.level);
+      const scopeIndex = levelOrder.indexOf(scope);
+      return Math.max(0, levelIndex - scopeIndex - 1);
+    },
+    [scope]
+  );
+
+  // 名称列内容最大宽度：固定列宽 170 - 左右 padding 32 - 缩进 - 展开图标 12 - 图标与文字间距 8
+  const getNameMaxWidth = useCallback(
+    (record: OrgRankingItem) => {
+      const indent = getNameIndent(record);
+      const iconWidth = record.hasChildren ? 12 : 0;
+      const gap = record.hasChildren ? 8 : 0;
+      return 170 - 32 - indent - iconWidth - gap;
+    },
+    [getNameIndent]
+  );
+
   const rankingColumns = useMemo(
     () => [
       {
         title: "名称",
         dataIndex: "name",
-        render: (_: any, record: OrgRankingItem) => renderName(record),
+        width: 170,
+        render: (_: any, record: OrgRankingItem) => (
+          <div
+            style={{
+              display: "inline-block",
+              maxWidth: getNameMaxWidth(record),
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              verticalAlign: "middle",
+            }}
+          >
+            {renderName(record)}
+          </div>
+        ),
       },
       {
         title: "拜访次数",
         dataIndex: "visitCount",
+        width: 110,
         sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
           (a?.visitCount ?? 0) - (b?.visitCount ?? 0),
       },
       {
         title: "填报/估算里程",
         dataIndex: "reportedKm",
-        render: (_: any, record: OrgRankingItem) =>
-          `${formatKm(record.reportedKm)} / ${formatKm(record.estimatedKm)}`,
+        render: (_: any, record: OrgRankingItem) => (
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <Tag
+              size="small"
+              style={{
+                backgroundColor: "#f5f5f5",
+                border: "1px solid #d9d9d9",
+                color: "#333333",
+                fontSize: 12,
+              }}
+            >
+              {formatKm(record.reportedKm)}
+            </Tag>
+            <span style={{ color: "#999" }}>/</span>
+            <Tag
+              size="small"
+              style={{
+                backgroundColor: "#f5f5f5",
+                border: "1px solid #d9d9d9",
+                color: "#333333",
+                fontSize: 12,
+              }}
+            >
+              {formatKm(record.estimatedKm)}
+            </Tag>
+          </div>
+        ),
         sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
           (a?.reportedKm ?? 0) - (b?.reportedKm ?? 0),
       },
     ],
-    [renderName]
+    [renderName, getNameIndent, getNameMaxWidth]
   );
 
   const expandedRowRender = useCallback(
@@ -225,7 +329,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         );
       }
       return (
-        <div style={{ paddingLeft: 4 }}>
+        <div>
           <Table
             columns={rankingColumns}
             dataSource={children}
@@ -233,16 +337,18 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             rowKey="key"
             size="small"
             showHeader={false}
-            scroll={{ x: "max-content" }}
             expandedRowRender={expandedRowRender}
             rowExpandable={(r?: OrgRankingItem) => !!r?.hasChildren}
             expandedRowKeys={Array.from(expandedKeys)}
             onExpand={handleExpand}
+            onRow={(r?: OrgRankingItem) => ({
+              className: r ? `ranking-row-level-${getRelativeLevel(r)}` : "",
+            })}
           />
         </div>
       );
     },
-    [childMap, loadingChildren, rankingColumns, expandedKeys, handleExpand]
+    [childMap, loadingChildren, rankingColumns, expandedKeys, handleExpand, getRelativeLevel]
   );
 
   if (loading) {
@@ -342,7 +448,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
 
       {/* 热力图 + 排行榜 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={16}>
+        <Col span={14}>
           <div
             style={{
               backgroundColor: "#fff",
@@ -361,8 +467,9 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </div>
           </div>
         </Col>
-        <Col span={8}>
+        <Col span={10}>
           <div
+            className="org-ranking-card"
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
@@ -377,18 +484,20 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
               {scope === "department" && "子部门排行榜"}
               {scope === "sub_department" && "人员排行榜"}
             </Title>
-            <div style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
+            <div style={{ flex: 1, minHeight: 0, overflow: "hidden", overflowY: "auto" }}>
               <Table
                 columns={rankingColumns}
                 dataSource={data.ranking}
                 pagination={false}
                 rowKey="key"
                 size="small"
-                scroll={{ x: "max-content" }}
                 expandedRowRender={expandedRowRender}
                 rowExpandable={(record?: OrgRankingItem) => !!record?.hasChildren}
                 expandedRowKeys={Array.from(expandedKeys)}
                 onExpand={handleExpand}
+                onRow={(record?: OrgRankingItem) => ({
+                  className: record ? `ranking-row-level-${getRelativeLevel(record)}` : "",
+                })}
               />
             </div>
           </div>
