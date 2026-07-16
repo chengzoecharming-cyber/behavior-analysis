@@ -12,6 +12,7 @@ import {
   AvailableDate,
 } from "../api";
 import { User, Visit, Stop, Route, Anomaly } from "../types";
+import { formatBeijingHHmm } from "../utils/time";
 import MapContainer from "../components/MapContainer";
 
 function MapPage() {
@@ -220,9 +221,9 @@ function MapPage() {
             </button>
             <span style={{ fontSize: 14, color: "#333" }}>
               {visits[Math.min(progress, visits.length - 1)]
-                ? dayjs.tz(
+                ? formatBeijingHHmm(
                     visits[Math.min(progress, visits.length - 1)].timestamp
-                  ).format("HH:mm")
+                  )
                 : "--:--"}
             </span>
           </div>
@@ -238,10 +239,10 @@ function MapPage() {
             disabled={visits.length === 0}
             tooltip={{ formatter: (v) =>
               visits[Math.min(Math.floor(v as number), visits.length - 1)]
-                ? dayjs.tz(
+                ? formatBeijingHHmm(
                     visits[Math.min(Math.floor(v as number), visits.length - 1)]
                       .timestamp
-                  ).format("HH:mm")
+                  )
                 : ""
             }}
           />

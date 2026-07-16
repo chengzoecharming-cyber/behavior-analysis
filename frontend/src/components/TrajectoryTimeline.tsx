@@ -1,6 +1,6 @@
 import { Timeline, Tag, Popover } from "@douyinfe/semi-ui";
 import type { CSSProperties } from "react";
-import dayjs from "dayjs";
+import { formatBeijingHHmm } from "../utils/time";
 import { Visit, Route, Anomaly } from "../types";
 import { AnomalyItem } from "./AnomalyItem";
 
@@ -153,7 +153,7 @@ export default function TrajectoryTimeline({
     <Timeline className="person-trajectory-timeline">
       {nodes.map((node) => {
         const v = node.visit;
-        const timeStr = dayjs.tz(v.timestamp).format("HH:mm");
+        const timeStr = formatBeijingHHmm(v.timestamp);
         const address = v.address || v.location_name;
         const displayAddress = formatAddress(address);
 

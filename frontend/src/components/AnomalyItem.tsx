@@ -1,5 +1,6 @@
 import { Tag } from "@douyinfe/semi-ui";
 import dayjs from "dayjs";
+import { formatBeijingTime } from "../utils/time";
 import { Anomaly } from "../types";
 
 const anomalySeverityText = {
@@ -38,11 +39,11 @@ export function AnomalyItem({ item }: { item: Anomaly }) {
 
   // 长时间未移动
   if (item.type === "long_idle" && item.start_time && item.end_time) {
-    const start = dayjs.tz(item.start_time);
-    const end = dayjs.tz(item.end_time);
+    const start = dayjs(item.start_time).tz("Asia/Shanghai");
+    const end = dayjs(item.end_time).tz("Asia/Shanghai");
     const minutes = end.diff(start, "minute");
     const title = `${minutes}min无移动记录`;
-    const description = `${start.format("YYYY-MM-DD HH:mm")} - ${end.format("YYYY-MM-DD HH:mm")}`;
+    const description = `${formatBeijingTime(item.start_time)} - ${formatBeijingTime(item.end_time)}`;
     return renderAnomalyRow(item.severity, title, description);
   }
 

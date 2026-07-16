@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { Visit, Stop, Route, Anomaly } from "../types";
-import dayjs from "dayjs";
+import { formatBeijingHHmm, formatBeijingTime } from "../utils/time";
 import { Card, Descriptions, Button, Tag, Image } from "@douyinfe/semi-ui";
 
 export interface RouteGroup {
@@ -276,7 +276,7 @@ export default function MapContainer({
           : v.visit_note || v.location_name;
         const marker = new AMap.Marker({
           position: [v.lng, v.lat],
-          title: `${dayjs(v.timestamp).format("HH:mm")} ${markerTitle}`,
+          title: `${formatBeijingHHmm(v.timestamp)} ${markerTitle}`,
           content: getMarkerContent(label, bgColor, "#fff", opacity, isPublic),
           offset: new AMap.Pixel(-14, -14),
           zIndex,
@@ -431,7 +431,7 @@ export default function MapContainer({
               <DescItem label="员工姓名">{selectedVisit.user_name}</DescItem>
               <DescItem label="部门">{selectedVisit.department}</DescItem>
               <DescItem label="拜访时间">
-                {dayjs(selectedVisit.timestamp).format("YYYY-MM-DD HH:mm")}
+                {formatBeijingTime(selectedVisit.timestamp)}
               </DescItem>
               {selectedVisit.customer_name && (
                 <DescItem label="客户名称">{selectedVisit.customer_name}</DescItem>
