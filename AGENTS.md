@@ -201,6 +201,13 @@ DINGTALK_APP_KEY=YOUR_DINGTALK_APP_KEY
 DINGTALK_APP_SECRET=YOUR_DINGTALK_APP_SECRET
 DINGTALK_PROCESS_CODE=YOUR_DINGTALK_PROCESS_CODE
 
+# 钉钉文档（知识库）导出操作人 user_id
+# 需要是该企业内的真实钉钉用户，用于调用钉钉文档 API 创建文档、文件夹并授权
+DINGTALK_OPERATOR_USERID=
+
+# 可选：钉钉文档知识库名称，不填则默认为「外勤行为分析报告」
+DINGTALK_DOC_WORKSPACE_NAME=
+
 # 控制台导出报告目标钉钉群 chatid
 DINGTALK_EXPORT_CHAT_ID=
 
@@ -297,6 +304,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET/POST/PUT/DELETE | `/users/*` | 用户管理 |
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
 | POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
+| POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
 
 前后端代理路径：
 

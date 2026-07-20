@@ -1,7 +1,12 @@
 import { persistRiskSummaryCache } from "./riskSummaryService";
 import { isDingTalkConfigured, syncApprovals } from "./dingtalk";
-import { getYesterdayBeijing, toBeijingDayStart, toBeijingDayEnd, formatBeijingDate } from "../utils/timezone";
+import { getYesterdayBeijing, toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getBeijingWeekday } from "../utils/timezone";
 import { pool } from "../db";
+import {
+  generateDailyReports,
+  generateWeeklyReports,
+  generateMonthlyReports,
+} from "./reportGenerationService";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -22,6 +27,60 @@ function getMillisecondsUntil(hour: number, minute: number): number {
     target = new Date(target.getTime() + 24 * 60 * 60 * 1000);
   }
   return target.getTime() - now.getTime();
+}
+
+/** 计算距离下一个指定星期几（0=周日）目标时刻的毫秒数 */
+function getMillisecondsUntilWeekday(hour: number, minute: number, targetWeekday: number): number {
+  const now = new Date();
+  const currentWeekday = getBeijingWeekday(now);
+  let daysUntil = (targetWeekday - currentWeekday + 7) % 7;
+
+  const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const year = beijingNow.getUTCFullYear();
+  const month = pad2(beijingNow.getUTCMonth() + 1);
+  const date = pad2(beijingNow.getUTCDate());
+  const hourStr = pad2(hour);
+  const minuteStr = pad2(minute);
+  const todayTarget = new Date(`${year}-${month}-${date}T${hourStr}:${minuteStr}:00+08:00`);
+
+  if (daysUntil === 0 && todayTarget.getTime() <= now.getTime()) {
+    daysUntil = 7;
+  }
+
+  const base = now.getTime() + daysUntil * 24 * 60 * 60 * 1000;
+  const beijingBase = new Date(base + 8 * 60 * 60 * 1000);
+  const target = new Date(
+    `${beijingBase.getUTCFullYear()}-${pad2(beijingBase.getUTCMonth() + 1)}-${pad2(
+      beijingBase.getUTCDate()
+    )}T${hourStr}:${minuteStr}:00+08:00`
+  );
+  return target.getTime() - now.getTime();
+}
+
+/** 计算距离下一个指定日期（如每月 30 日）目标时刻的毫秒数；若本月已过则取下个月同日 */
+function getMillisecondsUntilDayOfMonth(hour: number, minute: number, targetDay: number): number {
+  const now = new Date();
+  const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  let year = beijingNow.getUTCFullYear();
+  let month = beijingNow.getUTCMonth() + 1;
+  let day = beijingNow.getUTCDate();
+
+  let candidate: Date;
+  if (day <= targetDay) {
+    candidate = new Date(
+      `${year}-${pad2(month)}-${pad2(targetDay)}T${pad2(hour)}:${pad2(minute)}:00+08:00`
+    );
+  } else {
+    month += 1;
+    if (month > 12) {
+      month = 1;
+      year += 1;
+    }
+    candidate = new Date(
+      `${year}-${pad2(month)}-${pad2(targetDay)}T${pad2(hour)}:${pad2(minute)}:00+08:00`
+    );
+  }
+  return candidate.getTime() - now.getTime();
 }
 
 function dateToStartMs(dateStr: string): number {
@@ -159,4 +218,65 @@ export function startDingTalkSyncScheduler(): void {
     // 之后每 24 小时运行一次
     setInterval(runSyncJob, 24 * 60 * 60 * 1000);
   }, msUntil230AM);
+}
+
+function isReportGenerationConfigured(): boolean {
+  return !!process.env.DINGTALK_OPERATOR_USERID;
+}
+
+/** 报告生成调度：日报 21:00、周报周日 18:00、月报每月 30 日 18:00（北京时间） */
+export function startReportGenerationScheduler(): void {
+  if (!isReportGenerationConfigured()) {
+    console.log("[Scheduler] Report generation skipped: DINGTALK_OPERATOR_USERID not configured");
+    return;
+  }
+
+  // 日报
+  const scheduleDaily = () => {
+    const ms = getMillisecondsUntil(21, 0);
+    console.log(`[Scheduler] Daily report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
+    setTimeout(async () => {
+      console.log("[Scheduler] Running daily report generation");
+      try {
+        await generateDailyReports();
+      } catch (err) {
+        console.error("[Scheduler] Daily report generation failed:", err);
+      }
+      scheduleDaily();
+    }, ms);
+  };
+
+  // 周报
+  const scheduleWeekly = () => {
+    const ms = getMillisecondsUntilWeekday(18, 0, 0);
+    console.log(`[Scheduler] Weekly report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
+    setTimeout(async () => {
+      console.log("[Scheduler] Running weekly report generation");
+      try {
+        await generateWeeklyReports();
+      } catch (err) {
+        console.error("[Scheduler] Weekly report generation failed:", err);
+      }
+      scheduleWeekly();
+    }, ms);
+  };
+
+  // 月报
+  const scheduleMonthly = () => {
+    const ms = getMillisecondsUntilDayOfMonth(18, 0, 30);
+    console.log(`[Scheduler] Monthly report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
+    setTimeout(async () => {
+      console.log("[Scheduler] Running monthly report generation");
+      try {
+        await generateMonthlyReports();
+      } catch (err) {
+        console.error("[Scheduler] Monthly report generation failed:", err);
+      }
+      scheduleMonthly();
+    }, ms);
+  };
+
+  scheduleDaily();
+  scheduleWeekly();
+  scheduleMonthly();
 }

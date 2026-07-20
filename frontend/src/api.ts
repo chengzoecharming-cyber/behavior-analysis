@@ -525,10 +525,11 @@ export interface HeatMapPoint {
 }
 
 export interface ExportConsoleReportPayload {
-  userId: string;
+  scope?: "company" | "department" | "sub_department" | "person";
+  node?: string;
+  userId?: string;
   start: string;
   end: string;
-  mapImage?: string; // 已废弃，改用 amapKey + points 在 HTML 内渲染交互地图
   amapKey: string;
   points: HeatMapPoint[];
 }
@@ -542,5 +543,55 @@ export async function exportConsoleReport(
   payload: ExportConsoleReportPayload
 ): Promise<ExportConsoleReportResult> {
   const res = await api.post("/export/console-report", payload);
+  return res.data;
+}
+
+export interface ExportConsoleReportToDocPayload {
+  userId: string;
+  start: string;
+  end: string;
+}
+
+export interface ExportConsoleReportToDocResult {
+  success: boolean;
+  message: string;
+  url: string;
+  docKey: string;
+  nodeId: string;
+  workspaceId: string;
+  reportType: "日报" | "周报" | "月报";
+  reportDate: string;
+}
+
+export async function exportConsoleReportToDoc(
+  payload: ExportConsoleReportToDocPayload
+): Promise<ExportConsoleReportToDocResult> {
+  const res = await api.post("/export/console-report-to-doc", payload);
+  return res.data;
+}
+
+export interface ExportScopeReportToDocPayload {
+  scope: "company" | "department" | "sub_department" | "person";
+  node?: string;
+  userId?: string;
+  start: string;
+  end: string;
+}
+
+export interface ExportScopeReportToDocResult {
+  success: boolean;
+  message: string;
+  url: string;
+  docKey: string;
+  nodeId: string;
+  scope: string;
+  reportType: "日报" | "周报" | "月报";
+  hasData: boolean;
+}
+
+export async function exportScopeReportToDoc(
+  payload: ExportScopeReportToDocPayload
+): Promise<ExportScopeReportToDocResult> {
+  const res = await api.post("/export/scope-report-to-doc", payload);
   return res.data;
 }

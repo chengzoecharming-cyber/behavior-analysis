@@ -29,6 +29,7 @@ import {
   fetchMileage,
   fetchAnomalies,
   fetchUserOverview,
+  fetchOrgOverview,
   fetchDingTalkOrgTree,
   fetchDingTalkOrgUsers,
   exportConsoleReport,
@@ -36,6 +37,7 @@ import {
   UserOverviewResult,
   DailyOverview,
   OrgTreeNode,
+  OrgOverviewResponse,
 } from "../api";
 import { User, Visit, Stop, Route, Anomaly, MileageStats } from "../types";
 import MapContainer from "../components/MapContainer";
@@ -207,24 +209,6 @@ function parseCascaderValue(value: string[]): {
   return { scope: "company" };
 }
 
-function scopeLabel(scope: QueryScope): string {
-  switch (scope) {
-    case "company":
-      return "全公司";
-    case "department":
-      return "部门";
-    case "sub_department":
-      return "子部门";
-    case "person":
-      return "个人";
-  }
-}
-
-function nodeDisplayName(node?: string): string {
-  if (!node) return "";
-  return node.split("-").pop() || node;
-}
-
 function getCascaderValueFromState(
   scope: QueryScope,
   node?: string,
@@ -364,7 +348,12 @@ function ConsolePage() {
   const [overviewData, setOverviewData] = useState<UserOverviewResult | null>(null);
   const [overviewVisits, setOverviewVisits] = useState<Visit[]>([]);
 
+  // 组织维度总览状态（用于导出和按钮可用性）
+  const [orgOverviewLoading, setOrgOverviewLoading] = useState(false);
+  const [orgOverviewData, setOrgOverviewData] = useState<OrgOverviewResponse | null>(null);
+
   const [dataLoading, setDataLoading] = useState(true);
+  const [exportLoading, setExportLoading] = useState(false);
 
   // 轨迹内容与异常事件卡片的展开状态
   const [trajectoryExpanded, setTrajectoryExpanded] = useState(true);
@@ -517,6 +506,68 @@ function ConsolePage() {
     }
   };
 
+  const loadOrgOverview = async (
+    targetScope: "company" | "department" | "sub_department",
+    targetNode: string,
+    start: string,
+    end: string
+  ) => {
+    setOrgOverviewLoading(true);
+    try {
+      const data = await fetchOrgOverview(targetScope, targetNode, start, end);
+      setOrgOverviewData(data);
+    } catch (err) {
+      console.error("Failed to load org overview:", err);
+      setOrgOverviewData(null);
+    } finally {
+      setOrgOverviewLoading(false);
+    }
+  };
+
+  const handleExportConsoleReport = async () => {
+    setExportLoading(true);
+    try {
+      const amapKey = import.meta.env.VITE_AMAP_KEY || "";
+      let payloadPoints = heatMapPoints;
+
+      if (scope !== "person") {
+        if (!orgOverviewData) {
+          Toast.error("暂无数据可导出");
+          return;
+        }
+        payloadPoints = orgOverviewData.heatMapPoints.map((p) => ({
+          lat: p.lat,
+          lng: p.lng,
+          count: p.count,
+        }));
+      } else if (dateRange[0] === dateRange[1]) {
+        // 个人单日：后端自行查询渲染，points 传空
+        payloadPoints = [];
+      }
+
+      const result = await exportConsoleReport({
+        scope,
+        node: scope !== "person" ? node || "__ALL__" : undefined,
+        userId: scope === "person" ? userId : undefined,
+        start: dateRange[0],
+        end: dateRange[1],
+        amapKey,
+        points: payloadPoints,
+      });
+
+      if (result.success) {
+        Toast.success(result.message || "已发送到钉钉群");
+      } else {
+        Toast.error(result.message || "发送失败");
+      }
+    } catch (err: any) {
+      console.error("导出到钉钉失败:", err);
+      Toast.error(err?.response?.data?.error || err?.message || "导出失败");
+    } finally {
+      setExportLoading(false);
+    }
+  };
+
   const handleCascaderChange = (value: string[]) => {
     // 数据加载完成前忽略级联选择器的 onChange，避免空值触发回跳
     if (dataLoading) return;
@@ -576,6 +627,17 @@ function ConsolePage() {
     loadOverview(userId, dateRange[0], dateRange[1]);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [scope, userId, dateRange]);
+
+  // 非个人维度：任意日期范围都加载组织总览（用于导出）
+  useEffect(() => {
+    if (scope === "person") {
+      setOrgOverviewData(null);
+      return;
+    }
+    const nodeName = scope === "company" ? "__ALL__" : node || "__ALL__";
+    loadOrgOverview(scope, nodeName, dateRange[0], dateRange[1]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [scope, node, dateRange]);
 
   // 按 approval_id 分组，支持按审批单切换轨迹视图
   const approvalGroups = useMemo<ApprovalGroup[]>(() => {
@@ -795,12 +857,50 @@ function ConsolePage() {
               }
             />
           </Col>
-          <Col style={{ flex: "1", minWidth: 0 }}>
-            <span style={{ color: "#666" }}>
-              当前：{scopeLabel(scope)} {scope !== "company" ? (node ? nodeDisplayName(node) : (users.find((u) => u.user_id === userId)?.user_name || userId)) : ""}（
-              {dateRange[0]} ~ {dateRange[1]}）
-            </span>
-            {overviewLoading && <span style={{ color: "#999", marginLeft: 12 }}>加载中...</span>}
+          <Col
+            style={{
+              flex: "1",
+              minWidth: 0,
+              display: "flex",
+              justifyContent: "flex-end",
+              alignItems: "center",
+            }}
+          >
+            {(overviewLoading || orgOverviewLoading) && (
+              <span style={{ color: "#999", marginRight: 12 }}>加载中...</span>
+            )}
+            {(scope === "person" ? userId : true) && (
+              <button
+                onClick={handleExportConsoleReport}
+                disabled={
+                  exportLoading ||
+                  (scope === "person" && dateRange[0] !== dateRange[1] && !overviewData) ||
+                  (scope !== "person" && (!orgOverviewData || orgOverviewLoading))
+                }
+                style={{
+                  padding: "8px 16px",
+                  backgroundColor:
+                    exportLoading ||
+                    (scope === "person" && dateRange[0] !== dateRange[1] && !overviewData) ||
+                    (scope !== "person" && (!orgOverviewData || orgOverviewLoading))
+                      ? "#e0e0e0"
+                      : "#f0f0f0",
+                  color: "#333",
+                  border: "none",
+                  borderRadius: 9999,
+                  cursor:
+                    exportLoading ||
+                    (scope === "person" && dateRange[0] !== dateRange[1] && !overviewData) ||
+                    (scope !== "person" && (!orgOverviewData || orgOverviewLoading))
+                      ? "not-allowed"
+                      : "pointer",
+                  fontSize: 14,
+                  fontWeight: 500,
+                }}
+              >
+                {exportLoading ? "发送中..." : "导出并发送到钉钉"}
+              </button>
+            )}
           </Col>
         </Row>
 
@@ -1162,8 +1262,6 @@ function OverviewPanel({
   data,
   heatMapPoints,
 }: OverviewPanelProps) {
-  const [exportLoading, setExportLoading] = useState(false);
-
   const filled = useMemo(
     () => fillDailyRange(data?.daily ?? [], range[0], range[1]),
     [data, range]
@@ -1200,41 +1298,14 @@ function OverviewPanel({
     [users, userId]
   );
 
-  const handleExport = async () => {
-    if (!data) return;
-
-    setExportLoading(true);
-    try {
-      const amapKey = import.meta.env.VITE_AMAP_KEY || "";
-      const result = await exportConsoleReport({
-        userId,
-        start: range[0],
-        end: range[1],
-        amapKey,
-        points: heatMapPoints,
-      });
-
-      if (result.success) {
-        Toast.success(result.message || "已发送到钉钉群");
-      } else {
-        Toast.error(result.message || "发送失败");
-      }
-    } catch (err: any) {
-      console.error("导出到钉钉失败:", err);
-      Toast.error(err?.response?.data?.error || err?.message || "导出失败");
-    } finally {
-      setExportLoading(false);
-    }
-  };
-
   return (
-    <div style={{ marginTop: 16 }}>
+    <div>
       {!data ? (
         <div style={{ color: "#999" }}>选择时间范围加载数据</div>
       ) : (
         <>
           <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={6}>
+            <Col span={8}>
               <div style={statStyle}>
                 <div
                   style={{
@@ -1276,7 +1347,7 @@ function OverviewPanel({
                 </span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={8}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>预估油费</span>
                 <span style={statValueStyle}>
@@ -1285,33 +1356,13 @@ function OverviewPanel({
                 </span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={8}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>拜访频率</span>
                 <span style={statValueStyle}>
                   {visitFrequency}
                   <span style={{ fontSize: 12, color: "#999" }}>次/天</span>
                 </span>
-              </div>
-            </Col>
-            <Col span={6}>
-              <div style={{ ...statStyle, alignItems: "center" }}>
-                <button
-                  onClick={handleExport}
-                  disabled={exportLoading}
-                  style={{
-                    padding: "8px 16px",
-                    backgroundColor: exportLoading ? "#d9d9d9" : "#1890ff",
-                    color: "#fff",
-                    border: "none",
-                    borderRadius: 6,
-                    cursor: exportLoading ? "not-allowed" : "pointer",
-                    fontSize: 14,
-                    fontWeight: 500,
-                  }}
-                >
-                  {exportLoading ? "发送中..." : "导出并发送到钉钉"}
-                </button>
               </div>
             </Col>
           </Row>

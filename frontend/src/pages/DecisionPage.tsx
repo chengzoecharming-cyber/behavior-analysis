@@ -310,7 +310,7 @@ function DecisionPage() {
             {emp.user_name}
           </span>
           <div style={{ fontSize: 28, fontWeight: 700, color: cfg.color }}>
-            {emp.risk_score}
+            -
           </div>
         </div>
 
@@ -347,7 +347,7 @@ function DecisionPage() {
     );
   };
 
-  const renderStatCard = (level: RiskLevel, count: number) => {
+  const renderStatCard = (level: RiskLevel, _count: number) => {
     const cfg = levelConfig[level];
     return (
       <div
@@ -370,7 +370,7 @@ function DecisionPage() {
         }}
       >
         <div style={{ fontSize: 14, color: "#72808a", marginBottom: 4 }}>{cfg.label}</div>
-        <div style={{ fontSize: 32, fontWeight: 700, color: cfg.color }}>{count}</div>
+        <div style={{ fontSize: 32, fontWeight: 700, color: cfg.color }}>-</div>
       </div>
     );
   };

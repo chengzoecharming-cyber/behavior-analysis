@@ -15,7 +15,11 @@ import usersRouter from "./routes/users";
 import feedbackRouter from "./routes/feedback";
 import authRouter from "./routes/auth";
 import exportRouter from "./routes/export";
-import { startRiskSummaryCacheScheduler, startDingTalkSyncScheduler } from "./services/scheduler";
+import {
+  startRiskSummaryCacheScheduler,
+  startDingTalkSyncScheduler,
+  startReportGenerationScheduler,
+} from "./services/scheduler";
 
 dotenv.config();
 
@@ -47,6 +51,7 @@ async function main() {
   await initDB();
   startRiskSummaryCacheScheduler();
   startDingTalkSyncScheduler();
+  startReportGenerationScheduler();
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });
