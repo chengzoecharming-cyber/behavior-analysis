@@ -13,7 +13,11 @@ function normalize(value: string | undefined | null): string {
 async function main() {
   await initDB();
 
-  const workbook = XLSX.readFile("../data/employee_addresses.xlsx");
+  // 默认读取镜像内路径，也支持命令行参数传入任意路径
+  const filePath = process.argv[2] || "./data/employee_addresses.xlsx";
+  console.log(`读取住址文件: ${filePath}`);
+
+  const workbook = XLSX.readFile(filePath);
   const sheet = workbook.Sheets[workbook.SheetNames[0]];
   // 首行是标题，第二行是表头
   const rows = XLSX.utils.sheet_to_json<any>(sheet, { header: 1, range: 1 });
