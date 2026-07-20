@@ -1,5 +1,5 @@
 import { persistRiskSummaryCache } from "./riskSummaryService";
-import { isDingTalkConfigured, syncApprovals } from "./dingtalk";
+import { isDingTalkConfigured, syncApprovals, syncRunningApprovals } from "./dingtalk";
 import { getYesterdayBeijing, toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getBeijingWeekday } from "../utils/timezone";
 import { pool } from "../db";
 import {
@@ -205,19 +205,41 @@ export function startDingTalkSyncScheduler(): void {
     console.error("[Scheduler] Catch-up sync failed:", err);
   });
 
-  const runSyncJob = () => {
-    syncLastNDays(3);
-  };
+  // 基础同步：每天 8:00、14:00、20:00 同步最近 3 天
+  const baseSyncHours = [8, 14, 20];
+  for (const hour of baseSyncHours) {
+    const scheduleBaseSync = () => {
+      const ms = getMillisecondsUntil(hour, 0);
+      console.log(
+        `[Scheduler] DingTalk base sync will run at ${hour}:00 in ${Math.round(ms / 1000 / 60)} minutes`
+      );
+      setTimeout(() => {
+        syncLastNDays(3);
+        scheduleBaseSync();
+      }, ms);
+    };
+    scheduleBaseSync();
+  }
 
-  // 首次运行：等到凌晨 2 点 30 分（在风险摘要缓存之后）
-  const msUntil230AM = getMillisecondsUntil(2, 30);
-  console.log(`[Scheduler] DingTalk sync job will run in ${Math.round(msUntil230AM / 1000 / 60)} minutes`);
-
-  setTimeout(() => {
-    runSyncJob();
-    // 之后每 24 小时运行一次
-    setInterval(runSyncJob, 24 * 60 * 60 * 1000);
-  }, msUntil230AM);
+  // RUNNING 审批单兜底：每天 12:00、18:00 重新拉取仍在进行中的审批单
+  const runningSyncHours = [12, 18];
+  for (const hour of runningSyncHours) {
+    const scheduleRunningSync = () => {
+      const ms = getMillisecondsUntil(hour, 0);
+      console.log(
+        `[Scheduler] DingTalk running approval sync will run at ${hour}:00 in ${Math.round(ms / 1000 / 60)} minutes`
+      );
+      setTimeout(async () => {
+        try {
+          await syncRunningApprovals();
+        } catch (err) {
+          console.error("[Scheduler] Running approval sync failed:", err);
+        }
+        scheduleRunningSync();
+      }, ms);
+    };
+    scheduleRunningSync();
+  }
 }
 
 function isReportGenerationConfigured(): boolean {

@@ -29,6 +29,7 @@ export async function initDB(): Promise<void> {
       CREATE TABLE IF NOT EXISTS raw_approvals (
         id SERIAL PRIMARY KEY,
         approval_id VARCHAR(64) UNIQUE NOT NULL,
+        process_instance_id VARCHAR(64),
         process_code VARCHAR(64),
         title VARCHAR(255),
         originator_userid VARCHAR(64),
@@ -49,6 +50,11 @@ export async function initDB(): Promise<void> {
         ON raw_approvals(originator_userid);
       CREATE INDEX IF NOT EXISTS idx_raw_approvals_create_time
         ON raw_approvals(create_time);
+
+      -- 兼容旧库：补充 process_instance_id 字段及索引
+      ALTER TABLE raw_approvals ADD COLUMN IF NOT EXISTS process_instance_id VARCHAR(64);
+      CREATE INDEX IF NOT EXISTS idx_raw_approvals_process_instance_id
+        ON raw_approvals(process_instance_id);
 
       -- NORMALIZED 层：标准化后的核心数据
       CREATE TABLE IF NOT EXISTS visits (

@@ -1,7 +1,7 @@
 import { ParsedVisit } from "../types";
 import { processParsedVisits, ProcessResult } from "./normalization";
 import { pool } from "../db";
-import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
+import { parseDateTimeAsBeijing, formatBeijingDate, toBeijingDayStart, toBeijingDayEnd } from "../utils/timezone";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { recomputeDerivedDataForVisits } from "./derivedComputation";
 import { OrgTreeNode, isExcludedTopDepartment } from "./orgService";
@@ -955,10 +955,11 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
 }
 
 // 保存钉钉审批实例原始数据
-export async function saveRawApproval(instance: any): Promise<void> {
+export async function saveRawApproval(instance: any, processInstanceId?: string): Promise<void> {
   const approvalId = instance.business_id || instance.businessId || instance.process_instance_id || instance.processInstanceId || "";
   if (!approvalId) return;
 
+  const realProcessInstanceId = processInstanceId || instance.process_instance_id || instance.processInstanceId || approvalId;
   const originatorUserId = instance.originator_userid || instance.originatorUserId || "";
   const originatorUserName = instance.originator_user_name || instance.originatorUserName || "";
   const rawCreateTime = instance.create_time || instance.createTime || null;
@@ -969,10 +970,11 @@ export async function saveRawApproval(instance: any): Promise<void> {
   try {
     await pool.query(
       `INSERT INTO raw_approvals
-       (approval_id, process_code, title, originator_userid, originator_user_name,
+       (approval_id, process_instance_id, process_code, title, originator_userid, originator_user_name,
         originator_dept_name, create_time, finish_time, form_json, result, status, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'dingtalk')
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'dingtalk')
        ON CONFLICT (approval_id) DO UPDATE SET
+         process_instance_id = EXCLUDED.process_instance_id,
          title = EXCLUDED.title,
          originator_user_name = EXCLUDED.originator_user_name,
          originator_dept_name = EXCLUDED.originator_dept_name,
@@ -982,6 +984,7 @@ export async function saveRawApproval(instance: any): Promise<void> {
          status = EXCLUDED.status`,
       [
         approvalId,
+        realProcessInstanceId,
         instance.process_code || instance.processCode || null,
         instance.title || null,
         originatorUserId,
@@ -1092,8 +1095,8 @@ export async function syncApprovals(
       try {
         const instance = await getApprovalDetail(id);
 
-        // 先保存原始审批数据
-        await saveRawApproval(instance);
+        // 先保存原始审批数据，同时记录真正的 process_instance_id（来自 listids）
+        await saveRawApproval(instance, id);
 
         const visits = await parseApprovalInstance(instance);
 
@@ -1141,4 +1144,71 @@ export async function syncApprovals(
     await updateLog("failed", {}, err.message || String(err));
     throw err;
   }
+}
+
+export async function syncRunningApprovals(): Promise<{
+  total: number;
+  updated: number;
+  errors: number;
+}> {
+  if (!isDingTalkConfigured()) {
+    console.log("[syncRunningApprovals] DingTalk not configured, skipping");
+    return { total: 0, updated: 0, errors: 0 };
+  }
+
+  const result = await pool.query(
+    `SELECT approval_id, process_instance_id, create_time
+     FROM raw_approvals
+     WHERE status = 'RUNNING'`
+  );
+
+  let updated = 0;
+  let errors = 0;
+
+  // 旧数据没有 process_instance_id，按创建日期分组后统一兜底同步，避免重复调用
+  const fallbackDates = new Set<string>();
+
+  for (const row of result.rows) {
+    try {
+      if (row.process_instance_id && row.process_instance_id !== row.approval_id) {
+        // 有真正的 process_instance_id 时直接拉取最新详情
+        const instance = await getApprovalDetail(row.process_instance_id);
+        await saveRawApproval(instance, row.process_instance_id);
+
+        const visits = await parseApprovalInstance(instance);
+        if (visits.length > 0) {
+          const processResult = await processParsedVisits(visits, "dingtalk");
+          if (processResult.affectedUserDates.length > 0) {
+            recomputeDerivedDataForVisits(processResult.affectedUserDates).catch((err) => {
+              console.error("[syncRunningApprovals] 后台衍生数据计算失败:", err);
+            });
+          }
+        }
+      } else {
+        const dateStr = formatBeijingDate(row.create_time);
+        fallbackDates.add(dateStr);
+      }
+      updated++;
+    } catch (err) {
+      console.error(`[syncRunningApprovals] failed for ${row.approval_id}:`, err);
+      errors++;
+    }
+  }
+
+  // 按日期分组兜底同步，每个日期只调用一次
+  for (const dateStr of fallbackDates) {
+    try {
+      const startMs = new Date(toBeijingDayStart(dateStr)).getTime();
+      const endMs = new Date(toBeijingDayEnd(dateStr).replace("+08:00", ".999+08:00")).getTime();
+      await syncApprovals(startMs, endMs, "scheduler");
+    } catch (err) {
+      console.error(`[syncRunningApprovals] failed to sync fallback date ${dateStr}:`, err);
+      errors++;
+    }
+  }
+
+  console.log(
+    `[syncRunningApprovals] completed: total=${result.rows.length}, updated=${updated}, fallbackDates=${fallbackDates.size}, errors=${errors}`
+  );
+  return { total: result.rows.length, updated, errors };
 }
