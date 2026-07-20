@@ -1,6 +1,5 @@
 import { Timeline, Tag, Popover } from "@douyinfe/semi-ui";
 import type { CSSProperties } from "react";
-import { useState } from "react";
 import { formatBeijingHHmm } from "../utils/time";
 import { Visit, Route, Anomaly } from "../types";
 import { AnomalyItem } from "./AnomalyItem";
@@ -99,20 +98,6 @@ export default function TrajectoryTimeline({
   routes,
   anomalies,
 }: TrajectoryTimelineProps) {
-  const [expandedNotes, setExpandedNotes] = useState<Set<number>>(new Set());
-
-  const toggleNote = (visitId: number) => {
-    setExpandedNotes((prev) => {
-      const next = new Set(prev);
-      if (next.has(visitId)) {
-        next.delete(visitId);
-      } else {
-        next.add(visitId);
-      }
-      return next;
-    });
-  };
-
   if (visits.length === 0) {
     return <div style={{ color: "#999", fontSize: 14 }}>暂无轨迹数据</div>;
   }
@@ -264,34 +249,24 @@ export default function TrajectoryTimeline({
               )}
 
               {v.visit_note && (
-                <div style={{ fontSize: 13, color: "#666" }}>
-                  <span style={{ color: "#999" }}>本次拜访情况：</span>
-                  <span
-                    style={{
-                      display: "inline",
-                      cursor: "pointer",
-                      whiteSpace: expandedNotes.has(v.id) ? "normal" : "nowrap",
-                      overflow: expandedNotes.has(v.id) ? "visible" : "hidden",
-                      textOverflow: expandedNotes.has(v.id) ? "clip" : "ellipsis",
-                      lineHeight: 1.5,
-                    }}
-                    onClick={() => toggleNote(v.id)}
-                    title={v.visit_note}
-                  >
-                    {v.visit_note}
-                  </span>
-                  <span
-                    onClick={() => toggleNote(v.id)}
-                    style={{
-                      color: "#1890ff",
-                      cursor: "pointer",
-                      marginLeft: 4,
-                      fontSize: 12,
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {expandedNotes.has(v.id) ? "收起" : "展开"}
-                  </span>
+                <div style={{ fontSize: 13, color: "#666", maxWidth: 500 }}>
+                  <span style={{ color: "#999", whiteSpace: "nowrap" }}>本次拜访情况：</span>
+                  <Popover content={v.visit_note} showArrow>
+                    <span
+                      style={{
+                        cursor: "default",
+                        display: "inline-block",
+                        maxWidth: "calc(500px - 6em)",
+                        verticalAlign: "bottom",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {v.visit_note}
+                    </span>
+                  </Popover>
                 </div>
               )}
 
