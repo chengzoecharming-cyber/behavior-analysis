@@ -33,28 +33,69 @@ export function isDingTalkConfigured(): boolean {
   return !!cfg.appKey && !!cfg.appSecret && !!cfg.processCode;
 }
 
+const MAX_RETRIES = 3;
+const RETRY_DELAY_MS = 1000;
+
+async function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(fn: () => Promise<T>, context: string): Promise<T> {
+  let lastError: any;
+  for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+    try {
+      return await fn();
+    } catch (err: any) {
+      lastError = err;
+      const isRetryable =
+        err.message?.includes("Unexpected token") ||
+        err.message?.includes("is not valid JSON") ||
+        err.message?.includes("timeout") ||
+        err.message?.includes("fetch failed") ||
+        err.message?.includes("DingTalk API error: 5") ||
+        err.message?.includes("DingTalk API error: 429");
+
+      if (!isRetryable || attempt === MAX_RETRIES) {
+        throw err;
+      }
+
+      console.warn(
+        `[DingTalk retry] ${context} failed (attempt ${attempt}/${MAX_RETRIES}): ${err.message}`
+      );
+      await sleep(RETRY_DELAY_MS * attempt);
+    }
+  }
+  throw lastError;
+}
+
 async function httpGet(path: string, params: Record<string, string>): Promise<any> {
   const query = new URLSearchParams(params).toString();
   const url = `${DINGTALK_API_BASE}${path}?${query}`;
-  const res = await fetch(url);
-  if (!res.ok) {
-    throw new Error(`DingTalk API error: ${res.status} ${res.statusText}`);
-  }
-  return res.json();
+
+  return withRetry(async () => {
+    const res = await fetch(url);
+    if (!res.ok) {
+      throw new Error(`DingTalk API error: ${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  }, `GET ${path}`);
 }
 
 async function httpPost(path: string, query: Record<string, string>, body: any): Promise<any> {
   const q = new URLSearchParams(query).toString();
   const url = `${DINGTALK_API_BASE}${path}?${q}`;
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!res.ok) {
-    throw new Error(`DingTalk API error: ${res.status} ${res.statusText}`);
-  }
-  return res.json();
+
+  return withRetry(async () => {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      throw new Error(`DingTalk API error: ${res.status} ${res.statusText}`);
+    }
+    return res.json();
+  }, `POST ${path}`);
 }
 
 export async function getAccessToken(): Promise<string> {

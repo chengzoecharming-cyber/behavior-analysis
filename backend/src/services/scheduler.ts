@@ -205,8 +205,8 @@ export function startDingTalkSyncScheduler(): void {
     console.error("[Scheduler] Catch-up sync failed:", err);
   });
 
-  // 基础同步：每天 8:00、14:00、20:00 同步最近 3 天
-  const baseSyncHours = [8, 14, 20];
+  // 基础同步：每 3 小时同步最近 3 天（8:00, 11:00, 14:00, 17:00, 20:00, 23:00）
+  const baseSyncHours = [8, 11, 14, 17, 20, 23];
   for (const hour of baseSyncHours) {
     const scheduleBaseSync = () => {
       const ms = getMillisecondsUntil(hour, 0);
