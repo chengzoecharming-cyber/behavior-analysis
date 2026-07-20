@@ -248,6 +248,7 @@ export default function MapContainer({
         const isPublic = isPublicTransportVisit(v);
         const isStart = idx === 0;
         const isEnd = idx === sorted.length - 1;
+        const isRunningApproval = v.approval_status === "RUNNING";
         let label: string;
         let bgColor: string;
 
@@ -257,7 +258,8 @@ export default function MapContainer({
         } else if (isStart) {
           label = "起";
           bgColor = "#52c41a";
-        } else if (isEnd) {
+        } else if (isEnd && !isRunningApproval) {
+          // 审批已结束时，最后一个点才标"终"；RUNNING 时继续用"途n"
           label = "终";
           bgColor = "#ff4d4f";
         } else {
@@ -265,11 +267,19 @@ export default function MapContainer({
           bgColor = "#1890ff";
         }
 
-        // 起、终标记设置一定透明度，重合时也能看到下方标记
-        const opacity = !isPublic && (isStart || isEnd) ? 0.85 : 1;
+        // 起、终（含 RUNNING 时的虚拟终点）标记设置一定透明度，重合时也能看到下方标记
+        const opacity = !isPublic && (isStart || (isEnd && !isRunningApproval)) ? 0.85 : 1;
         // 终点在重合时位于更上层，保证"终"可见
         const zIndex =
-          sameStartEnd && isEnd && !isPublic ? 120 : isStart && !isPublic ? 110 : isEnd && !isPublic ? 100 : isPublic ? 130 : 90;
+          sameStartEnd && isEnd && !isPublic && !isRunningApproval
+            ? 120
+            : isStart && !isPublic
+            ? 110
+            : isEnd && !isPublic && !isRunningApproval
+            ? 100
+            : isPublic
+            ? 130
+            : 90;
 
         const markerTitle = v.special_sign_reason
           ? v.location_name || v.special_sign_reason

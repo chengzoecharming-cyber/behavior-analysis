@@ -208,11 +208,11 @@ export async function processParsedVisits(
       `INSERT INTO visits
        (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
         location_name, address, customer_name, source,
-        approval_id, sequence, trip_type, vehicle, start_odometer, end_odometer,
+        approval_id, approval_status, sequence, trip_type, vehicle, start_odometer, end_odometer,
         reported_distance_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
         business_date)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24)
+               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
        RETURNING id`,
       [
         rawVisitId,
@@ -227,6 +227,7 @@ export async function processParsedVisits(
         visit.customer_name,
         source,
         visit.approval_id ?? null,
+        visit.approval_status ?? null,
         visit.sequence ?? 0,
         visit.trip_type ?? null,
         visit.vehicle ?? null,

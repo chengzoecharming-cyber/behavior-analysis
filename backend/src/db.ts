@@ -75,6 +75,7 @@ export async function initDB(): Promise<void> {
 
       -- 扩展业务字段
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS approval_id VARCHAR(64);
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS approval_status VARCHAR(32);
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS sequence INTEGER DEFAULT 0;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS trip_type VARCHAR(64);
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS vehicle VARCHAR(128);

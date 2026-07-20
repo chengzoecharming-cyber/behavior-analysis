@@ -817,15 +817,64 @@ function isMultiStopRouteForm(instance: any): boolean {
 // 从表单关联字段、OpenDataField、TableField 等值中提取可读的名称
 function extractReadableName(value: string): string {
   if (!value || value === "null") return "";
+
+  function cleanCustomerName(v: string): string {
+    if (!v) return "";
+    return v
+      .replace(/^客户名称[：:]/, "")
+      .replace(/^客户[：:]/, "")
+      .trim();
+  }
+
   try {
     const parsed = JSON.parse(value);
-    if (typeof parsed === "string") return parsed;
-    if (Array.isArray(parsed)) {
-      return parsed.map((item: any) => item?.name || item?.label || item?.title || "").filter(Boolean).join(", ");
+
+    if (typeof parsed === "string") {
+      return cleanCustomerName(parsed);
     }
-    return parsed?.name || parsed?.label || parsed?.title || "";
+
+    if (Array.isArray(parsed)) {
+      const names: string[] = [];
+      const seen = new Set<string>();
+      const addName = (raw: string) => {
+        const cleaned = cleanCustomerName(raw);
+        if (cleaned && !seen.has(cleaned)) {
+          seen.add(cleaned);
+          names.push(cleaned);
+        }
+      };
+
+      for (const item of parsed) {
+        if (typeof item === "string") {
+          addName(item);
+        } else if (item?.value) {
+          addName(item.value);
+        } else if (item?.label) {
+          addName(item.label);
+        } else if (item?.rowValue && Array.isArray(item.rowValue)) {
+          // TableField 结构：rowValue 里包含 OpenDataField 子项
+          for (const rv of item.rowValue) {
+            if (rv?.value) {
+              addName(rv.value);
+            } else if (rv?.label) {
+              addName(rv.label);
+            } else if (typeof rv === "string") {
+              addName(rv);
+            }
+          }
+        }
+      }
+      return names.join(", ");
+    }
+
+    if (parsed?.value) return cleanCustomerName(parsed.value);
+    if (parsed?.name) return cleanCustomerName(parsed.name);
+    if (parsed?.label) return cleanCustomerName(parsed.label);
+    if (parsed?.title) return cleanCustomerName(parsed.title);
+
+    return "";
   } catch {
-    return value.length > 50 ? "" : value;
+    return cleanCustomerName(value);
   }
 }
 
@@ -838,6 +887,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     const parsed = parseApprovalForm(formComponents);
     if (!parsed.user_name) parsed.user_name = instance.originator_user_name || "";
     parsed.user_id = instance.originator_userid || instance.originatorUserId || "";
+    (parsed as any).approval_status = instance.status || instance.result || "";
     if (!parsed.time) return [];
     return [parsed as ParsedVisit];
   }
@@ -847,6 +897,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
   const originatorUserName = instance.originator_user_name || instance.originatorUserName || "";
   const department = instance.originator_dept_name || instance.originatorDeptName || "销售部";
   const approvalId = instance.business_id || instance.businessId || instance.process_instance_id || instance.processInstanceId || "";
+  const approvalStatus = instance.status || instance.result || "";
 
   const findValue = (pattern: RegExp): string | undefined => {
     for (const c of formComponents) {
@@ -979,6 +1030,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
       lat: stop.parsed!.lat,
       lng: stop.parsed!.lng,
       approval_id: approvalId,
+      approval_status: approvalStatus,
       sequence,
       trip_type: tripType,
       vehicle,

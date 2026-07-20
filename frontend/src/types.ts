@@ -25,6 +25,7 @@ export interface Visit {
   photos?: string[];
   geocode_status?: string;
   source_detail?: string;
+  approval_status?: string;
 }
 
 export interface RawVisit {

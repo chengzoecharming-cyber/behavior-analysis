@@ -104,6 +104,7 @@ export interface ParsedVisit {
   lat: number | null;
   lng: number | null;
   approval_id?: string;
+  approval_status?: string;
   sequence?: number;
   trip_type?: string;
   vehicle?: string;
