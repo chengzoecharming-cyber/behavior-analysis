@@ -49,18 +49,17 @@ function formatAddress(value?: string | null): string {
 }
 
 function buildTagForAnomaly(anomaly: Anomaly): AnomalyTagItem | null {
-  if (
-    anomaly.type === "mileage_deviation" ||
-    anomaly.type === "route_detour" ||
-    anomaly.type === "mileage_reading_invalid"
-  ) {
-    return { key: `mileage_${anomaly.id}`, label: "里程异常", anomaly };
-  }
-  if (anomaly.type === "invalid_trip_type") {
-    return { key: `invalid_trip_${anomaly.id}`, label: "异常出行", anomaly };
+  // Timeline 只展示事实层标签
+  if (anomaly.layer && anomaly.layer !== "fact") return null;
+
+  if (anomaly.type === "mileage_reading_invalid") {
+    return { key: `mileage_${anomaly.id}`, label: "填报异常", anomaly };
   }
   if (anomaly.type === "missing_special_reason") {
     return { key: `missing_reason_${anomaly.id}`, label: "缺原因", anomaly };
+  }
+  if (anomaly.type === "duplicate_location") {
+    return { key: `duplicate_${anomaly.id}`, label: "重复签到", anomaly };
   }
   return null;
 }

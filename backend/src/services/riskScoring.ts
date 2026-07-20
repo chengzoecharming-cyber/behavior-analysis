@@ -6,6 +6,7 @@ export interface RiskReason {
   description: string;
   severity: "low" | "medium" | "high";
   count: number;
+  counted_in_score: boolean;
 }
 
 export interface RiskScoreResult {
@@ -46,13 +47,19 @@ export async function calculateRiskScore(anomalies: Anomaly[]): Promise<RiskScor
 
   for (const [type, info] of Object.entries(grouped)) {
     const weight = weights[type]?.weight ?? 0.05; // 未配置权重的异常给一个很低的默认权重
-    const typeScore = weight * info.count * 100;
-    score += typeScore;
+    const layer = weights[type]?.layer;
+    // 只有判定层（judge）的规则参与风险分计算；事实层/分析层只作为原因展示，不计分
+    const countedInScore = layer === "judge";
+    if (countedInScore) {
+      const typeScore = weight * info.count * 100;
+      score += typeScore;
+    }
     reasons.push({
       type,
       description: info.description,
       severity: info.severity,
       count: info.count,
+      counted_in_score: countedInScore,
     });
   }
 

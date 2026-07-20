@@ -7,6 +7,7 @@ import {
   Toast,
   Spin,
   Typography,
+  Tag,
 } from "@douyinfe/semi-ui";
 import { IconRefresh } from "@douyinfe/semi-icons";
 import { fetchAnomalyWeights, updateAnomalyWeight } from "../api";
@@ -72,6 +73,25 @@ function RulesConfigPage() {
       title: "Key",
       dataIndex: "rule_key",
       width: 180,
+    },
+    {
+      title: "层级",
+      dataIndex: "layer",
+      width: 100,
+      render: (layer: string | null) => {
+        const colorMap: Record<string, string> = {
+          fact: "blue",
+          analyze: "light-blue",
+          judge: "purple",
+        };
+        const labelMap: Record<string, string> = {
+          fact: "事实层",
+          analyze: "分析层",
+          judge: "判定层",
+        };
+        if (!layer) return <Text type="tertiary">未分类</Text>;
+        return <Tag color={(colorMap[layer] || "default") as any}>{labelMap[layer] || layer}</Tag>;
+      },
     },
     {
       title: "权重",
@@ -163,11 +183,13 @@ function RulesConfigPage() {
           评分说明
         </Title>
         <Text type="tertiary">
-          风险分 = Σ(命中规则权重 × 命中次数 × 100)，最高 100 分。
+          风险分 = Σ(判定层规则权重 × 命中次数 × 100)，最高 100 分。
           <br />
           ≥70 分为高风险，≥40 分为可疑，&lt;40 分为正常。
           <br />
-          关闭某条规则后，该规则不再参与风险评分。
+          事实层规则只用于展示数据问题，不参与风险评分。
+          <br />
+          关闭某条规则后，该规则不再参与检测与评分。
         </Text>
       </div>
     </div>

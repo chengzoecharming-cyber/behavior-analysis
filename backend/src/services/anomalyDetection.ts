@@ -3,6 +3,10 @@ import { computeMileageSegments } from "./mileageAnalysis";
 import { getEnabledAnomalyWeights, AnomalyWeight } from "./anomalyWeights";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import {
+  loadUserHomeAddresses,
+  isHomeAddress,
+} from "./addressWhitelistService";
+import {
   getBeijingWeekday,
   parseDateTimeAsBeijing,
   toBeijingDayStart,
@@ -23,6 +27,21 @@ export interface AnomalyDetectionContext {
 function getThreshold(config: AnomalyWeight | undefined, defaultValue: number): number {
   if (!config) return defaultValue;
   return config.threshold_value ?? defaultValue;
+}
+
+function getRuleLayer(type: string): "fact" | "analyze" | "judge" | null {
+  const map: Record<string, "fact" | "analyze" | "judge"> = {
+    low_visit_count: "judge",
+    duplicate_location: "fact",
+    mileage_deviation: "judge",
+    long_stop: "analyze",
+    long_idle: "analyze",
+    route_detour: "analyze",
+    invalid_trip_type: "fact",
+    missing_special_reason: "fact",
+    mileage_reading_invalid: "fact",
+  };
+  return map[type] || null;
 }
 
 function isWorkday(date: Date): boolean {
@@ -100,22 +119,53 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
-  // 2. 重复签到：过去两周同一地点重复签到>=阈值
+  // 2. 重复签到：过去两周同一地点重复签到>=阈值（已排除员工住址）
   const duplicateConfig = weights["duplicate_location"];
   if (duplicateConfig && visitsPast2Weeks) {
-    const threshold = getThreshold(duplicateConfig, 7);
+    const threshold = getThreshold(duplicateConfig, 8);
     const startDate = new Date(dayStart);
     startDate.setTime(startDate.getTime() - 14 * 24 * 60 * 60 * 1000);
 
-    const locationCounts: Record<string, { count: number; lat: number | null; lng: number | null; name: string; visitIds: number[] }> = {};
+    // 加载员工住址并排除命中白名单的 visit
+    const homeAddressMap = await loadUserHomeAddresses([ctx.userId]);
+    const homeAddress = homeAddressMap.get(ctx.userId);
+    const homeVisitIdSet = new Set<number>();
+    if (homeAddress) {
+      await Promise.all(
+        visitsPast2Weeks.map(async (v) => {
+          if (await isHomeAddress(v, homeAddress)) {
+            homeVisitIdSet.add(v.id);
+          }
+        })
+      );
+    }
+
+    const locationCounts: Record<string, {
+      count: number;
+      lat: number | null;
+      lng: number | null;
+      name: string;
+      address: string;
+      sequence: number;
+      visitIds: number[];
+    }> = {};
     for (const v of visitsPast2Weeks) {
       const d = new Date(v.timestamp);
       if (d < startDate || d > dayEnd) continue;
-      // 用 location_name + 地址聚合；坐标缺失时不能作为 key
-      const key = v.location_name?.trim() || v.address?.trim();
+      if (homeVisitIdSet.has(v.id)) continue;
+      // 优先用精确地址聚合，避免被「出发点」这类通用 location_name 误聚合
+      const key = v.address?.trim() || v.location_name?.trim();
       if (!key) continue;
       if (!locationCounts[key]) {
-        locationCounts[key] = { count: 0, lat: v.lat, lng: v.lng, name: v.location_name || v.address || "未知地点", visitIds: [] };
+        locationCounts[key] = {
+          count: 0,
+          lat: v.lat,
+          lng: v.lng,
+          name: v.location_name || v.address || "未知地点",
+          address: v.address || v.location_name || "未知地点",
+          sequence: v.sequence ?? 0,
+          visitIds: [],
+        };
       }
       locationCounts[key].count++;
       locationCounts[key].visitIds.push(v.id);
@@ -123,18 +173,26 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
 
     for (const [_, info] of Object.entries(locationCounts)) {
       if (info.count >= threshold) {
+        const excludedNote = homeAddress ? "（已排除住址）" : "（未配置住址）";
+        const sequenceLabel = info.sequence > 0 ? `途${info.sequence}` : "途";
         anomalies.push({
           id: 0,
           user_id: ctx.userId,
           type: "duplicate_location",
-          description: `过去两周在「${info.name}」重复签到 ${info.count} 次，超过 ${threshold} 次阈值`,
+          description: `过去两周重复签到 ${info.count} 次，超过 ${threshold} 次阈值 ${excludedNote}`,
           start_time: null,
           end_time: null,
           lat: info.lat,
           lng: info.lng,
           severity: info.count >= threshold + 3 ? "high" : "medium",
           related_visit_ids: info.visitIds,
-          metadata: {},
+          metadata: {
+            excluded_home_visits: homeVisitIdSet.size,
+            location_name: info.name,
+            address: info.address,
+            sequence: info.sequence,
+            sequence_label: sequenceLabel,
+          },
           created_at: new Date(),
         });
       }
@@ -291,6 +349,11 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
         });
       }
     }
+  }
+
+  // 为所有异常事件统一打上层级标签，避免在每个检测分支重复维护
+  for (const anomaly of anomalies) {
+    anomaly.layer = getRuleLayer(anomaly.type);
   }
 
   return anomalies;

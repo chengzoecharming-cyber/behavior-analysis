@@ -77,6 +77,7 @@ export interface Anomaly {
   severity: "low" | "medium" | "high";
   related_visit_ids: number[];
   metadata: Record<string, any>;
+  layer?: "fact" | "analyze" | "judge" | null;
   created_at: string;
 }
 
@@ -95,6 +96,7 @@ export interface User {
   user_id: string;
   user_name: string;
   department: string;
+  home_address?: string | null;
 }
 
 export interface AnomalyWeight {
@@ -104,9 +106,18 @@ export interface AnomalyWeight {
   weight: number;
   threshold_value: number | null;
   enabled: boolean;
+  layer: "fact" | "analyze" | "judge" | null;
   description: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface RiskReason {
+  type: string;
+  description: string;
+  severity: "low" | "medium" | "high";
+  count: number;
+  counted_in_score?: boolean;
 }
 
 export interface DingTalkSyncLog {

@@ -56,6 +56,32 @@ export function AnomalyItem({ item }: { item: Anomaly }) {
     return renderAnomalyRow(item.severity, title, description);
   }
 
+  // 重复签到：展示「途n - 具体地址」灰色 tag
+  if (item.type === "duplicate_location") {
+    const m = item.metadata || {};
+    const match = item.description.match(/重复签到\s*(\d+)\s*次/);
+    const count = match ? match[1] : "?";
+    const address = (m.address as string) || item.description.match(/「([^」]+)」/)?.[1] || "未知地址";
+    const sequenceLabel = (m.sequence_label as string) || "途";
+    const title = "重复签到";
+    const description = `过去两周重复签到 ${count} 次`;
+    const locationTag = (
+      <Tag
+        size="small"
+        style={{
+          marginTop: 6,
+          backgroundColor: "#f5f5f5",
+          border: "1px solid #d9d9d9",
+          color: "#666",
+          fontSize: 12,
+        }}
+      >
+        {sequenceLabel} - {address}
+      </Tag>
+    );
+    return renderAnomalyRow(item.severity, title, description, locationTag);
+  }
+
   // 其他异常：按类型给出标题
   const title = ANOMALY_TYPE_TITLES[item.type] || "异常";
   return renderAnomalyRow(item.severity, title, item.description);
@@ -64,7 +90,8 @@ export function AnomalyItem({ item }: { item: Anomaly }) {
 function renderAnomalyRow(
   severity: "low" | "medium" | "high",
   title: string,
-  description: string
+  description: string,
+  extra?: React.ReactNode
 ) {
   return (
     <div style={{ width: "100%" }}>
@@ -102,6 +129,7 @@ function renderAnomalyRow(
             {title}
           </div>
           <div style={{ fontSize: 13, color: "#666", marginTop: 6 }}>{description}</div>
+          {extra}
         </div>
       </div>
     </div>

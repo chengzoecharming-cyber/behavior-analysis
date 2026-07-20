@@ -209,8 +209,8 @@ router.get("/anomaly", async (req: Request, res: Response) => {
     for (const a of anomalies) {
       const r = await pool.query(
         `INSERT INTO anomalies
-         (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata, anomaly_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata, anomaly_date, layer)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
          RETURNING *`,
         [
           a.user_id,
@@ -224,6 +224,7 @@ router.get("/anomaly", async (req: Request, res: Response) => {
           a.related_visit_ids,
           a.metadata || {},
           date,
+          a.layer || null,
         ]
       );
       persisted.push(r.rows[0]);
@@ -295,7 +296,7 @@ router.get("/anomaly-weights", async (_req: Request, res: Response) => {
 
 router.put("/anomaly-weights/:key", async (req: Request, res: Response) => {
   const { key } = req.params;
-  const { weight, threshold_value, enabled, rule_name, description } = req.body;
+  const { weight, threshold_value, enabled, rule_name, description, layer } = req.body;
 
   try {
     const updated = await updateAnomalyWeight(key, {
@@ -304,6 +305,7 @@ router.put("/anomaly-weights/:key", async (req: Request, res: Response) => {
       enabled,
       rule_name,
       description,
+      layer,
     });
     if (!updated) {
       res.status(404).json({ error: "Rule not found" });

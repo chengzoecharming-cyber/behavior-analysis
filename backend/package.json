@@ -10,6 +10,7 @@
     "seed": "ts-node scripts/seed.ts",
     "fix:names": "ts-node scripts/fixUserNames.ts",
     "recompute:anomalies": "ts-node scripts/recomputeAnomalies.ts",
+    "import:addresses": "ts-node scripts/importEmployeeAddresses.ts",
     "recompute:routes": "ts-node scripts/recomputeMileageAndRoutes.ts",
     "audit:org": "ts-node scripts/orgDataAudit.ts",
     "sync:contacts": "ts-node scripts/syncDingTalkContacts.ts",

@@ -193,8 +193,8 @@ export async function computeEmployeeRiskSummary(
   for (const a of effectiveAnomalies) {
     await pool.query(
       `INSERT INTO anomalies
-       (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata, anomaly_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+       (user_id, type, description, start_time, end_time, lat, lng, severity, related_visit_ids, metadata, anomaly_date, layer)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
       [
         a.user_id,
         a.type,
@@ -207,6 +207,7 @@ export async function computeEmployeeRiskSummary(
         a.related_visit_ids,
         a.metadata || {},
         dateStr,
+        a.layer || null,
       ]
     );
   }

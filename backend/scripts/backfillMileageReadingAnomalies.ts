@@ -101,8 +101,8 @@ async function backfill(dryRun = false): Promise<void> {
       await client.query(
         `INSERT INTO anomalies
          (user_id, type, description, start_time, end_time, lat, lng,
-          severity, related_visit_ids, metadata, anomaly_date, created_at)
-         VALUES ($1, $2, $3, NULL, NULL, NULL, NULL, $4, $5, $6, $7, NOW())`,
+          severity, related_visit_ids, metadata, anomaly_date, created_at, layer)
+         VALUES ($1, $2, $3, NULL, NULL, NULL, NULL, $4, $5, $6, $7, NOW(), $8)`,
         [
           item.user_id,
           item.type,
@@ -111,6 +111,7 @@ async function backfill(dryRun = false): Promise<void> {
           item.related_visit_ids,
           JSON.stringify(item.metadata || {}),
           item.anomaly_date,
+          "fact",
         ]
       );
       inserted++;

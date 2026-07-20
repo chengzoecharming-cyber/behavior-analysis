@@ -79,6 +79,7 @@ export interface Anomaly {
   severity: "low" | "medium" | "high";
   related_visit_ids: number[];
   metadata: Record<string, any>;
+  layer?: "fact" | "analyze" | "judge" | null;
   created_at: Date;
 }
 
@@ -125,6 +126,7 @@ export interface User {
   role: "admin" | "manager" | "staff";
   manager_id: number | null;
   is_resigned: boolean;
+  home_address: string | null;
   created_at: Date;
 }
 

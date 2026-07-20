@@ -1138,10 +1138,10 @@ function ConsolePage() {
                             dataSource={overviewGroup.anomalies}
                             split={false}
                             renderItem={(item) => (
-                            <List.Item style={{ padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
-                              <AnomalyItem item={item} />
-                            </List.Item>
-                          )}
+                              <List.Item style={{ padding: "12px 0", borderBottom: "1px solid #f0f0f0" }}>
+                                <AnomalyItem item={item} />
+                              </List.Item>
+                            )}
                           />
                         )}
                       </>
