@@ -49,6 +49,7 @@ export interface OrgOverviewStat {
   totalVisits: number;
   totalEmployees: number;
   totalLocations: number;
+  totalCustomers: number;
   totalReportedKm: number;
   totalEstimatedKm: number;
   totalStopMinutes: number;
@@ -67,6 +68,11 @@ export interface OrgRankingItem {
   anomalyCount: number;
   /** 该节点是否还有可展开的下一级 */
   hasChildren: boolean;
+  /** 风险命中标记（只要下级有命中即 true） */
+  hasLowVisitCount: boolean;
+  hasDuplicateLocation: boolean;
+  hasMileageDeviation: boolean;
+  hasMileageReadingInvalid: boolean;
 }
 
 export interface OrgTrendItem {
@@ -95,6 +101,7 @@ export interface OrgOverviewResult {
     address: string;
     timestamp: string;
   }[];
+  provinceDistribution: { name: string; count: number }[];
 }
 
 /**
@@ -333,6 +340,62 @@ async function fetchVisitsForUsers(
 }
 
 /**
+ * 从地址字符串中提取省份名称。
+ * 匹配中国常见省份、直辖市、自治区、特别行政区前缀。
+ */
+function extractProvince(address: string | null): string {
+  if (!address) return "未知";
+  const trimmed = address.trim();
+  const provinces = [
+    "北京", "天津", "上海", "重庆",
+    "河北", "山西", "辽宁", "吉林", "黑龙江",
+    "江苏", "浙江", "安徽", "福建", "江西", "山东",
+    "河南", "湖北", "湖南",
+    "广东", "海南", "四川", "贵州", "云南", "陕西", "甘肃", "青海", "台湾",
+    "内蒙古", "广西", "西藏", "宁夏", "新疆",
+    "香港", "澳门",
+  ];
+  for (const p of provinces) {
+    if (trimmed.startsWith(p)) return p;
+  }
+  return "未知";
+}
+
+/**
+ * 统计指定用户范围内拜访地址的省份分布，返回 Top 5 + 其他。
+ */
+async function computeProvinceDistribution(
+  userIds: string[],
+  startDate: string,
+  endDate: string
+): Promise<{ name: string; count: number }[]> {
+  if (userIds.length === 0) return [];
+  const result = await pool.query(
+    `SELECT address FROM visits
+     WHERE user_id = ANY($1)
+       AND business_date >= $2::date
+       AND business_date <= $3::date
+       AND address IS NOT NULL AND address <> ''`,
+    [userIds, startDate, endDate]
+  );
+
+  const counts = new Map<string, number>();
+  for (const row of result.rows) {
+    const province = extractProvince(row.address);
+    counts.set(province, (counts.get(province) || 0) + 1);
+  }
+
+  const sorted = Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
+  const top5 = sorted.slice(0, 5);
+  const others = sorted.slice(5).reduce((sum, [, count]) => sum + count, 0);
+
+  return [
+    ...top5.map(([name, count]) => ({ name, count })),
+    ...(others > 0 ? [{ name: "其他", count: others }] : []),
+  ];
+}
+
+/**
  * 计算组织视角总览
  */
 export async function computeOrgOverview(
@@ -343,12 +406,13 @@ export async function computeOrgOverview(
 ): Promise<OrgOverviewResult> {
   const userIds = await resolveUserIdsForScope(scope, nodeName);
 
-  // 1. 基础统计：拜访数、员工数、地点数
+  // 1. 基础统计：拜访数、员工数、地点数、客户数
   const overviewResult = await pool.query(
     `SELECT
        COUNT(*) AS total_visits,
        COUNT(DISTINCT user_id) AS total_employees,
-       COUNT(DISTINCT CONCAT(ROUND(lat::numeric, 5), ',', ROUND(lng::numeric, 5))) AS total_locations
+       COUNT(DISTINCT CONCAT(ROUND(lat::numeric, 5), ',', ROUND(lng::numeric, 5))) AS total_locations,
+       COUNT(DISTINCT customer_name) AS total_customers
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND lat IS NOT NULL AND lng IS NOT NULL
@@ -412,6 +476,7 @@ export async function computeOrgOverview(
     totalVisits: parseInt(overviewResult.rows[0].total_visits, 10),
     totalEmployees: parseInt(overviewResult.rows[0].total_employees, 10),
     totalLocations: parseInt(overviewResult.rows[0].total_locations, 10),
+    totalCustomers: parseInt(overviewResult.rows[0].total_customers, 10) || 0,
     totalReportedKm: parseFloat(reportedResult.rows[0].total_reported_km) || 0,
     totalEstimatedKm: parseFloat(estimatedResult.rows[0].total_estimated_km) || 0,
     totalStopMinutes: parseInt(stopResult.rows[0].total_stop_minutes, 10) || 0,
@@ -427,6 +492,9 @@ export async function computeOrgOverview(
   // 8. 热力图点位
   const heatMapPoints = await computeHeatMapPoints(userIds, startDate, endDate);
 
+  // 9. 省份分布
+  const provinceDistribution = await computeProvinceDistribution(userIds, startDate, endDate);
+
   return {
     scope,
     node: nodeName,
@@ -436,6 +504,7 @@ export async function computeOrgOverview(
     ranking,
     trend,
     heatMapPoints,
+    provinceDistribution,
   };
 }
 
@@ -475,10 +544,7 @@ async function computeRanking(
         level: "department",
         visitCount: parseInt(row.visit_count, 10),
         employeeCount: parseInt(row.employee_count, 10),
-        reportedKm: childStats.reportedKm,
-        estimatedKm: childStats.estimatedKm,
-        stopMinutes: childStats.stopMinutes,
-        anomalyCount: childStats.anomalyCount,
+        ...childStats,
         hasChildren: await nodeHasChildren(deptName, "department"),
       });
     }
@@ -493,10 +559,7 @@ async function computeRanking(
         level: "department",
         visitCount: 0,
         employeeCount: 0,
-        reportedKm: salesStats.reportedKm,
-        estimatedKm: salesStats.estimatedKm,
-        stopMinutes: salesStats.stopMinutes,
-        anomalyCount: salesStats.anomalyCount,
+        ...salesStats,
         hasChildren: true, // 销售部固定可展开
       });
     } else {
@@ -551,10 +614,7 @@ async function computeRanking(
           level: "sub_department",
           visitCount: data?.visitCount ?? 0,
           employeeCount: data?.employeeCount ?? 0,
-          reportedKm: childStats.reportedKm,
-          estimatedKm: childStats.estimatedKm,
-          stopMinutes: childStats.stopMinutes,
-          anomalyCount: childStats.anomalyCount,
+          ...childStats,
           hasChildren: await nodeHasChildren(fullName, "sub_department"),
         });
       }
@@ -591,10 +651,7 @@ async function computeRanking(
         level: "sub_department",
         visitCount: parseInt(row.visit_count, 10),
         employeeCount: parseInt(row.employee_count, 10),
-        reportedKm: childStats.reportedKm,
-        estimatedKm: childStats.estimatedKm,
-        stopMinutes: childStats.stopMinutes,
-        anomalyCount: childStats.anomalyCount,
+        ...childStats,
         hasChildren: await nodeHasChildren(subDeptName, "sub_department"),
       });
     }
@@ -624,10 +681,7 @@ async function computeRanking(
       level: "person",
       visitCount: parseInt(row.visit_count, 10),
       employeeCount: 1,
-      reportedKm: childStats.reportedKm,
-      estimatedKm: childStats.estimatedKm,
-      stopMinutes: childStats.stopMinutes,
-      anomalyCount: childStats.anomalyCount,
+      ...childStats,
       hasChildren: false,
     });
   }
@@ -643,12 +697,25 @@ async function getScopeStats(
   estimatedKm: number;
   stopMinutes: number;
   anomalyCount: number;
+  hasLowVisitCount: boolean;
+  hasDuplicateLocation: boolean;
+  hasMileageDeviation: boolean;
+  hasMileageReadingInvalid: boolean;
 }> {
   if (userIds.length === 0) {
-    return { reportedKm: 0, estimatedKm: 0, stopMinutes: 0, anomalyCount: 0 };
+    return {
+      reportedKm: 0,
+      estimatedKm: 0,
+      stopMinutes: 0,
+      anomalyCount: 0,
+      hasLowVisitCount: false,
+      hasDuplicateLocation: false,
+      hasMileageDeviation: false,
+      hasMileageReadingInvalid: false,
+    };
   }
 
-  const [reported, estimated, stops, anomalies] = await Promise.all([
+  const [reported, estimated, stops, anomalies, riskCounts] = await Promise.all([
     pool.query(
       `WITH daily_approval AS (
          SELECT approval_group, MAX(reported_distance_km) AS approval_total
@@ -692,13 +759,31 @@ async function getScopeStats(
          AND anomaly_date <= $3::date`,
       [userIds, startDate, endDate]
     ),
+    pool.query(
+      `SELECT
+         COUNT(*) FILTER (WHERE type = 'low_visit_count') AS low_visit_count_count,
+         COUNT(*) FILTER (WHERE type = 'duplicate_location') AS duplicate_location_count,
+         COUNT(*) FILTER (WHERE type = 'mileage_deviation') AS mileage_deviation_count,
+         COUNT(*) FILTER (WHERE type = 'mileage_reading_invalid') AS mileage_reading_invalid_count
+       FROM anomalies
+       WHERE user_id = ANY($1)
+         AND anomaly_date >= $2::date
+         AND anomaly_date <= $3::date`,
+      [userIds, startDate, endDate]
+    ),
   ]);
+
+  const rc = riskCounts.rows[0];
 
   return {
     reportedKm: parseFloat(reported.rows[0].total) || 0,
     estimatedKm: parseFloat(estimated.rows[0].total) || 0,
     stopMinutes: parseInt(stops.rows[0].total, 10) || 0,
-    anomalyCount: parseInt(anomalies.rows[0].total, 10),
+    anomalyCount: parseInt(anomalies.rows[0].total, 10) || 0,
+    hasLowVisitCount: (parseInt(rc.low_visit_count_count, 10) || 0) > 0,
+    hasDuplicateLocation: (parseInt(rc.duplicate_location_count, 10) || 0) > 0,
+    hasMileageDeviation: (parseInt(rc.mileage_deviation_count, 10) || 0) > 0,
+    hasMileageReadingInvalid: (parseInt(rc.mileage_reading_invalid_count, 10) || 0) > 0,
   };
 }
 

@@ -3,6 +3,7 @@ import { Row, Col, Table, Spin, Typography, Tag } from "@douyinfe/semi-ui";
 import dayjs from "dayjs";
 import { fetchOrgOverview, OrgOverviewResponse, OrgRankingItem } from "../api";
 import HeatMapContainer from "./HeatMapContainer";
+import ProvinceDonutChart from "./ProvinceDonutChart";
 import { Suspense, lazy } from "react";
 
 const OverviewChart = lazy(() => import("./OverviewChart"));
@@ -146,9 +147,14 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     return (data.stats.totalVisits / dayCount).toFixed(2);
   }, [data, dayCount]);
 
-  const estimatedFuelCost = useMemo(() => {
-    if (!data) return "0.00";
-    return (data.stats.totalEstimatedKm * 0.8).toFixed(2);
+  const avgVisitsPerEmployee = useMemo(() => {
+    if (!data || data.stats.totalEmployees === 0) return "0";
+    return (data.stats.totalVisits / data.stats.totalEmployees).toFixed(2);
+  }, [data]);
+
+  const customerCoverage = useMemo(() => {
+    if (!data) return "0";
+    return String(data.stats.totalCustomers);
   }, [data]);
 
   // 懒加载下一级数据
@@ -313,6 +319,46 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
           (a?.reportedKm ?? 0) - (b?.reportedKm ?? 0),
       },
+      {
+        title: "风险标签",
+        dataIndex: "riskTags",
+        className: "risk-tag-cell",
+        render: (_: any, record: OrgRankingItem) => {
+          const allTags = [
+            { key: "hasLowVisitCount" as const, label: "拜访量不足", color: "purple" as const },
+            { key: "hasDuplicateLocation" as const, label: "重复签到", color: "cyan" as const },
+            { key: "hasMileageDeviation" as const, label: "里程偏差", color: "red" as const },
+            { key: "hasMileageReadingInvalid" as const, label: "填报异常", color: "orange" as const },
+          ].filter((t) => record[t.key]);
+
+          const visibleTags = allTags.slice(0, 2);
+          const hiddenCount = allTags.length - visibleTags.length;
+
+          return (
+            <div style={{ display: "flex", flexWrap: "nowrap", gap: 4, paddingRight: 16 }}>
+              {visibleTags.map((t) => (
+                <Tag key={t.key} size="small" color={t.color} style={{ marginRight: 0, flexShrink: 0 }}>
+                  {t.label}
+                </Tag>
+              ))}
+              {hiddenCount > 0 && (
+                <Tag
+                  size="small"
+                  style={{
+                    backgroundColor: "#f5f5f5",
+                    border: "1px solid #e8e8e8",
+                    color: "#666",
+                    marginRight: 0,
+                    flexShrink: 0,
+                  }}
+                >
+                  +{hiddenCount}
+                </Tag>
+              )}
+            </div>
+          );
+        },
+      },
     ],
     [renderName, getNameIndent, getNameMaxWidth]
   );
@@ -367,9 +413,14 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
 
   return (
     <div>
-      {/* 指标卡：与个人周期总览保持一致 */}
+      <style>{`
+        .risk-tag-cell .semi-table-cell {
+          padding-right: 0 !important;
+        }
+      `}</style>
+      {/* 指标卡：与个人周期总览保持一致，并补充正向指标卡 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={8}>
+        <Col span={6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>填报 / 估算里程</span>
             <span style={statValueStyle}>
@@ -380,16 +431,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </span>
           </div>
         </Col>
-        <Col span={8}>
-          <div style={statStyle}>
-            <span style={statLabelStyle}>预估油费</span>
-            <span style={statValueStyle}>
-              {estimatedFuelCost}
-              <span style={{ fontSize: 12, color: "#999" }}>元</span>
-            </span>
-          </div>
-        </Col>
-        <Col span={8}>
+        <Col span={6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>拜访频率</span>
             <span style={statValueStyle}>
@@ -398,63 +440,35 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </span>
           </div>
         </Col>
+        <Col span={6}>
+          <div style={statStyle}>
+            <span style={statLabelStyle}>人均拜访次数</span>
+            <span style={statValueStyle}>
+              {avgVisitsPerEmployee}
+              <span style={{ fontSize: 12, color: "#999" }}>次/人</span>
+            </span>
+          </div>
+        </Col>
+        <Col span={6}>
+          <div style={statStyle}>
+            <span style={statLabelStyle}>客户覆盖数</span>
+            <span style={statValueStyle}>
+              {customerCoverage}
+              <span style={{ fontSize: 12, color: "#999" }}>个客户</span>
+            </span>
+          </div>
+        </Col>
       </Row>
 
-      {/* 趋势图：仅时间段展示 */}
-      {!isSingleDay && (
-        <div
-          style={{
-            backgroundColor: "#fff",
-            borderRadius: 16,
-            padding: 20,
-            marginBottom: 16,
-            height: 380,
-            display: "flex",
-            flexDirection: "column",
-          }}
-        >
-          <Title heading={6} style={{ marginBottom: 16 }}>
-            趋势分析
-          </Title>
-          {trendData.length === 0 ? (
-            <div style={{ color: "#999", flex: 1 }}>暂无趋势数据</div>
-          ) : (
-            <div
-              style={{
-                flex: 1,
-                minHeight: 0,
-                display: "flex",
-                flexDirection: "column",
-              }}
-            >
-              <Suspense fallback={<Spin />}>
-                <OverviewChart
-                  data={trendData}
-                  height="100%"
-                  onDateClick={(date) => {
-                    const params = new URLSearchParams();
-                    params.set("scope", scope);
-                    if (nodeName) params.set("node", nodeName);
-                    params.set("start", date);
-                    params.set("end", date);
-                    window.open(`/console?${params.toString()}`, "_blank");
-                  }}
-                />
-              </Suspense>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* 热力图 + 排行榜 */}
+      {/* 拜访热力图 + 排行榜 */}
       <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={14}>
+        <Col span={12}>
           <div
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
               padding: 20,
-              height: 520,
+              height: 500,
               display: "flex",
               flexDirection: "column",
             }}
@@ -467,14 +481,14 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </div>
           </div>
         </Col>
-        <Col span={10}>
+        <Col span={12}>
           <div
             className="org-ranking-card"
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
               padding: 20,
-              height: 520,
+              height: 500,
               display: "flex",
               flexDirection: "column",
             }}
@@ -499,6 +513,74 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
                   className: record ? `ranking-row-level-${getRelativeLevel(record)}` : "",
                 })}
               />
+            </div>
+          </div>
+        </Col>
+      </Row>
+
+      {/* 趋势分析 + 拜访省份分布 */}
+      <Row gutter={16} style={{ marginBottom: 16 }}>
+        {!isSingleDay && (
+          <Col span={12}>
+            <div
+              style={{
+                backgroundColor: "#fff",
+                borderRadius: 16,
+                padding: 20,
+                height: 500,
+                display: "flex",
+                flexDirection: "column",
+              }}
+            >
+              <Title heading={6} style={{ marginBottom: 16 }}>
+                趋势分析
+              </Title>
+              {trendData.length === 0 ? (
+                <div style={{ color: "#999", flex: 1 }}>暂无趋势数据</div>
+              ) : (
+                <div
+                  style={{
+                    flex: 1,
+                    minHeight: 0,
+                    display: "flex",
+                    flexDirection: "column",
+                  }}
+                >
+                  <Suspense fallback={<Spin />}>
+                    <OverviewChart
+                      data={trendData}
+                      height="100%"
+                      onDateClick={(date) => {
+                        const params = new URLSearchParams();
+                        params.set("scope", scope);
+                        if (nodeName) params.set("node", nodeName);
+                        params.set("start", date);
+                        params.set("end", date);
+                        window.open(`/console?${params.toString()}`, "_blank");
+                      }}
+                    />
+                  </Suspense>
+                </div>
+              )}
+            </div>
+          </Col>
+        )}
+        <Col span={isSingleDay ? 24 : 12}>
+          <div
+            style={{
+              backgroundColor: "#fff",
+              borderRadius: 16,
+              padding: 20,
+              height: 500,
+              display: "flex",
+              flexDirection: "column",
+            }}
+          >
+            <Title heading={6} style={{ marginBottom: 12 }}>
+              拜访省份分布
+            </Title>
+            <div style={{ flex: 1, minHeight: 0 }}>
+              <ProvinceDonutChart data={data?.provinceDistribution ?? []} />
             </div>
           </div>
         </Col>

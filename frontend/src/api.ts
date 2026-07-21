@@ -251,6 +251,11 @@ export interface OrgRankingItem {
   anomalyCount: number;
   /** 该节点是否还有可展开的下一级 */
   hasChildren: boolean;
+  /** 风险命中标记（只要下级有命中即 true） */
+  hasLowVisitCount: boolean;
+  hasDuplicateLocation: boolean;
+  hasMileageDeviation: boolean;
+  hasMileageReadingInvalid: boolean;
 }
 
 export interface OrgTrendItem {
@@ -262,6 +267,48 @@ export interface OrgTrendItem {
   anomalyCount: number;
 }
 
+export interface CompanyDashboardSummary {
+  totalVisits: number;
+  activeEmployees: number;
+  customerCoverage: number;
+  avgVisitFrequency: number;
+}
+
+export interface WeeklyTrendItem {
+  week: string;
+  weekStart: string;
+  weekEnd: string;
+  visitCount: number;
+  avgVisitsPerEmployee: number;
+  reportedKm: number;
+  estimatedKm: number;
+  activeEmployees: number;
+}
+
+export interface WordCloudEmployee {
+  userId: string;
+  userName: string;
+  department: string;
+  visitCount: number;
+  anomalyCount: number;
+}
+
+export interface DepartmentRadarItem {
+  department: string;
+  avgVisitsPerEmployee: number;
+  avgCustomerCoverage: number;
+  avgEstimatedKm: number;
+}
+
+export interface CompanyDashboardResponse {
+  start: string;
+  end: string;
+  summary: CompanyDashboardSummary;
+  weeklyTrend: WeeklyTrendItem[];
+  employeeWordCloud: WordCloudEmployee[];
+  departmentRadar: DepartmentRadarItem[];
+}
+
 export interface OrgOverviewResponse {
   scope: "company" | "department" | "sub_department";
   node: string;
@@ -271,6 +318,7 @@ export interface OrgOverviewResponse {
     totalVisits: number;
     totalEmployees: number;
     totalLocations: number;
+    totalCustomers: number;
     totalReportedKm: number;
     totalEstimatedKm: number;
     totalStopMinutes: number;
@@ -287,6 +335,7 @@ export interface OrgOverviewResponse {
     address: string;
     timestamp: string;
   }[];
+  provinceDistribution: { name: string; count: number }[];
 }
 
 export async function fetchRegionalOverview(
@@ -313,6 +362,16 @@ export async function fetchDingTalkOrgTree(): Promise<OrgTreeNode[]> {
 export async function fetchDingTalkOrgUsers(): Promise<User[]> {
   const res = await api.get("/dingtalk/users");
   return res.data.users || [];
+}
+
+export async function fetchCompanyDashboard(
+  start: string,
+  end: string
+): Promise<CompanyDashboardResponse> {
+  const res = await api.get("/analytics/company-dashboard", {
+    params: { start, end },
+  });
+  return res.data;
 }
 
 export async function fetchOrgOverview(

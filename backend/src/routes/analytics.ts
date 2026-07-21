@@ -28,6 +28,7 @@ import {
   getCurrentBusinessWeekRange,
   getPreviousBusinessWeekRange,
 } from "../utils/businessPeriod";
+import { computeCompanyDashboard } from "../services/companyDashboard";
 
 const router = Router();
 
@@ -449,5 +450,23 @@ router.get("/risk-score", async (req: Request, res: Response) => {
 });
 
 import { calculateRiskScore, getRiskLevel } from "../services/riskScoring";
+
+// 公司级 Dashboard
+router.get("/company-dashboard", async (req: Request, res: Response) => {
+  const { start, end } = req.query;
+
+  if (!start || !end) {
+    res.status(400).json({ error: "Missing start or end parameter" });
+    return;
+  }
+
+  try {
+    const result = await computeCompanyDashboard(start as string, end as string);
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to compute company dashboard:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
 
 export default router;
