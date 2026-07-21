@@ -28,6 +28,7 @@ import {
   getLastThreeWeeksRange,
   getLastMonthRange,
 } from "../utils/businessPeriod";
+import { isMileageRequiredTrip } from "../utils/tripType";
 import {
   fetchAvailableDates,
   fetchVisits,
@@ -715,6 +716,12 @@ function ConsolePage() {
       const groupRoutes = routes.filter(
         (r) => groupVisitIds.has(r.from_visit_id) && groupVisitIds.has(r.to_visit_id)
       );
+      const visitMap = new Map(groupVisits.map((v) => [v.id, v]));
+      const drivingRoutes = groupRoutes.filter(
+        (r) =>
+          isMileageRequiredTrip(visitMap.get(r.from_visit_id)?.trip_type) &&
+          isMileageRequiredTrip(visitMap.get(r.to_visit_id)?.trip_type)
+      );
       const groupStops = stops.filter((s) =>
         s.visit_ids.some((id) => groupVisitIds.has(id))
       );
@@ -722,10 +729,11 @@ function ConsolePage() {
         a.related_visit_ids.some((id) => groupVisitIds.has(id))
       );
       const reportedValues = groupVisits
+        .filter((v) => isMileageRequiredTrip(v.trip_type))
         .map((v) => v.reported_distance_km)
         .filter((d): d is number => d != null && d > 0 && d <= MAX_MILEAGE_KM);
       const reportedDistanceKm = reportedValues.length > 0 ? Math.max(...reportedValues) : 0;
-      const totalKm = groupRoutes.reduce((sum, r) => sum + r.distance_km, 0);
+      const totalKm = drivingRoutes.reduce((sum, r) => sum + r.distance_km, 0);
 
       groups.set(key, {
         key,
@@ -738,7 +746,7 @@ function ConsolePage() {
           user_id: userId || "",
           totalKm: parseFloat(totalKm.toFixed(2)),
           reportedDistanceKm: parseFloat(reportedDistanceKm.toFixed(2)),
-          segmentCount: groupRoutes.length,
+          segmentCount: drivingRoutes.length,
           estimatedFuelCost: parseFloat((totalKm * 0.8).toFixed(2)),
         },
       });

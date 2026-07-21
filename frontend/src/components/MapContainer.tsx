@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, ReactNode } from "react";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import { Visit, Stop, Route, Anomaly } from "../types";
 import { formatBeijingHHmm, formatBeijingTime } from "../utils/time";
+import { isMileageRequiredTrip } from "../utils/tripType";
 import { Card, Descriptions, Button, Tag, Image } from "@douyinfe/semi-ui";
 
 export interface RouteGroup {
@@ -110,6 +111,10 @@ function getMarkerContent(
     ? `<div style="position:absolute;top:-2px;right:-2px;width:10px;height:10px;border-radius:50%;background:#fa8c16;border:1px solid #fff;"></div>`
     : "";
   return `<div style="position:relative;width:28px;height:28px;border-radius:50%;background:${bgColor};color:${textColor};display:flex;align-items:center;justify-content:center;font-size:13px;font-weight:600;border:2px solid #fff;box-shadow:0 1px 4px rgba(0,0,0,.35);opacity:${opacity}">${label}${badge}</div>`;
+}
+
+function isNonDrivingVisit(visit: Visit): boolean {
+  return !isMileageRequiredTrip(visit.trip_type);
 }
 
 function isPublicTransportVisit(visit: Visit): boolean {
@@ -235,6 +240,37 @@ export default function MapContainer({
         colorLine.setMap(mapInstance.current);
         polylines.current.push(colorLine);
         coloredLinesRef.current[group.key] = colorLine;
+
+        // 非驾车段用紫色虚线叠加
+        const visitMap = new Map(uniqueVisits.map((v) => [v.id, v]));
+        group.routes.forEach((route) => {
+          const from = visitMap.get(route.from_visit_id);
+          const to = visitMap.get(route.to_visit_id);
+          if (
+            from &&
+            to &&
+            (!isMileageRequiredTrip(from.trip_type) ||
+              !isMileageRequiredTrip(to.trip_type))
+          ) {
+            const segmentPath = route.polyline
+              .split(";")
+              .map((pt) => {
+                const [lng, lat] = pt.split(",").map(Number);
+                return [lng, lat] as [number, number];
+              });
+            const dashedLine = new AMap.Polyline({
+              path: segmentPath,
+              strokeColor: "#a855f7",
+              strokeWeight: 5,
+              strokeOpacity: 0.9,
+              strokeStyle: "dashed",
+              strokeDasharray: [6, 6],
+              zIndex: 10,
+            });
+            dashedLine.setMap(mapInstance.current);
+            polylines.current.push(dashedLine);
+          }
+        });
       }
 
       // 标记点：起 / 终 / 途N
@@ -478,18 +514,18 @@ export default function MapContainer({
               )}
               {selectedVisit.trip_type && (
                 <DescItem label="出行方式">
-                  <Tag color={isPublicTransportVisit(selectedVisit) ? "purple" : "blue"}>
+                  <Tag color={isNonDrivingVisit(selectedVisit) ? "purple" : "blue"}>
                     {selectedVisit.trip_type}
                   </Tag>
                 </DescItem>
               )}
-              {!isPublicTransportVisit(selectedVisit) &&
+              {!isNonDrivingVisit(selectedVisit) &&
                 selectedVisit.reported_distance_km !== undefined && (
                   <DescItem label="填报里程">
                     {selectedVisit.reported_distance_km} km
                   </DescItem>
                 )}
-              {!isPublicTransportVisit(selectedVisit) && selectedVisit.vehicle && (
+              {!isNonDrivingVisit(selectedVisit) && selectedVisit.vehicle && (
                 <DescItem label="交通工具">{selectedVisit.vehicle}</DescItem>
               )}
             </Descriptions>

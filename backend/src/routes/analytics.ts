@@ -5,6 +5,7 @@ import { detectStops } from "../services/stopDetection";
 
 import { computeAndPersistRoutes } from "../services/routeService";
 import { MAX_MILEAGE_KM } from "../services/mileageConfig";
+import { isMileageRequiredTrip } from "../services/tripType";
 import {
   computeMileageSegments,
   computeMileageStats,
@@ -76,6 +77,16 @@ router.get("/mileage", async (req: Request, res: Response) => {
       return;
     }
 
+    const visitsResult = await pool.query(
+      `SELECT * FROM visits
+       WHERE user_id = $1
+         AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+       ORDER BY timestamp ASC`,
+      [user, rangeStart, rangeEnd]
+    );
+    const visits: Visit[] = visitsResult.rows;
+
     let routesResult = await pool.query(
       `SELECT * FROM routes
        WHERE user_id = $1
@@ -106,27 +117,11 @@ router.get("/mileage", async (req: Request, res: Response) => {
       );
     }
 
-    const totalKm = routes.reduce((sum, r) => sum + r.distance_km, 0);
-
-    // 计算填报总里程：钉钉的 reported_distance_km 是累计值，
-    // 同一 approval_id 内应取最后一个累计值（MAX），再跨审批求和。
-    const reportedResult = await pool.query(
-      `SELECT approval_group, MAX(reported_distance_km) AS trip_total
-       FROM (
-         SELECT reported_distance_km,
-                COALESCE(approval_id, user_id || '_' || business_date::text) AS approval_group
-         FROM visits
-         WHERE user_id = $1
-           AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-           AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-           AND (trip_type IS NULL OR trip_type NOT LIKE '%公共交通%')
-       ) t
-       WHERE reported_distance_km > 0 AND reported_distance_km <= $4
-       GROUP BY approval_group`,
-      [user, rangeStart, rangeEnd, MAX_MILEAGE_KM]
-    );
-    const reportedDistanceKm = reportedResult.rows.reduce(
-      (sum: number, row: any) => sum + (row.trip_total ? parseFloat(row.trip_total) : 0),
+    // 仅驾车行程参与里程统计：估算里程和填报里程均来自 computeMileageSegments 过滤后的段
+    const segments = await computeMileageSegments(visits);
+    const totalKm = segments.reduce((sum, seg) => sum + seg.gaode_distance_km, 0);
+    const reportedDistanceKm = segments.reduce(
+      (sum, seg) => sum + seg.reported_distance_km,
       0
     );
 
@@ -135,7 +130,7 @@ router.get("/mileage", async (req: Request, res: Response) => {
       ...responseDate,
       totalKm: parseFloat(totalKm.toFixed(2)),
       reportedDistanceKm: parseFloat(reportedDistanceKm.toFixed(2)),
-      segmentCount: routes.length,
+      segmentCount: segments.length,
       estimatedFuelCost: parseFloat((totalKm * 0.8).toFixed(2)), // 假设 0.8 元/km
     });
   } catch (err) {

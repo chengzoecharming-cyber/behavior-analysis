@@ -3,6 +3,7 @@ import { computeMileageSegments, MileageSegment } from "./mileageAnalysis";
 import { getEnabledAnomalyWeights, AnomalyWeight } from "./anomalyWeights";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { pool } from "../db";
+import { isMileageRequiredTrip } from "./tripType";
 import {
   loadUserHomeAddresses,
   isHomeAddress,
@@ -518,6 +519,12 @@ export function detectMileageReadingInvalid(visits: Visit[]): Anomaly[] {
   const anomalies: Anomaly[] = [];
 
   for (const [approvalId, groupVisits] of groups) {
+    // 非驾车行程不需要里程读数，直接跳过
+    const hasNonDriving = groupVisits.some(
+      (v) => !isMileageRequiredTrip(v.trip_type)
+    );
+    if (hasNonDriving) continue;
+
     const hasOdometer = groupVisits.some(
       (v) => v.start_odometer != null || v.end_odometer != null
     );

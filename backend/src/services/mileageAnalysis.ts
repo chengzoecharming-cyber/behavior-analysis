@@ -2,6 +2,7 @@ import { Visit, Route } from "../types";
 import { pool } from "../db";
 import { planRoute } from "./routePlanning";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
+import { isMileageRequiredTrip } from "./tripType";
 
 export interface MileageSegment {
   user_id: string;
@@ -54,10 +55,10 @@ export async function computeMileageSegments(
     const prev = sorted[i - 1];
     const curr = sorted[i];
     if (approvalGroupKey(prev) !== approvalGroupKey(curr)) continue;
-    // 公共交通不参与里程偏差计算
+    // 只有驾车行程（含两端）才参与里程偏差计算
     if (
-      prev.trip_type?.includes("公共交通") ||
-      curr.trip_type?.includes("公共交通")
+      !isMileageRequiredTrip(prev.trip_type) ||
+      !isMileageRequiredTrip(curr.trip_type)
     ) {
       continue;
     }
