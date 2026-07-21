@@ -56,15 +56,20 @@ export async function computeUserOverview(
     [userId, startDate, endDate]
   );
 
-  // 2. 每日填报里程：按 approval_id 取最大值，再跨 approval 求和
+  // 2. 每日填报里程：仅统计驾车行程，按 approval_id 取最大值，再跨 approval 求和
   const reportedResult = await pool.query(
-    `WITH daily_approval AS (
-       SELECT business_date, approval_id, MAX(reported_distance_km) AS approval_total
+    `WITH driving_visits AS (
+       SELECT business_date, approval_id, reported_distance_km
        FROM visits
        WHERE user_id = $1
          AND business_date >= $2::date
          AND business_date <= $3::date
-         AND reported_distance_km > 0
+         AND (trip_type IS NULL OR trip_type LIKE '%开车%' OR trip_type LIKE '%驾车%')
+     ),
+     daily_approval AS (
+       SELECT business_date, approval_id, MAX(reported_distance_km) AS approval_total
+       FROM driving_visits
+       WHERE reported_distance_km > 0
          AND reported_distance_km <= $4
        GROUP BY business_date, approval_id
      )
@@ -75,15 +80,19 @@ export async function computeUserOverview(
     [userId, startDate, endDate, MAX_MILEAGE_KM]
   );
 
-  // 3. 每日估算里程
+  // 3. 每日估算里程：仅统计两端都是驾车行程的 route
   const routeResult = await pool.query(
-    `SELECT business_date, COALESCE(SUM(distance_km), 0) AS estimated_distance_km
-     FROM routes
-     WHERE user_id = $1
-       AND business_date >= $2::date
-       AND business_date <= $3::date
-     GROUP BY business_date
-     ORDER BY business_date`,
+    `SELECT r.business_date, COALESCE(SUM(r.distance_km), 0) AS estimated_distance_km
+     FROM routes r
+     JOIN visits fv ON r.from_visit_id = fv.id
+     JOIN visits tv ON r.to_visit_id = tv.id
+     WHERE r.user_id = $1
+       AND r.business_date >= $2::date
+       AND r.business_date <= $3::date
+       AND (fv.trip_type IS NULL OR fv.trip_type LIKE '%开车%' OR fv.trip_type LIKE '%驾车%')
+       AND (tv.trip_type IS NULL OR tv.trip_type LIKE '%开车%' OR tv.trip_type LIKE '%驾车%')
+     GROUP BY r.business_date
+     ORDER BY r.business_date`,
     [userId, startDate, endDate]
   );
 
