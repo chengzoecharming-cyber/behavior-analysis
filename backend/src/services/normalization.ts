@@ -90,59 +90,15 @@ export async function checkDuplicateVisit(
 
 async function computeBusinessDates(
   parsedVisits: ParsedVisit[],
-  source: "excel" | "dingtalk"
+  _source: "excel" | "dingtalk"
 ): Promise<string[]> {
-  const result: string[] = [];
-
-  if (source !== "dingtalk") {
-    for (const visit of parsedVisits) {
-      const ts = normalizeTimestamp(visit.time);
-      result.push(formatBeijingDate(ts));
-    }
-    return result;
-  }
-
-  // 钉钉数据：按 approval_id 分组，取审批发起时间（fallback 最早签到时间）作为业务日期
-  const groups = new Map<string, ParsedVisit[]>();
-  for (let i = 0; i < parsedVisits.length; i++) {
-    const visit = parsedVisits[i];
-    const approvalId = visit.approval_id || "_no_approval";
-    if (!groups.has(approvalId)) groups.set(approvalId, []);
-    groups.get(approvalId)!.push(visit);
-  }
-
-  const dateByVisit = new Map<ParsedVisit, string>();
-  for (const [approvalId, visits] of groups) {
-    if (approvalId === "_no_approval") {
-      for (const visit of visits) {
-        dateByVisit.set(visit, formatBeijingDate(normalizeTimestamp(visit.time)));
-      }
-      continue;
-    }
-
-    const approvalResult = await pool.query(
-      `SELECT create_time FROM raw_approvals WHERE approval_id = $1 LIMIT 1`,
-      [approvalId]
-    );
-
-    let businessDate: string;
-    if (approvalResult.rows.length > 0 && approvalResult.rows[0].create_time) {
-      businessDate = formatBeijingDate(approvalResult.rows[0].create_time);
-    } else {
-      const timestamps = visits.map((v) => normalizeTimestamp(v.time).getTime());
-      businessDate = formatBeijingDate(new Date(Math.min(...timestamps)));
-    }
-
-    for (const visit of visits) {
-      dateByVisit.set(visit, businessDate);
-    }
-  }
-
-  for (const visit of parsedVisits) {
-    result.push(dateByVisit.get(visit)!);
-  }
-
-  return result;
+  // 业务日期统一按实际签到时间（北京时间）计算。
+  // 钉钉审批单的创建时间可能早于或晚于实际签到时间（补卡/提前提交），
+  // 而外勤分析关心的是员工真实发生拜访的日期，因此以 visit.time 为准。
+  return parsedVisits.map((visit) => {
+    const ts = normalizeTimestamp(visit.time);
+    return formatBeijingDate(ts);
+  });
 }
 
 export async function processParsedVisits(

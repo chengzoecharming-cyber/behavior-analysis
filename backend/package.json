@@ -13,6 +13,7 @@
     "recompute:anomalies": "ts-node scripts/recomputeAnomalies.ts",
     "import:addresses": "ts-node scripts/importEmployeeAddresses.ts",
     "recompute:routes": "ts-node scripts/recomputeMileageAndRoutes.ts",
+    "recompute:business-dates": "ts-node scripts/recomputeBusinessDates.ts",
     "audit:org": "ts-node scripts/orgDataAudit.ts",
     "sync:contacts": "ts-node scripts/syncDingTalkContacts.ts",
     "f9:normalize-user-ids": "ts-node scripts/f9NormalizeUserIds.ts",

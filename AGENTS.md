@@ -164,6 +164,17 @@ map/
 - 查询接口把前端传入的日期按 `+08:00` 解释。
 - 转换逻辑集中在 `backend/src/services/utils/timezone.ts`。
 
+### 业务日期（business_date）规则
+
+`visits.business_date` 用于控制台、决策页、排行榜、趋势分析等所有聚合口径，**统一按员工实际签到时间（北京时间）计算**。
+
+- Excel 数据：取 `visit.time` 的北京时间日期。
+- 钉钉数据：取审批单内每条签到记录的 `visit.time` 的北京时间日期，而不是审批单创建时间。
+
+为什么不用审批单创建时间？钉钉审批单可能提前提交或事后补卡，创建时间与真实拜访时间可能不一致。外勤行为分析关注的是「员工哪天真实发生了拜访」，因此业务日期以实际签到时间为准。审批单创建时间仅作为 metadata 保留在 `raw_approvals` 中，用于和钉钉后台对账。
+
+历史数据需要按此规则重算时，执行 `cd backend && npm run recompute:business-dates`。
+
 ### 定时任务
 
 后端启动时注册两个定时任务（`backend/src/services/scheduler.ts`），均按北京时间每天执行：
