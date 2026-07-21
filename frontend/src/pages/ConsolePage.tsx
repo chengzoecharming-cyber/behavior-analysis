@@ -1354,6 +1354,8 @@ function OverviewPanel({
     [users, userId]
   );
 
+  const hasAnomalies = (data?.anomalies?.length ?? 0) > 0;
+
   return (
     <div>
       {!data ? (
@@ -1427,13 +1429,15 @@ function OverviewPanel({
             gutter={16}
             style={{ marginBottom: 16, display: "flex", alignItems: "stretch" }}
           >
-            <Col span={8}>
-              <RiskTagsAlert
-                anomalies={data?.anomalies ?? []}
-                approvalGroups={approvalGroups}
-              />
-            </Col>
-            <Col span={16}>
+            {hasAnomalies && (
+              <Col span={8}>
+                <RiskTagsAlert
+                  anomalies={data?.anomalies ?? []}
+                  approvalGroups={approvalGroups}
+                />
+              </Col>
+            )}
+            <Col span={hasAnomalies ? 16 : 24}>
               <div
                 style={{
                   padding: 20,
