@@ -156,6 +156,56 @@
 
 ---
 
+### P0-5 非驾车行程（公共交通/陪同拜访/特殊签到/虚拟客户）不参与里程统计与填报异常（已修复）
+
+#### 问题
+
+- 只有「拜访客户签到-开车（统计里里程）」属于驾车行程，需要里程读数与里程偏差计算。
+- 其余 trip_type（公共交通/陪同拜访、特殊签到、虚拟客户）仅用于记录拜访客户数，不应被统计里程，也不应报「缺少出发里程读数」等填报异常。
+- 原代码只跳过 `公共交通`，导致 `陪同拜访` 等仍参与里程估算和填报异常检测。
+
+#### 修复
+
+- 新增 `backend/src/services/tripType.ts` / `frontend/src/utils/tripType.ts`：
+  - 统一函数 `isMileageRequiredTrip(tripType)`，仅当 `trip_type` 包含「开车」或「驾车」时返回 true。
+- `backend/src/services/routeService.ts`：移除公共交通跳过，同一审批单内相邻点都绘制轨迹。
+- `backend/src/services/mileageAnalysis.ts`：跳过所有非驾车段，不再只跳过「公共交通」。
+- `backend/src/services/anomalyDetection.ts`：
+  - `mileage_reading_invalid` 检测到审批单内存在非驾车 visit 时直接跳过。
+  - `mileage_deviation` 自然跟随 `mileageAnalysis.ts` 的过滤。
+- `backend/src/routes/analytics.ts` `/analytics/mileage`：通过 `computeMileageSegments` 只累加驾车段的填报/估算里程。
+- `backend/src/services/userOverviewService.ts`：周期总览的每日填报/估算里程均按驾车行程过滤。
+- `frontend/src/pages/ConsolePage.tsx`：审批单分组统计只累加驾车段。
+- `frontend/src/components/MapContainer.tsx`：非驾车段叠加紫色虚线；点选非驾车拜访不显示「填报里程/交通工具」。
+
+#### 验收
+
+- 前后端 `npm run build` 通过。
+- 重新运行 `npm run recompute:routes`（796 对 user/date）和 `npm run recompute:anomalies` 无报错。
+- 抽查「彭珅豪」7.1-7.19：原 24 条 `mileage_reading_invalid`（缺少出发里程读数）全部消失，该区间无异常。
+- 相关提交：`d6f2179`、`5c84397`。
+
+---
+
+### P0-6 周期视图无风险时布局优化（已修复）
+
+#### 问题
+
+周期视图下，当筛选时间范围内没有任何风险时，「周期风险」卡片隐藏，但「每日趋势」卡片仍只占 16 列，导致右侧出现空白区域。
+
+#### 修复
+
+- `frontend/src/pages/ConsolePage.tsx`：`OverviewPanel` 中根据 `data?.anomalies` 是否存在动态调整列宽：
+  - 有风险时：周期风险 8 列 + 每日趋势 16 列。
+  - 无风险时：每日趋势占满 24 列。
+
+#### 验收
+
+- 前端 `npm run build` 通过。
+- 相关提交：`a2f7534`。
+
+---
+
 ## 已上线
 
 ### Phase 1：数据治理 + 控制台增强
