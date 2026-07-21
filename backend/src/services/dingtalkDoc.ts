@@ -340,9 +340,9 @@ export type ReportType = "日报" | "周报" | "月报";
 
 /** 人员维度下「日报/周报/月报」文件夹的显示名称（带序号前缀） */
 const EMPLOYEE_REPORT_FOLDER_NAMES: Record<ReportType, string> = {
-  日报: "00. 日报",
-  周报: "01. 周报",
-  月报: "02. 月报",
+  日报: "01. 日报",
+  周报: "02. 周报",
+  月报: "03. 月报",
 };
 
 function getWeekNumber(date: Date): number {
@@ -619,7 +619,7 @@ export async function exportConsoleReportToDingTalkDoc(options: {
 
   // 3. 推断报告类型和日期
   const { reportType, reportDate } = inferReportType(start, end);
-  const docName = `${reportDate}_${targetUserName}_${reportType}`;
+  const docName = `${reportType}_${targetUserName}_${start}_${end}`;
 
   // 4. 获取或创建知识库
   const workspace = await getOrCreateWorkspace(operatorUnionId, workspaceName);

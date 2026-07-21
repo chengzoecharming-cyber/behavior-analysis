@@ -51,6 +51,32 @@ function buildSystemLink(input: MarkdownReportInput): string {
   return `/decision?start=${input.start}&end=${input.end}&mode=custom`;
 }
 
+function resolveCustomerDisplayName(v: Visit): string {
+  // 1. 优先使用真实客户名
+  let customer = (v.customer_name || "").trim();
+  // 去掉钉钉表单常见前缀
+  customer = customer.replace(/^客户名称[:：]\s*/, "");
+
+  // 过滤占位/无效客户名（包含「虚拟客户」「签到用」或清空前缀后为空）
+  if (customer && !customer.includes("虚拟客户") && !customer.includes("签到用")) {
+    return customer;
+  }
+
+  // 2. 没有真实客户名时用地址
+  const address = (v.address || "").trim();
+  if (address) {
+    return address;
+  }
+
+  // 3. 兜底用 location_name
+  const location = (v.location_name || "").trim();
+  if (location) {
+    return location;
+  }
+
+  return "未命名客户";
+}
+
 function computeCustomerFrequency(
   visits: Visit[]
 ): { customerName: string; count: number; lastTime: string }[] {
@@ -59,7 +85,7 @@ function computeCustomerFrequency(
     { customerName: string; count: number; lastTime: Date }
   >();
   for (const v of visits) {
-    const name = v.customer_name || v.location_name || "未命名客户";
+    const name = resolveCustomerDisplayName(v);
     const existing = map.get(name);
     const t = new Date(v.timestamp);
     if (!existing) {
@@ -78,18 +104,37 @@ function computeCustomerFrequency(
     .sort((a, b) => b.count - a.count);
 }
 
-function renderSummary(
+function renderCoreSummary(
   lines: string[],
   totals: UserOverviewResult["totals"],
-  dayCount: number
+  visits?: Visit[]
 ) {
-  lines.push("## 汇总指标");
+  const customerCount = visits
+    ? new Set(
+        visits.map(
+          (v) => v.customer_name || v.location_name || "未命名客户"
+        )
+      ).size
+    : 0;
+
+  lines.push("## 核心指标");
   lines.push("");
   lines.push("| 指标 | 数值 |");
   lines.push("|---|---|");
-  lines.push(`| 拜访客户数 | ${totals.visit_count} 家 |`);
+  lines.push(`| 拜访客户数 | ${customerCount} 家 |`);
   lines.push(`| 拜访次数 | ${totals.visit_count} 次 |`);
-  lines.push(`| 估算里程 | ${Math.round(totals.estimated_distance_km)} km |`);
+  lines.push(`| 理论签到里程 | ${Math.round(totals.estimated_distance_km)} km |`);
+  lines.push("");
+}
+
+function renderExtraSummary(
+  lines: string[],
+  totals: UserOverviewResult["totals"]
+) {
+  lines.push("## 其他汇总");
+  lines.push("");
+  lines.push("| 指标 | 数值 |");
+  lines.push("|---|---|");
   lines.push(`| 填报里程 | ${totals.reported_distance_km} km |`);
   lines.push(`| 异常事件 | ${totals.anomaly_count} 个 |`);
   lines.push("");
@@ -99,12 +144,12 @@ function renderDailyTrend(lines: string[], daily: DailyOverview[]) {
   if (daily.length <= 1) return;
   lines.push("## 每日趋势");
   lines.push("");
-  lines.push("| 日期 | 拜访客户数 | 拜访次数 | 估算里程(km) | 填报里程(km) | 异常数 |");
-  lines.push("|---|---|---|---|---|---|");
+  lines.push("| 日期 | 拜访次数 | 理论签到里程(km) | 填报里程(km) | 异常数 |");
+  lines.push("|---|---|---|---|---|");
   for (const d of daily) {
     const mileageInvalidFlag = d.has_mileage_reading_invalid ? " ⚠️" : "";
     lines.push(
-      `| ${d.date} | ${d.visit_count} | ${d.visit_count} | ${Math.round(
+      `| ${d.date} | ${d.visit_count} | ${Math.round(
         d.estimated_distance_km
       )} | ${d.reported_distance_km}${mileageInvalidFlag} | ${d.anomaly_count} |`
     );
@@ -241,15 +286,6 @@ function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[])
 export function renderConsoleReportMarkdown(input: MarkdownReportInput): string {
   const { userName, start, end, reportType, overview, visits, routes } = input;
   const totals = overview.totals;
-  const dayCount = Math.max(
-    1,
-    Math.round(
-      (new Date(end + "T00:00:00+08:00").getTime() -
-        new Date(start + "T00:00:00+08:00").getTime()) /
-        (1000 * 60 * 60 * 24)
-    ) + 1
-  );
-
   const lines: string[] = [];
 
   // 标题
@@ -262,17 +298,26 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   );
   lines.push("");
 
-  // 汇总
-  renderSummary(lines, totals, dayCount);
+  // 核心指标（客户数、拜访次数、理论签到里程）
+  renderCoreSummary(lines, totals, visits);
+
+  // 客户拜访列表
+  if (visits && visits.length > 0) {
+    renderCustomerList(lines, visits, !input.userId);
+  }
+
+  // AI 拜访总结占位
+  lines.push("## 客户拜访总结");
+  lines.push("");
+  lines.push("（AI 总结能力待接入，后续将由 Kimi 基于拜访情况自动生成）");
+  lines.push("");
+
+  // 其他汇总（填报里程、异常事件等）
+  renderExtraSummary(lines, totals);
 
   // 每日趋势（周报/月报）
   if (reportType !== "日报") {
     renderDailyTrend(lines, overview.daily);
-  }
-
-  // 客户列表
-  if (visits && visits.length > 0) {
-    renderCustomerList(lines, visits, !input.userId);
   }
 
   // 日报：拜访明细
@@ -282,12 +327,6 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
 
   // 异常事件
   renderAnomalies(lines, overview.anomalies);
-
-  // AI 总结占位
-  lines.push("## 客户拜访总结");
-  lines.push("");
-  lines.push("（AI 总结能力待接入，将基于拜访情况自动生成）");
-  lines.push("");
 
   // 系统链接
   lines.push("## 系统链接");

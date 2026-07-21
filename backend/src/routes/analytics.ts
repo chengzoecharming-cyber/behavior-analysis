@@ -23,6 +23,10 @@ import {
   formatBeijingDate,
   parseDateTimeAsBeijing,
 } from "../utils/timezone";
+import {
+  getCurrentBusinessWeekRange,
+  getPreviousBusinessWeekRange,
+} from "../utils/businessPeriod";
 
 const router = Router();
 
@@ -174,13 +178,37 @@ router.get("/anomaly", async (req: Request, res: Response) => {
     const dayStart = toBeijingDayStart(date as string);
     const dayEnd = toBeijingDayEnd(date as string);
 
-    const visitsResult = await pool.query(
-      `SELECT * FROM visits
-       WHERE user_id = $1 AND business_date = $2::date
-       ORDER BY timestamp ASC`,
-      [user, date]
-    );
+    const currentWeekRange = getCurrentBusinessWeekRange(date as string);
+    const previousWeekRange = getPreviousBusinessWeekRange(date as string);
+
+    const [visitsResult, currentWeekResult, previousWeekResult] = await Promise.all([
+      pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1 AND business_date = $2::date
+         ORDER BY timestamp ASC`,
+        [user, date]
+      ),
+      pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1
+           AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+           AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         ORDER BY timestamp ASC`,
+        [user, currentWeekRange.start.toISOString(), currentWeekRange.end.toISOString()]
+      ),
+      pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1
+           AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+           AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         ORDER BY timestamp ASC`,
+        [user, previousWeekRange.start.toISOString(), previousWeekRange.end.toISOString()]
+      ),
+    ]);
+
     const visits: Visit[] = visitsResult.rows;
+    const currentWeekVisits: Visit[] = currentWeekResult.rows;
+    const previousWeekVisits: Visit[] = previousWeekResult.rows;
 
     const stops = detectStops(visits);
 
@@ -197,6 +225,8 @@ router.get("/anomaly", async (req: Request, res: Response) => {
       visitsToday: visits,
       stopsToday: stops,
       routesToday: routes,
+      currentWeekVisits,
+      previousWeekVisits,
     });
 
     // 持久化异常事件：按业务日期删除旧记录，避免历史日期重算时残留
@@ -353,13 +383,37 @@ router.get("/risk-score", async (req: Request, res: Response) => {
   const end = toBeijingDayEnd(date as string);
 
   try {
-    const visitsResult = await pool.query(
-      `SELECT * FROM visits
-       WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
-       ORDER BY timestamp ASC`,
-      [user_id, start, end]
-    );
+    const currentWeekRange = getCurrentBusinessWeekRange(date as string);
+    const previousWeekRange = getPreviousBusinessWeekRange(date as string);
+
+    const [visitsResult, currentWeekResult, previousWeekResult] = await Promise.all([
+      pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1 AND timestamp >= $2 AND timestamp <= $3
+         ORDER BY timestamp ASC`,
+        [user_id, start, end]
+      ),
+      pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1
+           AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+           AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         ORDER BY timestamp ASC`,
+        [user_id, currentWeekRange.start.toISOString(), currentWeekRange.end.toISOString()]
+      ),
+      pool.query(
+        `SELECT * FROM visits
+         WHERE user_id = $1
+           AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+           AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         ORDER BY timestamp ASC`,
+        [user_id, previousWeekRange.start.toISOString(), previousWeekRange.end.toISOString()]
+      ),
+    ]);
+
     const visits: Visit[] = visitsResult.rows;
+    const currentWeekVisits: Visit[] = currentWeekResult.rows;
+    const previousWeekVisits: Visit[] = previousWeekResult.rows;
 
     const stops = detectStops(visits);
     const routes: Route[] = await computeAndPersistRoutes(
@@ -374,6 +428,8 @@ router.get("/risk-score", async (req: Request, res: Response) => {
       visitsToday: visits,
       stopsToday: stops,
       routesToday: routes,
+      currentWeekVisits,
+      previousWeekVisits,
     });
 
     const { score, reasons } = await calculateRiskScore(anomalies);

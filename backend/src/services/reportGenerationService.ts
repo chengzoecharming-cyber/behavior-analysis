@@ -470,8 +470,8 @@ export async function exportReportToDingTalkDoc(options: {
     tree
   );
 
-  // 文档名：{日期}_{名称}_{报告类型}
-  const docName = `${reportDate}_${scopeName}_${reportType}`;
+  // 文档名：{报告类型}_{名称}_{日期范围}
+  const docName = `${reportType}_${scopeName}_${start}_${end}`;
 
   // 检查是否已存在
   const existingDoc = await findDocNodeByName(
@@ -622,7 +622,7 @@ export async function generateDailyReports(date?: string): Promise<
 > {
   const targetDate = date || formatDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
   const workspaceName =
-    process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤行为分析报告";
+    process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
   console.log(`[Report Gen] 开始生成日报: ${targetDate}`);
   const results = await generateReportsForPeriod(targetDate, targetDate, workspaceName);
   console.log(`[Report Gen] 日报生成完成: ${results.length} 份`);
@@ -648,7 +648,7 @@ export async function generateWeeklyReports(
     weekEnd = formatDate(lastSunday);
   }
   const workspaceName =
-    process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤行为分析报告";
+    process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
   console.log(`[Report Gen] 开始生成周报: ${weekStart} ~ ${weekEnd}`);
   const results = await generateReportsForPeriod(weekStart, weekEnd, workspaceName);
   console.log(`[Report Gen] 周报生成完成: ${results.length} 份`);
@@ -679,7 +679,7 @@ export async function generateMonthlyReports(
   const monthEnd = `${targetYear}-${String(targetMonth).padStart(2, "0")}-${lastDay}`;
 
   const workspaceName =
-    process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤行为分析报告";
+    process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
   console.log(`[Report Gen] 开始生成月报: ${monthStart} ~ ${monthEnd}`);
   const results = await generateReportsForPeriod(monthStart, monthEnd, workspaceName);
   console.log(`[Report Gen] 月报生成完成: ${results.length} 份`);

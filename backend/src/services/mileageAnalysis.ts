@@ -12,7 +12,7 @@ export interface MileageSegment {
   to_location: string;
   reported_distance_km: number;
   gaode_distance_km: number;
-  deviation_rate: number; // |reported - gaode| / gaode
+  deviation_rate: number; // (reported - gaode) / gaode，仅正值触发异常
 }
 
 export interface MileageDistributionStats {
@@ -113,7 +113,7 @@ export async function computeMileageSegments(
     const gaodeKm = route.distance_km;
 
     const deviationRate = gaodeKm > 0
-      ? Math.abs(reportedSegmentKm - gaodeKm) / gaodeKm
+      ? (reportedSegmentKm - gaodeKm) / gaodeKm
       : reportedSegmentKm > 0 ? 1 : 0;
 
     segments.push({

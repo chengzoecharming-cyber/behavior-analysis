@@ -5,22 +5,29 @@ import {
   Col,
   List,
   Tag,
+  Card,
   DatePicker,
   Toast,
   Cascader,
   Popover,
+  Timeline,
 } from "@douyinfe/semi-ui";
 import {
   IconPlayCircle,
   IconPause,
   IconRedo,
   IconChevronDown,
-  IconChevronUp,
   IconChevronRight,
-  IconAlertTriangle,
 } from "@douyinfe/semi-icons";
 
 import dayjs from "dayjs";
+import {
+  getCurrentBusinessWeekRange,
+  getPreviousBusinessWeekRange,
+  getLastTwoWeeksRange,
+  getLastThreeWeeksRange,
+  getLastMonthRange,
+} from "../utils/businessPeriod";
 import {
   fetchAvailableDates,
   fetchVisits,
@@ -62,6 +69,42 @@ const ROUTE_COLORS = [
   "#08979c", // 青
   "#780650", // 深洋红
 ];
+
+const DATE_RANGE_PRESETS = [
+  { key: "current_week", label: "本周" },
+  { key: "last_week", label: "上周" },
+  { key: "last_two_weeks", label: "过去两周" },
+  { key: "last_three_weeks", label: "过去三周" },
+  { key: "last_month", label: "上月" },
+];
+
+function getPresetRange(key: string): [string, string] {
+  switch (key) {
+    case "current_week":
+      return getCurrentBusinessWeekRange();
+    case "last_week":
+      return getPreviousBusinessWeekRange();
+    case "last_two_weeks":
+      return getLastTwoWeeksRange();
+    case "last_three_weeks":
+      return getLastThreeWeeksRange();
+    case "last_month":
+      return getLastMonthRange();
+    default:
+      return [dayjs.tz().format("YYYY-MM-DD"), dayjs.tz().format("YYYY-MM-DD")];
+  }
+}
+
+function getDatePickerPresets() {
+  return DATE_RANGE_PRESETS.map((preset) => {
+    const [start, end] = getPresetRange(preset.key);
+    return {
+      text: preset.label,
+      start: dayjs.tz(start, "Asia/Shanghai").toDate(),
+      end: dayjs.tz(end, "Asia/Shanghai").toDate(),
+    };
+  });
+}
 
 interface ApprovalGroup {
   key: string;
@@ -855,6 +898,8 @@ function ConsolePage() {
               disabledDate={(current) =>
                 !!current && dayjs.tz(current).isAfter(dayjs.tz(), "day")
               }
+              presets={getDatePickerPresets()}
+              presetPosition="left"
             />
           </Col>
           <Col
@@ -1241,6 +1286,7 @@ function ConsolePage() {
           range={dateRange}
           data={overviewData}
           heatMapPoints={heatMapPoints}
+          approvalGroups={approvalGroups}
         />
       )}
     </div>
@@ -1253,6 +1299,7 @@ interface OverviewPanelProps {
   range: [string, string];
   data: UserOverviewResult | null;
   heatMapPoints: { lat: number; lng: number; count: number }[];
+  approvalGroups?: ApprovalGroup[];
 }
 
 function OverviewPanel({
@@ -1261,6 +1308,7 @@ function OverviewPanel({
   range,
   data,
   heatMapPoints,
+  approvalGroups,
 }: OverviewPanelProps) {
   const filled = useMemo(
     () => fillDailyRange(data?.daily ?? [], range[0], range[1]),
@@ -1367,25 +1415,42 @@ function OverviewPanel({
             </Col>
           </Row>
 
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={24}>
-              <div style={{ padding: 20, backgroundColor: "#fff", borderRadius: 16 }}>
+          <Row
+            gutter={16}
+            style={{ marginBottom: 16, display: "flex", alignItems: "stretch" }}
+          >
+            <Col span={8}>
+              <RiskTagsAlert
+                anomalies={data?.anomalies ?? []}
+                approvalGroups={approvalGroups}
+              />
+            </Col>
+            <Col span={16}>
+              <div
+                style={{
+                  padding: 20,
+                  backgroundColor: "#fff",
+                  borderRadius: 16,
+                  height: 400,
+                  display: "flex",
+                  flexDirection: "column",
+                }}
+              >
                 <div style={{ fontSize: 15, fontWeight: 600, marginBottom: 12 }}>
                   每日趋势
                 </div>
-                <MileageAnomalyAlert
-                  anomalies={data?.anomalies ?? []}
-                  userName={userName}
-                />
-                <Suspense fallback={<div style={{ height: 320 }}>加载图表中...</div>}>
-                  <OverviewChart
-                    data={chartData}
-                    anomalies={data?.anomalies ?? []}
-                    onDateClick={(date) => {
-                      window.open(`/console?user=${userId}&date=${date}`, "_blank");
-                    }}
-                  />
-                </Suspense>
+                <div style={{ flex: 1, minHeight: 0 }}>
+                  <Suspense fallback={<div style={{ height: "100%" }}>加载图表中...</div>}>
+                    <OverviewChart
+                      data={chartData}
+                      anomalies={data?.anomalies ?? []}
+                      height="100%"
+                      onDateClick={(date) => {
+                        window.open(`/console?user=${userId}&date=${date}`, "_blank");
+                      }}
+                    />
+                  </Suspense>
+                </div>
               </div>
             </Col>
           </Row>
@@ -1417,163 +1482,301 @@ function OverviewPanel({
   );
 }
 
-function hasMileageReadingInvalid(
-  anomalies: Array<{ type: string }>
-): boolean {
-  return anomalies.some((a) => a.type === "mileage_reading_invalid");
+interface UserOverviewAnomalyItem {
+  id: number;
+  type: string;
+  description: string;
+  severity: "low" | "medium" | "high";
+  anomaly_date?: string;
+  metadata?: Record<string, any>;
 }
 
-function MileageAnomalyAlert({
-  anomalies,
-  userName,
+function MileageDeviationGroup({
+  items,
+  timelineColor,
 }: {
-  anomalies: Array<{
-    id: number;
-    type: string;
-    anomaly_date?: string;
-    metadata?: Record<string, any>;
-  }>;
-  userName: string;
+  items: UserOverviewAnomalyItem[];
+  timelineColor: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const invalidAnomalies = anomalies.filter(
-    (a) => a.type === "mileage_reading_invalid"
-  );
-  if (invalidAnomalies.length === 0) return null;
-
-  // 按北京时间聚合异常日期，并去重排序
-  const dateSet = new Set<string>();
-  invalidAnomalies.forEach((a) => {
-    if (a.anomaly_date) {
-      dateSet.add(
-        dayjs(a.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
-      );
+  const grouped = useMemo(() => {
+    const map = new Map<string, UserOverviewAnomalyItem[]>();
+    for (const item of items) {
+      const approvalId = (item.metadata?.approval_id as string) || "_no_approval";
+      if (!map.has(approvalId)) map.set(approvalId, []);
+      map.get(approvalId)!.push(item);
     }
-  });
-  const dates = Array.from(dateSet).sort();
-
-  // 收起时只展示标题；展开后才展示人员+日期+描述明细
-  const visibleAnomalies = expanded ? invalidAnomalies : [];
-
-  const displayedDates = dates.slice(0, 3);
-  const hasMore = dates.length > 3;
-  const remaining = dates.length - 3;
+    return Array.from(map.entries()).map(([approvalId, segments]) => {
+      const totalReported = segments.reduce(
+        (sum, s) => sum + (Number(s.metadata?.reported_distance_km) || 0),
+        0
+      );
+      const totalGaode = segments.reduce(
+        (sum, s) => sum + (Number(s.metadata?.gaode_distance_km) || 0),
+        0
+      );
+      const totalRate = totalGaode > 0 ? (totalReported - totalGaode) / totalGaode : 0;
+      const dateStr = segments[0].anomaly_date
+        ? dayjs(segments[0].anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
+        : "";
+      return { approvalId, segments, totalReported, totalGaode, totalRate, dateStr };
+    });
+  }, [items]);
 
   return (
-    <div
-      style={{
-        marginBottom: 16,
-        padding: 16,
-        backgroundColor: "#fffbe6",
-        border: "1px solid #ffe58f",
-        borderRadius: 8,
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 12,
-        fontSize: 14,
-      }}
-    >
-      <IconAlertTriangle
-        style={{
-          width: 14,
-          height: 14,
-          color: "#faad14",
-          flexShrink: 0,
-          marginTop: 2,
-        }}
-      />
-      <div style={{ flex: 1, textAlign: "left" }}>
-        <div
-          style={{
-            fontWeight: 500,
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            flexWrap: "wrap",
-          }}
-        >
-          <span>异常日期：</span>
-          <span>{displayedDates.join("、")}</span>
-          {hasMore && (
-            <Tag
-              size="small"
-              style={{
-                backgroundColor: "#f0f0f0",
-                color: "#666",
-                border: "none",
-                borderRadius: 4,
-              }}
-            >
-              +{remaining}
-            </Tag>
-          )}
-        </div>
-        {visibleAnomalies.map((a, idx) => {
-          const approvalId = a.metadata?.approval_id as string | undefined;
-          const issues = (a.metadata?.issues as any[]) ?? [];
-          const isLast = idx === visibleAnomalies.length - 1;
-          return (
-            <div key={a.id} style={{ marginTop: 8, marginBottom: isLast ? 0 : 8 }}>
+    <div style={{ marginBottom: 16 }}>
+      <Tag
+        size="small"
+        color="red"
+        style={{ borderRadius: 4, marginBottom: 16 }}
+      >
+        里程偏差
+      </Tag>
+      <Timeline>
+        {grouped.map((group) => (
+          <Timeline.Item
+            key={group.approvalId}
+            dot={
               <div
                 style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 8,
-                  marginBottom: 4,
+                  width: 10,
+                  height: 10,
+                  borderRadius: "50%",
+                  backgroundColor: timelineColor,
+                  marginTop: 6,
+                }}
+              />
+            }
+          >
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={{ fontSize: 14, fontWeight: 600, color: "#0f1419" }}>
+                {group.dateStr}
+              </div>
+              <Tag
+                size="small"
+                style={{
+                  borderRadius: 4,
+                  backgroundColor: "#f5f5f5",
+                  color: "#666",
+                  border: "1px solid #d9d9d9",
+                  fontSize: 12,
+                  alignSelf: "flex-start",
                 }}
               >
-                <span style={{ fontWeight: 500 }}>
-                  {userName} ·{" "}
-                  {a.anomaly_date
-                    ? dayjs(a.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
-                    : ""}
-                </span>
-                <Tag
-                  size="small"
+                超出 {(group.totalRate * 100).toFixed(1)}%
+              </Tag>
+              <div style={{ fontSize: 12, color: "#999" }}>
+                审批单 {group.approvalId.slice(-8)} · 填报 {group.totalReported.toFixed(1)} km / 估算{" "}
+                {group.totalGaode.toFixed(1)} km
+              </div>
+              {group.segments.length > 1 && (
+                <div
                   style={{
-                    backgroundColor: "#f0f0f0",
+                    fontSize: 12,
                     color: "#666",
-                    border: "none",
-                    borderRadius: 4,
+                    lineHeight: 1.6,
+                    marginTop: 4,
+                    paddingLeft: 4,
                   }}
                 >
-                  {approvalId ? approvalId.slice(-8) : "未知"}
-                </Tag>
-              </div>
-              <div style={{ color: "#666" }}>
-                {issues.map((issue, idx) => (
-                  <div key={idx}>• {issue.description}</div>
-                ))}
-              </div>
+                  {group.segments.map((s) => (
+                    <div key={s.id}>
+                      • {s.metadata?.from_location} → {s.metadata?.to_location}：填报{" "}
+                      {s.metadata?.reported_distance_km} km，估算 {s.metadata?.gaode_distance_km} km
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </Timeline.Item>
+        ))}
+      </Timeline>
+    </div>
+  );
+}
+
+function RiskTagsAlert({
+  anomalies,
+  approvalGroups,
+}: {
+  anomalies: UserOverviewAnomalyItem[];
+  approvalGroups?: ApprovalGroup[];
+}) {
+  const riskTypes = [
+    { key: "mileage_deviation", label: "里程偏差", color: "red" as const, timelineColor: "#F54C5C" },
+    { key: "duplicate_location", label: "重复签到", color: "cyan" as const, timelineColor: "#00A4B5" },
+    { key: "low_visit_count", label: "拜访量不足", color: "purple" as const, timelineColor: "#7B71E2" },
+    { key: "mileage_reading_invalid", label: "填报异常", color: "orange" as const, timelineColor: "#F7A046" },
+  ] as const;
+
+  const grouped = useMemo(() => {
+    const result: Record<string, UserOverviewAnomalyItem[]> = {};
+    for (const { key } of riskTypes) {
+      result[key] = anomalies.filter((a) => a.type === key);
+    }
+    return result;
+  }, [anomalies, riskTypes]);
+
+  const totalCount = Object.values(grouped).reduce((sum, arr) => sum + arr.length, 0);
+  if (totalCount === 0) return null;
+
+  function renderTimelineContent(a: UserOverviewAnomalyItem) {
+    const m = a.metadata || {};
+
+    if (a.type === "low_visit_count") {
+      const match = a.description.match(/拜访量\s*(\d+)\s*次/);
+      const count = match ? match[1] : "?";
+      return <span style={{ fontSize: 13, color: "#0f1419" }}>{count} 次</span>;
+    }
+
+    if (a.type === "duplicate_location") {
+      const match = a.description.match(/重复签到\s*(\d+)\s*次/);
+      const count = match ? match[1] : "?";
+      const address = (m.address as string) || (m.location_name as string) || "未知地点";
+      const sequenceLabel = (m.sequence_label as string) || "";
+      return (
+        <span style={{ fontSize: 13, color: "#0f1419", whiteSpace: "nowrap" }}>
+          {count} 次
+          <Tag
+            size="small"
+            style={{
+              marginLeft: 8,
+              borderRadius: 4,
+              backgroundColor: "#f5f5f5",
+              color: "#666",
+              border: "1px solid #d9d9d9",
+              fontSize: 12,
+            }}
+          >
+            {sequenceLabel} {address}
+          </Tag>
+        </span>
+      );
+    }
+
+    if (a.type === "mileage_deviation") {
+      const rate = m.deviation_rate != null ? `${(m.deviation_rate * 100).toFixed(1)}%` : "-";
+      return (
+        <Tag
+          size="small"
+          style={{
+            borderRadius: 4,
+            backgroundColor: "#f5f5f5",
+            color: "#666",
+            border: "1px solid #d9d9d9",
+            fontSize: 12,
+            alignSelf: "flex-start",
+          }}
+        >
+          超出 {rate}
+        </Tag>
+      );
+    }
+
+    if (a.type === "mileage_reading_invalid") {
+      const approvalId = m.approval_id as string | undefined;
+      const issues = (m.issues as any[]) || [];
+      const estimatedKm =
+        approvalId && approvalGroups
+          ? approvalGroups.find((g) => g.key === approvalId)?.mileage.totalKm
+          : undefined;
+      return (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          <div style={{ fontSize: 12, color: "#666", lineHeight: 1.6 }}>
+            {issues.map((issue, idx) => (
+              <div key={idx}>• {issue.description}</div>
+            ))}
+          </div>
+          {estimatedKm != null && estimatedKm > 0 && (
+            <div style={{ fontSize: 12, color: "#999" }}>
+              该审批单估算里程：{Math.round(estimatedKm)} km
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    return null;
+  }
+
+  return (
+    <Card
+      title={
+        <span style={{ fontSize: 15, fontWeight: 600 }}>周期风险</span>
+      }
+      headerStyle={{ borderBottom: "none", padding: "20px 20px 0" }}
+      bodyStyle={{ padding: 20, overflowY: "auto", flex: 1, minHeight: 0 }}
+      style={{ borderRadius: 16, height: 400, display: "flex", flexDirection: "column" }}
+    >
+      <div>
+        {riskTypes.map((risk) => {
+          const items = grouped[risk.key];
+          if (items.length === 0) return null;
+          if (risk.key === "mileage_deviation") {
+            return (
+              <MileageDeviationGroup
+                key={risk.key}
+                items={items}
+                timelineColor={risk.timelineColor}
+              />
+            );
+          }
+          return (
+            <div key={risk.key} style={{ marginBottom: 16 }}>
+              <Tag
+                size="small"
+                color={risk.color}
+                style={{ borderRadius: 4, marginBottom: 16 }}
+              >
+                {risk.label}
+              </Tag>
+              <Timeline>
+                {items.map((a) => {
+                  const dateStr = a.anomaly_date
+                    ? dayjs(a.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
+                    : "";
+                  return (
+                    <Timeline.Item
+                      key={a.id}
+                      dot={
+                        <div
+                          style={{
+                            width: 10,
+                            height: 10,
+                            borderRadius: "50%",
+                            backgroundColor: risk.timelineColor,
+                            marginTop: 6,
+                          }}
+                        />
+                      }
+                    >
+                      <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                        <div
+                          style={{
+                            fontSize: 14,
+                            fontWeight: 600,
+                            color: "#0f1419",
+                          }}
+                        >
+                          {dateStr}
+                        </div>
+                        {renderTimelineContent(a)}
+                      </div>
+                    </Timeline.Item>
+                  );
+                })}
+              </Timeline>
             </div>
           );
         })}
       </div>
-      {invalidAnomalies.length > 1 && (
-        <div
-          style={{
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            width: 20,
-            height: 20,
-            marginTop: 2,
-          }}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? (
-            <IconChevronUp style={{ width: 20, height: 20, color: "#999" }} />
-          ) : (
-            <IconChevronDown
-              style={{ width: 20, height: 20, color: "#1f2329" }}
-            />
-          )}
-        </div>
-      )}
-    </div>
+    </Card>
   );
+}
+
+function hasMileageReadingInvalid(
+  anomalies: Array<{ type: string }>
+): boolean {
+  return anomalies.some((a) => a.type === "mileage_reading_invalid");
 }
 
 interface MileageAnomalyPopoverProps {

@@ -57,15 +57,15 @@ export async function resetAnomalyWeights(): Promise<void> {
   await pool.query(`
     INSERT INTO anomaly_weights (rule_key, rule_name, weight, threshold_value, enabled, layer, description)
     VALUES
-      ('low_visit_count', '拜访量不足', 0.25, 15, true, 'judge', '过去5个工作日累计签到次数<15次'),
-      ('duplicate_location', '重复签到', 0.20, 8, true, 'fact', '过去两周同一地点重复签到>=8次'),
-      ('mileage_deviation', '里程偏差', 0.20, 0.30, true, 'judge', '填报里程 vs 高德里程偏差>30%'),
+      ('low_visit_count', '拜访量不足', 0.25, 10, true, 'judge', '当前完整业务周拜访量<10次，仅在周日展示'),
+      ('duplicate_location', '重复签到', 0.15, 3, true, 'judge', '当前业务周同一地点重复签到>=3次'),
+      ('mileage_deviation', '里程偏差', 0.20, 0.30, true, 'judge', '填报里程>估算里程30%'),
       ('long_stop', '停留过长', 0.15, 120, false, 'analyze', '停留>120分钟'),
       ('route_detour', '路径绕行', 0.10, 2.0, false, 'analyze', '实际距离>直线距离*2'),
       ('long_idle', '长时间未移动', 0.05, 180, false, 'analyze', '>180分钟无移动记录'),
       ('invalid_trip_type', '异常出行方式', 0.03, 5, false, 'fact', '公共交通/特殊签到但填报较长里程'),
-      ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, 'fact', '特殊签到未填写原因'),
-      ('mileage_reading_invalid', '里程读数异常', 0.02, NULL, true, 'fact', '出发/终点里程读数缺失、非单调递增或超过合理上限')
+      ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, false, 'fact', '特殊签到未填写原因'),
+      ('mileage_reading_invalid', '里程读数异常', 0.02, NULL, false, 'fact', '出发/终点里程读数缺失、非单调递增或超过合理上限')
     ON CONFLICT (rule_key) DO UPDATE SET
       rule_name = EXCLUDED.rule_name,
       weight = EXCLUDED.weight,

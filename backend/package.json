@@ -8,6 +8,7 @@
     "build": "tsc",
     "start": "node dist/index.js",
     "seed": "ts-node scripts/seed.ts",
+    "reset:weights": "ts-node scripts/resetAnomalyWeights.ts",
     "fix:names": "ts-node scripts/fixUserNames.ts",
     "recompute:anomalies": "ts-node scripts/recomputeAnomalies.ts",
     "import:addresses": "ts-node scripts/importEmployeeAddresses.ts",

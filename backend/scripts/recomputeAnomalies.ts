@@ -7,6 +7,10 @@ import {
   toBeijingDayEnd,
   parseDateTimeAsBeijing,
 } from "../src/utils/timezone";
+import {
+  getCurrentBusinessWeekRange,
+  getPreviousBusinessWeekRange,
+} from "../src/utils/businessPeriod";
 import { persistRiskSummaryCache } from "../src/services/riskSummaryService";
 
 async function main() {
@@ -36,15 +40,44 @@ async function main() {
       const end = toBeijingDayEnd(dateStr);
 
       try {
-        const visitsResult = await pool.query(
-          `SELECT * FROM visits
-           WHERE user_id = $1
-             AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-             AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-           ORDER BY timestamp ASC`,
-          [user_id, start, end]
-        );
+        const [visitsResult, currentWeekResult, previousWeekResult] = await Promise.all([
+          pool.query(
+            `SELECT * FROM visits
+             WHERE user_id = $1
+               AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+               AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+             ORDER BY timestamp ASC`,
+            [user_id, start, end]
+          ),
+          pool.query(
+            `SELECT * FROM visits
+             WHERE user_id = $1
+               AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+               AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+             ORDER BY timestamp ASC`,
+            [
+              user_id,
+              getCurrentBusinessWeekRange(dateStr).start.toISOString(),
+              getCurrentBusinessWeekRange(dateStr).end.toISOString(),
+            ]
+          ),
+          pool.query(
+            `SELECT * FROM visits
+             WHERE user_id = $1
+               AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+               AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+             ORDER BY timestamp ASC`,
+            [
+              user_id,
+              getPreviousBusinessWeekRange(dateStr).start.toISOString(),
+              getPreviousBusinessWeekRange(dateStr).end.toISOString(),
+            ]
+          ),
+        ]);
+
         const visits: Visit[] = visitsResult.rows;
+        const currentWeekVisits: Visit[] = currentWeekResult.rows;
+        const previousWeekVisits: Visit[] = previousWeekResult.rows;
         if (visits.length === 0) {
           skippedCount++;
           continue;
@@ -68,6 +101,8 @@ async function main() {
           visitsToday: visits,
           stopsToday: stops,
           routesToday: routes,
+          currentWeekVisits,
+          previousWeekVisits,
         });
 
         for (const a of anomalies) {

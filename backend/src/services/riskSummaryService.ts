@@ -8,9 +8,12 @@ import {
   toBeijingDayStart,
   toBeijingDayEnd,
   formatBeijingDate,
-  getBeijingWeekday,
   parseDateTimeAsBeijing,
 } from "../utils/timezone";
+import {
+  getCurrentBusinessWeekRange,
+  getPreviousBusinessWeekRange,
+} from "../utils/businessPeriod";
 
 export interface EmployeeRiskSummary {
   user_id: string;
@@ -62,38 +65,6 @@ function generateSummaryText(
   return `${userName} 今日完成 ${visitCount} 次拜访，行程正常，无显著风险。`;
 }
 
-// 计算包含 endDate 当天在内的最近 N 个工作日范围（按北京时间）
-function getPastWorkdaysRange(n: number, endDateStr: string): { start: string; end: string } {
-  const end = new Date(toBeijingDayEnd(endDateStr));
-  let count = 0;
-  const start = new Date(end);
-  while (count < n) {
-    const day = getBeijingWeekday(start);
-    if (day !== 0 && day !== 6) {
-      count++;
-    }
-    if (count < n) {
-      start.setTime(start.getTime() - 24 * 60 * 60 * 1000);
-    }
-  }
-  // start 已经对齐到北京时间 00:00，无需再调 setHours
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-}
-
-function getPastDaysRange(n: number, endDateStr: string): { start: string; end: string } {
-  const end = new Date(toBeijingDayEnd(endDateStr));
-  const start = new Date(end);
-  start.setDate(start.getDate() - n);
-  start.setHours(0, 0, 0, 0);
-  return {
-    start: start.toISOString(),
-    end: end.toISOString(),
-  };
-}
-
 export async function computeEmployeeRiskSummary(
   userId: string,
   userName: string,
@@ -110,29 +81,29 @@ export async function computeEmployeeRiskSummary(
   );
   const visitsToday: Visit[] = visitsResult.rows;
 
-  // 跨天数据范围
-  const past5Workdays = getPastWorkdaysRange(5, dateStr);
-  const past2Weeks = getPastDaysRange(14, dateStr);
+  // 跨天数据范围：当前业务周 + 上一完整业务周
+  const currentWeek = getCurrentBusinessWeekRange(dateStr);
+  const previousWeek = getPreviousBusinessWeekRange(dateStr);
 
-  const past5WorkdaysResult = await pool.query(
+  const currentWeekResult = await pool.query(
     `SELECT * FROM visits
      WHERE user_id = $1
        AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
        AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
      ORDER BY timestamp ASC`,
-    [userId, past5Workdays.start, past5Workdays.end]
+    [userId, currentWeek.start.toISOString(), currentWeek.end.toISOString()]
   );
-  const visitsPast5Workdays: Visit[] = past5WorkdaysResult.rows;
+  const currentWeekVisits: Visit[] = currentWeekResult.rows;
 
-  const past2WeeksResult = await pool.query(
+  const previousWeekResult = await pool.query(
     `SELECT * FROM visits
      WHERE user_id = $1
        AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
        AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
      ORDER BY timestamp ASC`,
-    [userId, past2Weeks.start, past2Weeks.end]
+    [userId, previousWeek.start.toISOString(), previousWeek.end.toISOString()]
   );
-  const visitsPast2Weeks: Visit[] = past2WeeksResult.rows;
+  const previousWeekVisits: Visit[] = previousWeekResult.rows;
 
   // 停留点
   const stopsResult = await pool.query(
@@ -164,8 +135,8 @@ export async function computeEmployeeRiskSummary(
     visitsToday,
     stopsToday: stops,
     routesToday: routes,
-    visitsPast5Workdays,
-    visitsPast2Weeks,
+    currentWeekVisits,
+    previousWeekVisits,
   });
 
   // 排除已批准的申诉豁免区间

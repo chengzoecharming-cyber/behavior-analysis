@@ -93,7 +93,7 @@ router.post("/console-report-to-doc", async (req: Request, res: Response) => {
   try {
     const operatorUserId = process.env.DINGTALK_OPERATOR_USERID!;
     const workspaceName =
-      process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤行为分析报告";
+      process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
 
     const [overview, userName] = await Promise.all([
       computeUserOverview(userId, start, end),
@@ -439,7 +439,7 @@ router.post("/scope-report-to-doc", async (req: Request, res: Response) => {
   try {
     const operatorUserId = process.env.DINGTALK_OPERATOR_USERID!;
     const workspaceName =
-      process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤行为分析报告";
+      process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
 
     let target: ReportScopeTarget;
     if (scope === "company") {

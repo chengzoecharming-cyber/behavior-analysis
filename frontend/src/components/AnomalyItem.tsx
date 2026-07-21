@@ -29,9 +29,9 @@ export function AnomalyItem({ item }: { item: Anomaly }) {
   // 涉及两地：mileage_deviation
   if (m.from_location && m.to_location && item.type === "mileage_deviation") {
     const title = `${m.from_location} → ${m.to_location}`;
-    const description = `填报 ${m.reported_distance_km ?? "-"}km vs 高德 ${
+    const description = `填报 ${m.reported_distance_km ?? "-"}km vs 估算 ${
       m.gaode_distance_km != null ? Math.round(m.gaode_distance_km) : "-"
-    }km · 偏差 ${
+    }km · 超出 ${
       m.deviation_rate != null ? `${(m.deviation_rate * 100).toFixed(1)}%` : "-"
     }`;
     return renderAnomalyRow(item.severity, title, description);
@@ -47,24 +47,31 @@ export function AnomalyItem({ item }: { item: Anomaly }) {
     return renderAnomalyRow(item.severity, title, description);
   }
 
-  // 签到次数不足
+  // 拜访量不足：新文案为 "YYYY-MM-DD ~ YYYY-MM-DD 拜访量 X 次，低于 Y 次阈值"
   if (item.type === "low_visit_count") {
-    const match = item.description.match(/过去\s*5\s*个工作日累计签到\s*(\d+)\s*次/);
+    const match = item.description.match(/拜访量\s*(\d+)\s*次/);
     const count = match ? match[1] : "?";
-    const title = "签到次数不足";
-    const description = `过去 5 个工作日累计签到 ${count} 次`;
+    const periodMatch = item.description.match(/(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})/);
+    const period = periodMatch ? `${periodMatch[1]} ~ ${periodMatch[2]}` : "";
+    const title = "拜访量不足";
+    const description = period
+      ? `${period} 拜访量 ${count} 次`
+      : `拜访量 ${count} 次`;
     return renderAnomalyRow(item.severity, title, description);
   }
 
-  // 重复签到：展示「途n - 具体地址」灰色 tag
+  // 重复签到：新文案为 "YYYY-MM-DD ~ YYYY-MM-DD 同一地点重复签到 X 次，超过 Y 次阈值"
   if (item.type === "duplicate_location") {
-    const m = item.metadata || {};
     const match = item.description.match(/重复签到\s*(\d+)\s*次/);
     const count = match ? match[1] : "?";
+    const periodMatch = item.description.match(/(\d{4}-\d{2}-\d{2})\s*~\s*(\d{4}-\d{2}-\d{2})/);
+    const period = periodMatch ? `${periodMatch[1]} ~ ${periodMatch[2]}` : "";
     const address = (m.address as string) || item.description.match(/「([^」]+)」/)?.[1] || "未知地址";
     const sequenceLabel = (m.sequence_label as string) || "途";
     const title = "重复签到";
-    const description = `过去两周重复签到 ${count} 次`;
+    const description = period
+      ? `${period} 重复签到 ${count} 次`
+      : `重复签到 ${count} 次`;
     const locationTag = (
       <Tag
         size="small"
