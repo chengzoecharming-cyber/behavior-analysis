@@ -1,7 +1,8 @@
 import { Visit, Stop, Route, Anomaly } from "../types";
-import { computeMileageSegments } from "./mileageAnalysis";
+import { computeMileageSegments, MileageSegment } from "./mileageAnalysis";
 import { getEnabledAnomalyWeights, AnomalyWeight } from "./anomalyWeights";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
+import { pool } from "../db";
 import {
   loadUserHomeAddresses,
   isHomeAddress,
@@ -114,6 +115,83 @@ async function filterExcludedVisits(visits: Visit[], userId: string): Promise<Se
   );
 
   return excludedIds;
+}
+
+function getApprovalGroupKey(visit: Visit): string {
+  // 有 approval_id 时按审批单聚合；否则按 user_id + 业务日期兜底（Excel 导入等）
+  return visit.approval_id || `${visit.user_id}_${visit.business_date || ""}`;
+}
+
+async function getFullApprovalVisits(
+  userId: string,
+  visitsToday: Visit[]
+): Promise<Visit[]> {
+  const approvalIds = new Set(
+    visitsToday
+      .map((v) => v.approval_id)
+      .filter((id): id is string => Boolean(id))
+  );
+  if (approvalIds.size === 0) return [];
+
+  const result = await pool.query(
+    `SELECT * FROM visits
+     WHERE user_id = $1
+       AND approval_id = ANY($2)
+     ORDER BY timestamp ASC`,
+    [userId, Array.from(approvalIds)]
+  );
+  return result.rows as Visit[];
+}
+
+interface ApprovalMileage {
+  approvalId: string;
+  userId: string;
+  startDate: string;
+  totalReported: number;
+  totalGaode: number;
+  deviationRate: number;
+  relatedVisitIds: number[];
+  segments: MileageSegment[];
+}
+
+function groupSegmentsByApproval(
+  segments: MileageSegment[]
+): Map<string, ApprovalMileage> {
+  const groups = new Map<string, ApprovalMileage>();
+
+  for (const seg of segments) {
+    const key = seg.approval_id;
+    if (!groups.has(key)) {
+      groups.set(key, {
+        approvalId: key,
+        userId: seg.user_id,
+        startDate: "",
+        totalReported: 0,
+        totalGaode: 0,
+        deviationRate: 0,
+        relatedVisitIds: [],
+        segments: [],
+      });
+    }
+    const g = groups.get(key)!;
+    g.totalReported += seg.reported_distance_km;
+    g.totalGaode += seg.gaode_distance_km;
+    g.relatedVisitIds.push(seg.from_visit_id, seg.to_visit_id);
+    g.segments.push(seg);
+  }
+
+  for (const g of groups.values()) {
+    g.totalReported = parseFloat(g.totalReported.toFixed(2));
+    g.totalGaode = parseFloat(g.totalGaode.toFixed(2));
+    g.deviationRate =
+      g.totalGaode > 0
+        ? parseFloat(((g.totalReported - g.totalGaode) / g.totalGaode).toFixed(4))
+        : g.totalReported > 0
+        ? 1
+        : 0;
+  }
+
+  return groups;
 }
 
 export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Anomaly[]> {
@@ -281,31 +359,60 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
-  // 5. 填报里程超过高德推荐里程 30%
+  // 5. 填报里程超过高德推荐里程 30%：按审批单汇总，不再按段拆分
   const mileageConfig = weights["mileage_deviation"];
   if (mileageConfig) {
     const threshold = getThreshold(mileageConfig, 0.3);
-    const mileageSegments = await computeMileageSegments(visitsToday);
-    for (const seg of mileageSegments) {
-      if (seg.deviation_rate > threshold) {
+
+    // 拉取当天涉及审批单的完整拜访记录，支持跨天审批单按审批单维度总览
+    const fullApprovalVisits = await getFullApprovalVisits(ctx.userId, visitsToday);
+    const visitSet = new Map<number, Visit>();
+    for (const v of visitsToday) visitSet.set(v.id, v);
+    for (const v of fullApprovalVisits) {
+      if (!visitSet.has(v.id)) visitSet.set(v.id, v);
+    }
+    const mileageVisits = Array.from(visitSet.values());
+
+    const mileageSegments = await computeMileageSegments(mileageVisits);
+    const grouped = groupSegmentsByApproval(mileageSegments);
+
+    const analysisDateStr = formatBeijingDate(ctx.analysisDate);
+
+    for (const group of grouped.values()) {
+      // 审批单起始日期：取该审批单最早一次拜访的业务日期
+      const startVisit = group.segments[0]
+        ? mileageVisits.find((v) => v.id === group.segments[0].from_visit_id)
+        : undefined;
+      group.startDate = startVisit?.business_date
+        ? typeof startVisit.business_date === "string"
+          ? startVisit.business_date
+          : formatBeijingDate(startVisit.business_date)
+        : analysisDateStr;
+
+      // 仅在审批单起始日当天生成一次异常，避免跨天审批单重复生成
+      if (group.startDate !== analysisDateStr) continue;
+
+      if (group.deviationRate > threshold) {
+        const relatedVisitIds = Array.from(new Set(group.relatedVisitIds));
+        const displayApprovalId = group.approvalId.length > 8
+          ? `...${group.approvalId.slice(-8)}`
+          : group.approvalId;
         anomalies.push({
           id: 0,
           user_id: ctx.userId,
           type: "mileage_deviation",
-          description: `从「${seg.from_location}」到「${seg.to_location}」填报里程 ${seg.reported_distance_km} km，估算 ${seg.gaode_distance_km} km，超出 ${(seg.deviation_rate * 100).toFixed(1)}%`,
+          description: `审批单 ${displayApprovalId} 填报里程 ${group.totalReported} km，估算 ${group.totalGaode} km，超出 ${(group.deviationRate * 100).toFixed(1)}%`,
           start_time: null,
           end_time: null,
           lat: null,
           lng: null,
-          severity: seg.deviation_rate > threshold * 1.5 ? "high" : "medium",
-          related_visit_ids: [seg.from_visit_id, seg.to_visit_id],
+          severity: group.deviationRate > threshold * 1.5 ? "high" : "medium",
+          related_visit_ids: relatedVisitIds,
           metadata: {
-            from_location: seg.from_location,
-            to_location: seg.to_location,
-            reported_distance_km: seg.reported_distance_km,
-            gaode_distance_km: seg.gaode_distance_km,
-            deviation_rate: seg.deviation_rate,
-            approval_id: seg.approval_id,
+            approval_id: group.approvalId,
+            reported_distance_km: group.totalReported,
+            gaode_distance_km: group.totalGaode,
+            deviation_rate: group.deviationRate,
           },
           created_at: new Date(),
         });

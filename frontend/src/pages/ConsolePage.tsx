@@ -1568,24 +1568,6 @@ function MileageDeviationGroup({
                 审批单 {group.approvalId.slice(-8)} · 填报 {group.totalReported.toFixed(1)} km / 估算{" "}
                 {group.totalGaode.toFixed(1)} km
               </div>
-              {group.segments.length > 1 && (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: "#666",
-                    lineHeight: 1.6,
-                    marginTop: 4,
-                    paddingLeft: 4,
-                  }}
-                >
-                  {group.segments.map((s) => (
-                    <div key={s.id}>
-                      • {s.metadata?.from_location} → {s.metadata?.to_location}：填报{" "}
-                      {s.metadata?.reported_distance_km} km，估算 {s.metadata?.gaode_distance_km} km
-                    </div>
-                  ))}
-                </div>
-              )}
             </div>
           </Timeline.Item>
         ))}

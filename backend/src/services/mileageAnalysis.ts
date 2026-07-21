@@ -31,14 +31,18 @@ export interface MileageDistributionStats {
 /**
  * 按 approval_id 分组，计算相邻签到点之间的填报里程 vs 高德推荐里程。
  */
+function approvalGroupKey(v: Visit): string {
+  return v.approval_id || `${v.user_id}_${v.business_date || ""}`;
+}
+
 export async function computeMileageSegments(
   visits: Visit[]
 ): Promise<MileageSegment[]> {
-  // 按 approval_id + sequence 排序
+  // 按审批单分组（无 approval_id 的按 user_id + 业务日期兜底）
   const sorted = [...visits].sort((a, b) => {
-    if (a.approval_id !== b.approval_id) {
-      return (a.approval_id || "").localeCompare(b.approval_id || "");
-    }
+    const keyA = approvalGroupKey(a);
+    const keyB = approvalGroupKey(b);
+    if (keyA !== keyB) return keyA.localeCompare(keyB);
     return (a.sequence || 0) - (b.sequence || 0);
   });
 
@@ -49,7 +53,7 @@ export async function computeMileageSegments(
   for (let i = 1; i < sorted.length; i++) {
     const prev = sorted[i - 1];
     const curr = sorted[i];
-    if (!prev.approval_id || prev.approval_id !== curr.approval_id) continue;
+    if (approvalGroupKey(prev) !== approvalGroupKey(curr)) continue;
     // 公共交通不参与里程偏差计算
     if (
       prev.trip_type?.includes("公共交通") ||
@@ -118,7 +122,7 @@ export async function computeMileageSegments(
 
     segments.push({
       user_id: prev.user_id,
-      approval_id: prev.approval_id || "",
+      approval_id: approvalGroupKey(prev),
       from_visit_id: prev.id,
       to_visit_id: curr.id,
       from_location: prev.location_name,
