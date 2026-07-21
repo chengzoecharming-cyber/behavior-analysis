@@ -1499,27 +1499,19 @@ function MileageDeviationGroup({
   timelineColor: string;
 }) {
   const grouped = useMemo(() => {
-    const map = new Map<string, UserOverviewAnomalyItem[]>();
+    const map = new Map<string, { approvalId: string; totalReported: number; totalGaode: number; totalRate: number }[]>();
     for (const item of items) {
       const approvalId = (item.metadata?.approval_id as string) || "_no_approval";
-      if (!map.has(approvalId)) map.set(approvalId, []);
-      map.get(approvalId)!.push(item);
-    }
-    return Array.from(map.entries()).map(([approvalId, segments]) => {
-      const totalReported = segments.reduce(
-        (sum, s) => sum + (Number(s.metadata?.reported_distance_km) || 0),
-        0
-      );
-      const totalGaode = segments.reduce(
-        (sum, s) => sum + (Number(s.metadata?.gaode_distance_km) || 0),
-        0
-      );
-      const totalRate = totalGaode > 0 ? (totalReported - totalGaode) / totalGaode : 0;
-      const dateStr = segments[0].anomaly_date
-        ? dayjs(segments[0].anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
+      const dateStr = item.anomaly_date
+        ? dayjs(item.anomaly_date).tz("Asia/Shanghai").format("YYYY-MM-DD")
         : "";
-      return { approvalId, segments, totalReported, totalGaode, totalRate, dateStr };
-    });
+      const totalReported = Number(item.metadata?.reported_distance_km) || 0;
+      const totalGaode = Number(item.metadata?.gaode_distance_km) || 0;
+      const totalRate = totalGaode > 0 ? (totalReported - totalGaode) / totalGaode : 0;
+      if (!map.has(dateStr)) map.set(dateStr, []);
+      map.get(dateStr)!.push({ approvalId, totalReported, totalGaode, totalRate });
+    }
+    return Array.from(map.entries()).map(([dateStr, approvals]) => ({ dateStr, approvals }));
   }, [items]);
 
   return (
@@ -1534,7 +1526,7 @@ function MileageDeviationGroup({
       <Timeline>
         {grouped.map((group) => (
           <Timeline.Item
-            key={group.approvalId}
+            key={group.dateStr}
             dot={
               <div
                 style={{
@@ -1547,27 +1539,34 @@ function MileageDeviationGroup({
               />
             }
           >
-            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
               <div style={{ fontSize: 14, fontWeight: 600, color: "#0f1419" }}>
                 {group.dateStr}
               </div>
-              <Tag
-                size="small"
-                style={{
-                  borderRadius: 4,
-                  backgroundColor: "#f5f5f5",
-                  color: "#666",
-                  border: "1px solid #d9d9d9",
-                  fontSize: 12,
-                  alignSelf: "flex-start",
-                }}
-              >
-                超出 {(group.totalRate * 100).toFixed(1)}%
-              </Tag>
-              <div style={{ fontSize: 12, color: "#999" }}>
-                审批单 {group.approvalId.slice(-8)} · 填报 {group.totalReported.toFixed(1)} km / 估算{" "}
-                {group.totalGaode.toFixed(1)} km
-              </div>
+              {group.approvals.map((approval) => (
+                <div
+                  key={approval.approvalId}
+                  style={{ display: "flex", flexDirection: "column", gap: 4 }}
+                >
+                  <Tag
+                    size="small"
+                    style={{
+                      borderRadius: 4,
+                      backgroundColor: "#f5f5f5",
+                      color: "#666",
+                      border: "1px solid #d9d9d9",
+                      fontSize: 12,
+                      alignSelf: "flex-start",
+                    }}
+                  >
+                    超出 {(approval.totalRate * 100).toFixed(1)}%
+                  </Tag>
+                  <div style={{ fontSize: 12, color: "#999" }}>
+                    审批单 {approval.approvalId.slice(-8)} · 填报 {approval.totalReported.toFixed(1)} km / 估算{" "}
+                    {approval.totalGaode.toFixed(1)} km
+                  </div>
+                </div>
+              ))}
             </div>
           </Timeline.Item>
         ))}
