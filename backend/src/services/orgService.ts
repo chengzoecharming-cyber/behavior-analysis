@@ -1,6 +1,11 @@
 import { pool } from "../db";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { formatBeijingDate } from "../utils/timezone";
+import {
+  computeMileageByApprovalForUsers,
+  aggregateMileageByUser,
+  aggregateMileageByDate,
+} from "./mileageAnalysis";
 
 /** F10：公司视角排行榜中不展示的顶层部门 */
 export const EXCLUDED_TOP_DEPARTMENTS = new Set([
@@ -421,38 +426,22 @@ export async function computeOrgOverview(
     [startDate, endDate, userIds]
   );
 
-  // 2. 填报里程：按 approval_id 取最大值，再跨审批求和
-  const reportedResult = await pool.query(
-    `WITH daily_approval AS (
-       SELECT approval_group, MAX(reported_distance_km) AS approval_total
-       FROM (
-         SELECT reported_distance_km,
-                COALESCE(approval_id, user_id || '_' || business_date::text) AS approval_group
-         FROM visits
-         WHERE user_id = ANY($1)
-           AND business_date >= $2::date
-           AND business_date <= $3::date
-           AND (trip_type IS NULL OR trip_type NOT LIKE '%公共交通%')
-       ) t
-       WHERE reported_distance_km > 0 AND reported_distance_km <= $4
-       GROUP BY approval_group
-     )
-     SELECT SUM(approval_total) AS total_reported_km
-     FROM daily_approval`,
-    [userIds, startDate, endDate, MAX_MILEAGE_KM]
+  // 2. 填报里程与估算里程：统一按审批单首次签到日期聚合
+  const mileageResults = await computeMileageByApprovalForUsers(
+    userIds,
+    startDate,
+    endDate
+  );
+  const totalReportedKm = mileageResults.reduce(
+    (sum, r) => sum + r.reportedKm,
+    0
+  );
+  const totalEstimatedKm = mileageResults.reduce(
+    (sum, r) => sum + r.estimatedKm,
+    0
   );
 
-  // 3. 估算里程
-  const estimatedResult = await pool.query(
-    `SELECT COALESCE(SUM(distance_km), 0) AS total_estimated_km
-     FROM routes
-     WHERE user_id = ANY($1)
-       AND business_date >= $2::date
-       AND business_date <= $3::date`,
-    [userIds, startDate, endDate]
-  );
-
-  // 4. 停留时长
+  // 3. 停留时长
   const stopResult = await pool.query(
     `SELECT COALESCE(SUM(duration_minutes), 0) AS total_stop_minutes
      FROM stops
@@ -462,7 +451,7 @@ export async function computeOrgOverview(
     [userIds, startDate, endDate]
   );
 
-  // 5. 异常数
+  // 4. 异常数
   const anomalyResult = await pool.query(
     `SELECT COUNT(*) AS total_anomalies
      FROM anomalies
@@ -477,8 +466,8 @@ export async function computeOrgOverview(
     totalEmployees: parseInt(overviewResult.rows[0].total_employees, 10),
     totalLocations: parseInt(overviewResult.rows[0].total_locations, 10),
     totalCustomers: parseInt(overviewResult.rows[0].total_customers, 10) || 0,
-    totalReportedKm: parseFloat(reportedResult.rows[0].total_reported_km) || 0,
-    totalEstimatedKm: parseFloat(estimatedResult.rows[0].total_estimated_km) || 0,
+    totalReportedKm: parseFloat(totalReportedKm.toFixed(2)),
+    totalEstimatedKm: parseFloat(totalEstimatedKm.toFixed(2)),
     totalStopMinutes: parseInt(stopResult.rows[0].total_stop_minutes, 10) || 0,
     totalAnomalies: parseInt(anomalyResult.rows[0].total_anomalies, 10),
   };
@@ -715,34 +704,14 @@ async function getScopeStats(
     };
   }
 
-  const [reported, estimated, stops, anomalies, riskCounts] = await Promise.all([
-    pool.query(
-      `WITH daily_approval AS (
-         SELECT approval_group, MAX(reported_distance_km) AS approval_total
-         FROM (
-           SELECT reported_distance_km,
-                  COALESCE(approval_id, user_id || '_' || business_date::text) AS approval_group
-           FROM visits
-           WHERE user_id = ANY($1)
-             AND business_date >= $2::date
-             AND business_date <= $3::date
-             AND (trip_type IS NULL OR trip_type NOT LIKE '%公共交通%')
-         ) t
-         WHERE reported_distance_km > 0 AND reported_distance_km <= $4
-         GROUP BY approval_group
-       )
-       SELECT SUM(approval_total) AS total
-       FROM daily_approval`,
-      [userIds, startDate, endDate, MAX_MILEAGE_KM]
-    ),
-    pool.query(
-      `SELECT COALESCE(SUM(distance_km), 0) AS total
-       FROM routes
-       WHERE user_id = ANY($1)
-         AND business_date >= $2::date
-         AND business_date <= $3::date`,
-      [userIds, startDate, endDate]
-    ),
+  const mileageResults = await computeMileageByApprovalForUsers(
+    userIds,
+    startDate,
+    endDate
+  );
+  const byUser = aggregateMileageByUser(mileageResults);
+
+  const [stops, anomalies, riskCounts] = await Promise.all([
     pool.query(
       `SELECT COALESCE(SUM(duration_minutes), 0) AS total
        FROM stops
@@ -773,11 +742,20 @@ async function getScopeStats(
     ),
   ]);
 
+  const reportedKm = userIds.reduce(
+    (sum, uid) => sum + (byUser.get(uid)?.reportedKm || 0),
+    0
+  );
+  const estimatedKm = userIds.reduce(
+    (sum, uid) => sum + (byUser.get(uid)?.estimatedKm || 0),
+    0
+  );
+
   const rc = riskCounts.rows[0];
 
   return {
-    reportedKm: parseFloat(reported.rows[0].total) || 0,
-    estimatedKm: parseFloat(estimated.rows[0].total) || 0,
+    reportedKm: parseFloat(reportedKm.toFixed(2)),
+    estimatedKm: parseFloat(estimatedKm.toFixed(2)),
     stopMinutes: parseInt(stops.rows[0].total, 10) || 0,
     anomalyCount: parseInt(anomalies.rows[0].total, 10) || 0,
     hasLowVisitCount: (parseInt(rc.low_visit_count_count, 10) || 0) > 0,
@@ -792,7 +770,7 @@ async function computeTrend(
   startDate: string,
   endDate: string
 ): Promise<OrgTrendItem[]> {
-  const [visits, reported, estimated, stops, anomalies] = await Promise.all([
+  const [visits, mileageResults, stops, anomalies] = await Promise.all([
     pool.query(
       `SELECT business_date, COUNT(*) AS visit_count
        FROM visits
@@ -803,39 +781,7 @@ async function computeTrend(
        ORDER BY business_date`,
       [userIds, startDate, endDate]
     ),
-    pool.query(
-      `SELECT business_date, SUM(approval_total) AS reported_km
-       FROM (
-         SELECT business_date,
-                approval_group,
-                MAX(reported_distance_km) AS approval_total
-         FROM (
-           SELECT business_date,
-                  reported_distance_km,
-                  COALESCE(approval_id, user_id || '_' || business_date::text) AS approval_group
-           FROM visits
-           WHERE user_id = ANY($1)
-             AND business_date >= $2::date
-             AND business_date <= $3::date
-             AND (trip_type IS NULL OR trip_type NOT LIKE '%公共交通%')
-         ) t
-         WHERE reported_distance_km > 0 AND reported_distance_km <= $4
-         GROUP BY business_date, approval_group
-       ) t2
-       GROUP BY business_date
-       ORDER BY business_date`,
-      [userIds, startDate, endDate, MAX_MILEAGE_KM]
-    ),
-    pool.query(
-      `SELECT business_date, COALESCE(SUM(distance_km), 0) AS estimated_km
-       FROM routes
-       WHERE user_id = ANY($1)
-         AND business_date >= $2::date
-         AND business_date <= $3::date
-       GROUP BY business_date
-       ORDER BY business_date`,
-      [userIds, startDate, endDate]
-    ),
+    computeMileageByApprovalForUsers(userIds, startDate, endDate),
     pool.query(
       `SELECT business_date, COALESCE(SUM(duration_minutes), 0) AS stop_minutes
        FROM stops
@@ -858,6 +804,8 @@ async function computeTrend(
     ),
   ]);
 
+  const byDate = aggregateMileageByDate(mileageResults);
+
   const map = new Map<string, OrgTrendItem>();
   const ensureDay = (date: string) => {
     if (!map.has(date)) {
@@ -876,11 +824,10 @@ async function computeTrend(
   for (const row of visits.rows) {
     ensureDay(formatBeijingDate(row.business_date)).visitCount = parseInt(row.visit_count, 10);
   }
-  for (const row of reported.rows) {
-    ensureDay(formatBeijingDate(row.business_date)).reportedKm = parseFloat(row.reported_km) || 0;
-  }
-  for (const row of estimated.rows) {
-    ensureDay(formatBeijingDate(row.business_date)).estimatedKm = parseFloat(row.estimated_km) || 0;
+  for (const [date, vals] of byDate) {
+    const day = ensureDay(date);
+    day.reportedKm = vals.reportedKm;
+    day.estimatedKm = vals.estimatedKm;
   }
   for (const row of stops.rows) {
     ensureDay(formatBeijingDate(row.business_date)).stopMinutes = parseInt(row.stop_minutes, 10) || 0;

@@ -9,6 +9,7 @@ import { isMileageRequiredTrip } from "../services/tripType";
 import {
   computeMileageSegments,
   computeMileageStats,
+  computeMileageByApprovalForUsers,
 } from "../services/mileageAnalysis";
 import { computeUserOverview } from "../services/userOverviewService";
 import { Visit, Stop, Route, Anomaly } from "../types";
@@ -78,16 +79,6 @@ router.get("/mileage", async (req: Request, res: Response) => {
       return;
     }
 
-    const visitsResult = await pool.query(
-      `SELECT * FROM visits
-       WHERE user_id = $1
-         AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-         AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-       ORDER BY timestamp ASC`,
-      [user, rangeStart, rangeEnd]
-    );
-    const visits: Visit[] = visitsResult.rows;
-
     let routesResult = await pool.query(
       `SELECT * FROM routes
        WHERE user_id = $1
@@ -118,11 +109,18 @@ router.get("/mileage", async (req: Request, res: Response) => {
       );
     }
 
-    // 仅驾车行程参与里程统计：估算里程和填报里程均来自 computeMileageSegments 过滤后的段
-    const segments = await computeMileageSegments(visits);
-    const totalKm = segments.reduce((sum, seg) => sum + seg.gaode_distance_km, 0);
-    const reportedDistanceKm = segments.reduce(
-      (sum, seg) => sum + seg.reported_distance_km,
+    // 按审批单首次签到日期聚合真实填报里程与估算里程（仅驾车段）
+    // helper 需要 YYYY-MM-DD 格式的日期字符串
+    const helperStartDate = (start as string | undefined)?.slice(0, 10) ?? (date as string);
+    const helperEndDate = (end as string | undefined)?.slice(0, 10) ?? (date as string);
+    const mileageResults = await computeMileageByApprovalForUsers(
+      [user as string],
+      helperStartDate,
+      helperEndDate
+    );
+    const totalKm = mileageResults.reduce((sum, r) => sum + r.estimatedKm, 0);
+    const reportedDistanceKm = mileageResults.reduce(
+      (sum, r) => sum + r.reportedKm,
       0
     );
 
@@ -131,8 +129,8 @@ router.get("/mileage", async (req: Request, res: Response) => {
       ...responseDate,
       totalKm: parseFloat(totalKm.toFixed(2)),
       reportedDistanceKm: parseFloat(reportedDistanceKm.toFixed(2)),
-      segmentCount: segments.length,
-      estimatedFuelCost: parseFloat((totalKm * 0.8).toFixed(2)), // 假设 0.8 元/km
+      segmentCount: mileageResults.length,
+      estimatedFuelCost: parseFloat((totalKm * 0.8).toFixed(2)),
     });
   } catch (err) {
     console.error("Failed to compute mileage:", err);

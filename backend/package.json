@@ -18,7 +18,8 @@
     "sync:contacts": "ts-node scripts/syncDingTalkContacts.ts",
     "f9:normalize-user-ids": "ts-node scripts/f9NormalizeUserIds.ts",
     "f9:merge-sales-channel": "ts-node scripts/f9MergeSalesChannelVisits.ts",
-    "f9:init-leader-roles": "ts-node scripts/f9InitLeaderRoles.ts"
+    "f9:init-leader-roles": "ts-node scripts/f9InitLeaderRoles.ts",
+    "fill:routes": "ts-node scripts/fillMissingRoutes.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

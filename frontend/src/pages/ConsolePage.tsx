@@ -323,6 +323,29 @@ const statValueStyle: React.CSSProperties = {
   color: "#0f1419",
 };
 
+function computeApprovalReportedKm(visits: Visit[]): number {
+  const drivingVisits = visits
+    .filter((v) => isMileageRequiredTrip(v.trip_type))
+    .sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  let total = 0;
+  for (let i = 1; i < drivingVisits.length; i++) {
+    const prev = drivingVisits[i - 1];
+    const curr = drivingVisits[i];
+    const prevOdo = prev.end_odometer ?? prev.start_odometer;
+    if (curr.end_odometer != null && prevOdo != null) {
+      const diff = curr.end_odometer - prevOdo;
+      if (diff >= 0 && diff <= MAX_MILEAGE_KM) total += diff;
+    } else if (
+      prev.reported_distance_km != null &&
+      curr.reported_distance_km != null
+    ) {
+      const diff = curr.reported_distance_km - prev.reported_distance_km;
+      if (diff >= 0 && diff <= MAX_MILEAGE_KM) total += diff;
+    }
+  }
+  return parseFloat(total.toFixed(2));
+}
+
 function fillDailyRange(
   daily: DailyOverview[],
   start: string,
@@ -728,11 +751,7 @@ function ConsolePage() {
       const groupAnomalies = anomalies.filter((a) =>
         a.related_visit_ids.some((id) => groupVisitIds.has(id))
       );
-      const reportedValues = groupVisits
-        .filter((v) => isMileageRequiredTrip(v.trip_type))
-        .map((v) => v.reported_distance_km)
-        .filter((d): d is number => d != null && d > 0 && d <= MAX_MILEAGE_KM);
-      const reportedDistanceKm = reportedValues.length > 0 ? Math.max(...reportedValues) : 0;
+      const reportedDistanceKm = computeApprovalReportedKm(groupVisits);
       const totalKm = drivingRoutes.reduce((sum, r) => sum + r.distance_km, 0);
 
       groups.set(key, {
@@ -745,7 +764,7 @@ function ConsolePage() {
         mileage: {
           user_id: userId || "",
           totalKm: parseFloat(totalKm.toFixed(2)),
-          reportedDistanceKm: parseFloat(reportedDistanceKm.toFixed(2)),
+          reportedDistanceKm,
           segmentCount: drivingRoutes.length,
           estimatedFuelCost: parseFloat((totalKm * 0.8).toFixed(2)),
         },

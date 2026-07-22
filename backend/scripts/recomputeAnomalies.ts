@@ -6,6 +6,7 @@ import {
   toBeijingDayStart,
   toBeijingDayEnd,
   parseDateTimeAsBeijing,
+  formatBeijingDate,
 } from "../src/utils/timezone";
 import {
   getCurrentBusinessWeekRange,
@@ -35,7 +36,7 @@ async function main() {
 
     for (let i = 0; i < pairs.length; i++) {
       const { user_id, business_date } = pairs[i];
-      const dateStr = business_date.toISOString().split("T")[0];
+      const dateStr = formatBeijingDate(business_date);
       const start = toBeijingDayStart(dateStr);
       const end = toBeijingDayEnd(dateStr);
 
@@ -148,7 +149,7 @@ async function main() {
        ORDER BY business_date`
     );
     const dates = datesResult.rows.map(
-      (r) => r.business_date.toISOString().split("T")[0]
+      (r) => formatBeijingDate(r.business_date)
     );
     console.log(`[4/4] Refreshing risk summary cache for ${dates.length} dates...`);
 

@@ -206,6 +206,97 @@
 
 ---
 
+### P0-7 里程聚合口径统一：按审批单首次签到时间
+
+> 发现时间：2026-07-22
+> 状态：已实施（2026-07-22）
+
+#### 背景
+
+2026-07-21 线上排查（徐家乐 7-21、李艳茹 7-14）发现系统内存在多处里程口径不统一：
+
+| 模块 | 当前填报里程口径 | 当前估算里程口径 | 问题 |
+|---|---|---|---|
+| `/analytics/mileage`（单人单日控制台） | 审批单内驾车段差值求和 | 驾车段 route 求和 | ✅ 口径正确 |
+| `userOverviewService.ts`（周期总览） | 驾车，但按 approval 取 `MAX` | 驾车 route 求和 | 填报里程仍用累计读数 |
+| `orgService.ts`（排行榜/组织总览） | 非公共交通 MAX per approval | 所有 route 求和 | 非驾车计入，且是累计读数 |
+| `companyDashboard.ts`（公司 Dashboard） | 非公共交通 MAX per approval | 所有 route 求和 | 同上 |
+| `reportGenerationService.ts`（报告） | 所有类型 MAX per approval | 所有 route 求和 | 同上，且不过滤 |
+| `export.ts`（单日报表导出） | MAX per approval | 所有 route 求和 | 累计读数 |
+| `riskSummaryService.ts`（风险摘要） | 无 | 所有 route 求和 | 估算里程含非驾车段 |
+| `anomalyDetection.ts`（异常检测） | 驾车段差值求和 | 驾车段 route 求和 | ✅ 正确，但输入只含当天数据 |
+| `ConsolePage.tsx`（按审批单分组卡片） | 该组 `MAX` | 驾车 route 求和 | 填报里程仍用累计读数 |
+
+李艳茹 7-14 出现「两条审批单」的排查结论：并非系统拆分，而是存在一个 **7-13 创建的审批单**（`202607131001000173869`），其第二个签到点落在 7-14 早上 10:44；按当前「按 visit 日期」的聚合口径，它会出现在 7-14 的查询结果中，导致业务方误以为重复。
+
+#### 决策
+
+1. **里程聚合维度统一为审批单**。
+2. **日期归属**：该审批单**第一次签到**的 `business_date`。
+3. **填报里程**：审批单内驾车 visit 的 `reported_distance_km` 用相邻段差值求和，得到真实总里程。
+4. **估算里程**：仅统计审批单内驾车相邻段的 route 距离之和。
+5. **非驾车**（公共交通、陪同拜访、特殊签到、虚拟客户）不计入里程。
+6. **「今日累计里程」**作为校验字段读取，用于与系统计算值交叉验证，发现不一致时打「填报异常」标记。
+
+#### 影响
+
+- 跨天审批单不再按 visit 日期拆分，整体归入起始日。
+- 排行榜、决策页、控制台周期总览、导出、风险摘要的里程数字会统一。
+- 历史数据需重新计算 `routes`、`anomalies`、`risk_summary_cache`。
+
+#### 任务
+
+- [x] 新增统一 helper `computeMileageByApprovalForUsers`（`backend/src/services/mileageAnalysis.ts`），按审批单首次签到日期聚合真实填报/估算里程。
+- [x] 替换 `orgService.ts`、`companyDashboard.ts`、`userOverviewService.ts`、`reportGenerationService.ts`、`export.ts`、`riskSummaryService.ts` 的里程计算。
+- [x] 更新 `/analytics/mileage` 路由，使用新 helper。
+- [x] 控制台单日前端 `ConsolePage.tsx` 中按审批单分组的里程卡片同步使用新口径。
+- [x] 钉钉解析读取「今日累计里程」作为校验字段，并存入 `visits.cumulative_mileage_km`（`backend/src/services/dingtalk.ts`、`backend/src/services/excelParser.ts`）。
+- [x] 在异常检测中增加 `cumulative_mileage_mismatch`，段差值/总里程与系统计算值不一致时打数据质量异常（`backend/src/services/anomalyDetection.ts`）。
+- [x] 数据库 `anomaly_weights` 初始化新增 `cumulative_mileage_mismatch` 规则（`backend/src/db.ts`）。
+- [x] 提供脚本重算历史 derived 数据（`routes`、`anomalies`、`risk_summary_cache`）：使用 `npm run recompute:routes`（`backend/scripts/recomputeMileageAndRoutes.ts`），会先清空 routes、按 user/date 重算并持久化，再逐日刷新风险摘要缓存（内部会重算 anomalies）。
+- [x] 前后端 `npm run build` 验证通过。
+
+#### 本地验证中发现并修复的派生问题
+
+- **问题**：`/analytics/mileage` 在 `date` 模式下把 `start`/`end`（undefined）原样传给了 `computeMileageByApprovalForUsers`，导致 `first_business_date >= null` / `<= null` 恒为假，单人控制台单日里程返回 0。
+- **修复**：`backend/src/routes/analytics.ts` 中提取 `helperStartDate` / `helperEndDate`（`YYYY-MM-DD`）再传入 helper。
+- **验证**：本地用户 `016143130224185664` 2026-07-21 返回 `{"reportedDistanceKm":88,"totalKm":87.2}`，与数据库审批单段差值一致。
+- **问题**：`routeService.ts` 在 `routes` 表写入 `business_date` 时，把 `Date` 对象直接转成字符串（`Fri Jul 21 ... GMT+0800`），PostgreSQL 报 `time zone "gmt+0800" not recognized`，导致 `/routes` 以及依赖 route 重算的接口（控制台轨迹、单日异常）返回 Database error。
+- **修复**：新增 `formatBusinessDate` 辅助函数，统一输出 `YYYY-MM-DD` 字符串；`mileageAnalysis.ts` 中的 `firstStopBusinessDate` 也统一格式化为 `YYYY-MM-DD`，避免 `aggregateMileageByDate` 的 Map key 变成 `Date.toString()`，导致决策页趋势 / 排行榜趋势里程为 0。
+- **验证**：`/routes?user=016143130224185664&start=2026-07-21T00:00:00&end=2026-07-21T23:59:59` 返回 4 条轨迹；`/analytics/org-overview` 和 `/analytics/company-dashboard` 的 7-21 趋势里程显示为 `reportedKm=2653 / estimatedKm=1742.91`；李朝晖 6-4 单日里程 `840 / 789.4`，6-1~6-7 周期查询中 6-4 每日趋势估算里程不再为 0。
+- **新增根因（2026-07-22）**：`routes` 表只保存了少部分 user/date 的轨迹（本地 823 对有 visits，只有 820 条 route 段且分布不均）。周期视图/排行榜直接读 `routes` 表做估算，单日控制台则每次调用 `/routes` 实时重算，所以出现「单日正确，周期 0」的现象。
+- **处理**：
+  - 新增 `backend/scripts/fillMissingRoutes.ts` 并注册 `npm run fill:routes`：只计算缺失的 route，不删除已有数据，避免高德 QPS/日限流。
+  - 将 `backend/scripts/recomputeMileageAndRoutes.ts` 改为**增量模式**（默认），只补缺失的 route；只有显式加 `--full` 才会全量清空重算。
+  - 本地已执行 `npm run recompute:routes`（后因高德 `CUQPS_HAS_EXCEEDED_THE_LIMIT` 部分失败），随后执行 `npm run fill:routes` 补全剩余缺失的 route。
+  - **二次根因**：第一次 `npm run fill:routes` 实际未写入任何 route。原因是脚本把 PostgreSQL 返回的 `business_date`（`date` 类型，被 `pg` 驱动解析为 UTC 午夜 `Date`）直接用 `.toISOString().split("T")[0]` 转成日期字符串，得到的是 UTC 日期（比北京时间晚一天）。例如 2026-07-21 被转成 2026-07-20，导致 `computeAndPersistRoutes` 查询不到 visits，所有缺失对都被判定为无 route。
+  - **二次修复**：以下脚本/文件统一改用 `formatBeijingDate(date)` 把 UTC `Date` 转回北京日期：
+    - `backend/scripts/fillMissingRoutes.ts`
+    - `backend/scripts/recomputeMileageAndRoutes.ts`
+    - `backend/scripts/recomputeAnomalies.ts`
+    - `backend/scripts/refreshRiskCache.ts`
+    - `backend/scripts/refreshRiskCacheFromExistingRoutes.ts`
+    - `backend/scripts/seed.ts`（同时补填缺失的 `business_date` 插入值）
+    - `backend/src/services/syncCheckService.ts`（昨日日期取 `getYesterdayBeijing()`）
+  - 修复后再次执行 `npm run fill:routes`，504 对缺失 user/date 成功补算 route；`routes` 表从 786 条增加到 1290 条；`drive_count >= 2` 且 `route_count = 0` 的对只剩 1 条（01352741115136031574 @ 2026-07-22，该审批单实际首次签到在 2026-07-21，route 已按首次签到日期归入 2026-07-21）。
+  - 随后执行 `npm run recompute:routes`，对 49 个日期刷新 `risk_summary_cache`，确保 `/analytics/risk-summary` 与周期视图一致。
+  - **验证**：李朝晖 6-1~6-7 周期总览中，6-4 每日趋势估算里程由 0 变为 `789.4`，与单日控制台 `840 / 789.4` 一致；其余多日估算里程也均由 0 补全。前后端 `npm run build` 通过。
+  - 线上部署后建议先跑 `npm run fill:routes`；若需要彻底重建，再跑 `npm run recompute:routes -- --full`。
+
+---
+
+#### 今日累计里程校验逻辑
+
+1. **字段读取**：钉钉多 stop 解析器读取每个签到点的「今日累计里程」，存入 `visits.cumulative_mileage_km`。
+2. **段差值校验**：对审批单内每一对相邻驾车签到点，比较：
+   - `系统段差值` = 当前 stop 终点读数 - 上一 stop 终点读数（或 `reported_distance_km` 差值）。
+   - `字段段差值` = 当前 stop 今日累计里程 - 上一 stop 今日累计里程。
+   - 若 `|字段段差值 - 系统段差值| > 阈值（1 km 或 5%）`，则对该段打异常标记。
+3. **总里程兜底校验**：比较审批单最后一个 stop 的「今日累计里程」与系统计算的真实总里程，若不一致也打异常标记。
+4. **不修改真实里程**：校验仅作为异常提示，真实里程仍使用里程表读数计算。
+
+---
+
 ## 已上线
 
 ### Phase 1：数据治理 + 控制台增强

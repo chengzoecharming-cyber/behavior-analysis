@@ -1,6 +1,10 @@
 import { pool } from "../db";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { formatBeijingDate } from "../utils/timezone";
+import {
+  computeMileageByApprovalForUsers,
+  aggregateMileageByUserDate,
+} from "./mileageAnalysis";
 
 export interface DailyOverview {
   date: string;
@@ -56,45 +60,13 @@ export async function computeUserOverview(
     [userId, startDate, endDate]
   );
 
-  // 2. 每日填报里程：仅统计驾车行程，按 approval_id 取最大值，再跨 approval 求和
-  const reportedResult = await pool.query(
-    `WITH driving_visits AS (
-       SELECT business_date, approval_id, reported_distance_km
-       FROM visits
-       WHERE user_id = $1
-         AND business_date >= $2::date
-         AND business_date <= $3::date
-         AND (trip_type IS NULL OR trip_type LIKE '%开车%' OR trip_type LIKE '%驾车%')
-     ),
-     daily_approval AS (
-       SELECT business_date, approval_id, MAX(reported_distance_km) AS approval_total
-       FROM driving_visits
-       WHERE reported_distance_km > 0
-         AND reported_distance_km <= $4
-       GROUP BY business_date, approval_id
-     )
-     SELECT business_date, SUM(approval_total) AS reported_distance_km
-     FROM daily_approval
-     GROUP BY business_date
-     ORDER BY business_date`,
-    [userId, startDate, endDate, MAX_MILEAGE_KM]
+  // 2. 每日填报里程与估算里程：按审批单首次签到日期聚合（仅驾车段）
+  const mileageResults = await computeMileageByApprovalForUsers(
+    [userId],
+    startDate,
+    endDate
   );
-
-  // 3. 每日估算里程：仅统计两端都是驾车行程的 route
-  const routeResult = await pool.query(
-    `SELECT r.business_date, COALESCE(SUM(r.distance_km), 0) AS estimated_distance_km
-     FROM routes r
-     JOIN visits fv ON r.from_visit_id = fv.id
-     JOIN visits tv ON r.to_visit_id = tv.id
-     WHERE r.user_id = $1
-       AND r.business_date >= $2::date
-       AND r.business_date <= $3::date
-       AND (fv.trip_type IS NULL OR fv.trip_type LIKE '%开车%' OR fv.trip_type LIKE '%驾车%')
-       AND (tv.trip_type IS NULL OR tv.trip_type LIKE '%开车%' OR tv.trip_type LIKE '%驾车%')
-     GROUP BY r.business_date
-     ORDER BY r.business_date`,
-    [userId, startDate, endDate]
-  );
+  const byUserDate = aggregateMileageByUserDate(mileageResults);
 
   // 4. 每日停留时长
   const stopResult = await pool.query(
@@ -160,13 +132,11 @@ export async function computeUserOverview(
     const d = ensureDay(formatDate(row.business_date));
     d.visit_count = parseInt(row.visit_count, 10);
   }
-  for (const row of reportedResult.rows) {
-    const d = ensureDay(formatDate(row.business_date));
-    d.reported_distance_km = parseFloat(row.reported_distance_km) || 0;
-  }
-  for (const row of routeResult.rows) {
-    const d = ensureDay(formatDate(row.business_date));
-    d.estimated_distance_km = parseFloat(row.estimated_distance_km) || 0;
+  for (const [key, vals] of byUserDate) {
+    const date = key.split("_").pop() || "";
+    const d = ensureDay(date);
+    d.reported_distance_km = vals.reportedKm;
+    d.estimated_distance_km = vals.estimatedKm;
   }
   for (const row of stopResult.rows) {
     const d = ensureDay(formatDate(row.business_date));

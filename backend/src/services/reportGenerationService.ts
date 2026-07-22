@@ -3,6 +3,10 @@ import { buildOrgTree, OrgTreeNode } from "./orgService";
 import { computeUserOverview } from "./userOverviewService";
 import { renderConsoleReportMarkdown } from "./exportConsoleReportMarkdown";
 import {
+  computeMileageByApprovalForUsers,
+  aggregateMileageByDate,
+} from "./mileageAnalysis";
+import {
   getOperatorUnionId,
   getOrCreateWorkspace,
   ensureReportFolder,
@@ -145,37 +149,11 @@ async function computeScopeOverview(
     [userIds, start, end]
   );
 
-  // 3. 估算里程（按日）
-  const routeResult = await pool.query(
-    `SELECT business_date, COALESCE(SUM(distance_km), 0) AS estimated_distance_km
-     FROM routes
-     WHERE user_id = ANY($1::text[])
-       AND business_date >= $2::date
-       AND business_date <= $3::date
-     GROUP BY business_date
-     ORDER BY business_date`,
-    [userIds, start, end]
-  );
+  // 3. 每日估算里程（routes）与填报里程（按审批单聚合）
+  const mileageResults = await computeMileageByApprovalForUsers(userIds, start, end);
+  const byDate = aggregateMileageByDate(mileageResults);
 
-  // 4. 填报里程（按 approval_id 取最大再求和）
-  const reportedResult = await pool.query(
-    `WITH daily_approval AS (
-       SELECT business_date, approval_id, MAX(reported_distance_km) AS approval_total
-       FROM visits
-       WHERE user_id = ANY($1::text[])
-         AND business_date >= $2::date
-         AND business_date <= $3::date
-         AND reported_distance_km > 0
-       GROUP BY business_date, approval_id
-     )
-     SELECT business_date, COALESCE(SUM(approval_total), 0) AS reported_distance_km
-     FROM daily_approval
-     GROUP BY business_date
-     ORDER BY business_date`,
-    [userIds, start, end]
-  );
-
-  // 5. 异常数（按日）
+  // 4. 异常数（按日）
   const anomalyResult = await pool.query(
     `SELECT anomaly_date, COUNT(*) AS anomaly_count
      FROM anomalies
@@ -250,13 +228,10 @@ async function computeScopeOverview(
     d.visit_count = parseInt(row.visit_count, 10);
     d.customer_count = parseInt(row.customer_count, 10);
   }
-  for (const row of routeResult.rows) {
-    const d = ensureDay(formatDate(row.business_date));
-    d.estimated_distance_km = parseFloat(row.estimated_distance_km) || 0;
-  }
-  for (const row of reportedResult.rows) {
-    const d = ensureDay(formatDate(row.business_date));
-    d.reported_distance_km = parseFloat(row.reported_distance_km) || 0;
+  for (const [date, vals] of byDate) {
+    const d = ensureDay(date);
+    d.reported_distance_km = vals.reportedKm;
+    d.estimated_distance_km = vals.estimatedKm;
   }
   for (const row of anomalyResult.rows) {
     const d = ensureDay(formatDate(row.anomaly_date));

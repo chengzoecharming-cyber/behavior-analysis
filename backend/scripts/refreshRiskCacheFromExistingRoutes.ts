@@ -1,12 +1,13 @@
 import { pool } from "../src/db";
 import { persistRiskSummaryCache } from "../src/services/riskSummaryService";
+import { formatBeijingDate } from "../src/utils/timezone";
 
 async function main() {
   try {
     const result = await pool.query(
       `SELECT DISTINCT business_date FROM visits WHERE business_date IS NOT NULL ORDER BY business_date`
     );
-    const dates = result.rows.map((r) => r.business_date.toISOString().split("T")[0]);
+    const dates = result.rows.map((r) => formatBeijingDate(r.business_date));
 
     console.log(`Refreshing risk summary cache for ${dates.length} dates...`);
     for (let i = 0; i < dates.length; i++) {

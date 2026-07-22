@@ -46,6 +46,7 @@ function getRuleLayer(type: string): "fact" | "analyze" | "judge" | null {
     invalid_trip_type: "fact",
     missing_special_reason: "fact",
     mileage_reading_invalid: "fact",
+    cumulative_mileage_mismatch: "fact",
   };
   return map[type] || null;
 }
@@ -453,7 +454,13 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
   // 7. 里程读数异常：始终检测用于展示，但不参与风险评分
   anomalies.push(...detectMileageReadingInvalid(visitsToday));
 
-  // 8. 特殊签到未说明原因（已禁用）
+  // 8. 今日累计里程校验：表单字段与系统计算值不一致时打数据质量异常
+  const cumulativeMismatchConfig = weights["cumulative_mileage_mismatch"];
+  if (cumulativeMismatchConfig) {
+    anomalies.push(...detectCumulativeMileageMismatch(visitsToday));
+  }
+
+  // 9. 特殊签到未说明原因（已禁用）
   const missingReasonConfig = weights["missing_special_reason"];
   if (missingReasonConfig) {
     for (const visit of visitsToday) {
@@ -611,6 +618,143 @@ export function detectMileageReadingInvalid(visits: Visit[]): Anomaly[] {
       metadata: {
         approval_id: approvalId,
         issues,
+      },
+      created_at: new Date(),
+    });
+  }
+
+  return anomalies;
+}
+
+interface CumulativeMileageMismatchIssue {
+  sequence: number;
+  system: number;
+  field: number;
+  diff: number;
+  description: string;
+}
+
+function computeSegmentReportedForAnomaly(prev: Visit, curr: Visit): number | null {
+  const prevEndOdometer = prev.end_odometer ?? prev.start_odometer;
+  if (curr.end_odometer != null && prevEndOdometer != null) {
+    return curr.end_odometer - prevEndOdometer;
+  }
+  if (
+    prev.reported_distance_km != null &&
+    curr.reported_distance_km != null
+  ) {
+    return curr.reported_distance_km - prev.reported_distance_km;
+  }
+  return null;
+}
+
+/**
+ * 检测「今日累计里程」字段与系统计算值是否一致。
+ *
+ * 口径：
+ * 1. 仅对驾车审批单进行检测。
+ * 2. 段差值校验：相邻驾车签到点的「累计里程」差值 vs 系统段差值。
+ * 3. 总里程兜底校验：最后一个 stop 的「今日累计里程」vs 系统计算总里程。
+ * 4. 仅作为数据质量异常提示，不修改真实里程。
+ */
+export function detectCumulativeMileageMismatch(visits: Visit[]): Anomaly[] {
+  const groups = new Map<string, Visit[]>();
+  for (const v of visits) {
+    if (!v.approval_id) continue;
+    if (!groups.has(v.approval_id)) groups.set(v.approval_id, []);
+    groups.get(v.approval_id)!.push(v);
+  }
+
+  const anomalies: Anomaly[] = [];
+  const THRESHOLD_KM = 1;
+  const THRESHOLD_RATE = 0.05;
+
+  for (const [approvalId, groupVisits] of groups) {
+    const hasDriving = groupVisits.some((v) => isMileageRequiredTrip(v.trip_type));
+    if (!hasDriving) continue;
+
+    const sorted = [...groupVisits].sort(
+      (a, b) => (a.sequence || 0) - (b.sequence || 0)
+    );
+    if (sorted.length < 2) continue;
+
+    const issues: CumulativeMileageMismatchIssue[] = [];
+    let systemTotal = 0;
+
+    for (let i = 1; i < sorted.length; i++) {
+      const prev = sorted[i - 1];
+      const curr = sorted[i];
+      if (
+        !isMileageRequiredTrip(prev.trip_type) ||
+        !isMileageRequiredTrip(curr.trip_type)
+      ) {
+        continue;
+      }
+
+      const segmentReported = computeSegmentReportedForAnomaly(prev, curr);
+      if (segmentReported == null || segmentReported < 0) continue;
+      systemTotal += segmentReported;
+
+      if (
+        prev.cumulative_mileage_km != null &&
+        curr.cumulative_mileage_km != null
+      ) {
+        const fieldDiff = curr.cumulative_mileage_km - prev.cumulative_mileage_km;
+        const diff = Math.abs(fieldDiff - segmentReported);
+        const threshold = Math.max(THRESHOLD_KM, segmentReported * THRESHOLD_RATE);
+        if (diff > threshold) {
+          issues.push({
+            sequence: curr.sequence || i + 1,
+            system: segmentReported,
+            field: fieldDiff,
+            diff,
+            description: `第 ${curr.sequence || i + 1} 段系统计算 ${segmentReported.toFixed(1)} km，表单累计 ${fieldDiff.toFixed(1)} km，差值 ${diff.toFixed(1)} km`,
+          });
+        }
+      }
+    }
+
+    // 总里程兜底校验：最后一个 stop 的累计里程应等于系统总里程
+    const lastStop = sorted[sorted.length - 1];
+    if (
+      lastStop.cumulative_mileage_km != null &&
+      systemTotal > 0
+    ) {
+      const totalDiff = Math.abs(lastStop.cumulative_mileage_km - systemTotal);
+      const threshold = Math.max(THRESHOLD_KM, systemTotal * THRESHOLD_RATE);
+      if (totalDiff > threshold && issues.length === 0) {
+        issues.push({
+          sequence: lastStop.sequence || sorted.length,
+          system: systemTotal,
+          field: lastStop.cumulative_mileage_km,
+          diff: totalDiff,
+          description: `总里程系统计算 ${systemTotal.toFixed(1)} km，表单今日累计里程 ${lastStop.cumulative_mileage_km.toFixed(1)} km，差值 ${totalDiff.toFixed(1)} km`,
+        });
+      }
+    }
+
+    if (issues.length === 0) continue;
+
+    const descriptionLines = issues.map((issue) => `• ${issue.description}`).join("；");
+    anomalies.push({
+      id: 0,
+      user_id: sorted[0].user_id,
+      type: "cumulative_mileage_mismatch",
+      description: `审批单 ${approvalId} 今日累计里程校验异常：${descriptionLines}`,
+      start_time: null,
+      end_time: null,
+      lat: null,
+      lng: null,
+      severity: "low",
+      related_visit_ids: sorted.map((v) => v.id),
+      metadata: {
+        approval_id: approvalId,
+        issues: issues.map((issue) => ({
+          sequence: issue.sequence,
+          system: issue.system,
+          field: issue.field,
+          diff: issue.diff,
+        })),
       },
       created_at: new Date(),
     });

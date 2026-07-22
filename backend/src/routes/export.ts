@@ -11,6 +11,7 @@ import {
   exportConsoleReportToDingTalkDoc,
   inferReportType,
 } from "../services/dingtalkDoc";
+import { computeMileageByApprovalForUsers } from "../services/mileageAnalysis";
 import {
   isExportConfigured,
   uploadMediaToDingTalk,
@@ -275,18 +276,18 @@ router.post("/console-report", async (req: Request, res: Response) => {
             .then((r) => r.rows),
         ]);
 
-        const totalKm = routes.reduce((sum, r) => sum + r.distance_km, 0);
-
-        // 按 approval_id 取最大填报里程再求和
-        const reportedByApproval = new Map<string, number>();
-        for (const v of visits) {
-          if (v.reported_distance_km == null || v.reported_distance_km <= 0) continue;
-          const key = v.approval_id || `${v.user_id}_${v.business_date}`;
-          const current = reportedByApproval.get(key) || 0;
-          reportedByApproval.set(key, Math.max(current, v.reported_distance_km));
-        }
-        const reportedDistanceKm = Array.from(reportedByApproval.values()).reduce(
-          (sum, val) => sum + val,
+        // 估算里程与填报里程统一使用按审批单聚合的结果（首次签到日期归属）
+        const mileageResults = await computeMileageByApprovalForUsers(
+          [userId],
+          start,
+          start
+        );
+        const totalKm = mileageResults.reduce(
+          (sum, r) => sum + r.estimatedKm,
+          0
+        );
+        const reportedDistanceKm = mileageResults.reduce(
+          (sum, r) => sum + r.reportedKm,
           0
         );
 

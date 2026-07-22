@@ -13,6 +13,10 @@ import {
   EXCLUDED_TOP_DEPARTMENTS,
   isExcludedTopDepartment,
 } from "./orgService";
+import {
+  computeMileageByApprovalForUsers,
+  aggregateMileageByDate,
+} from "./mileageAnalysis";
 
 export interface WeeklyTrendItem {
   week: string; // 展示文案，如 "6.29-7.5"
@@ -186,51 +190,24 @@ export async function computeCompanyDashboard(
     }
   }
 
-  // 每天填报里程：按 approval_id 取最大值，再跨审批求和
-  const dailyReportedResult = await pool.query(
-    `SELECT business_date, SUM(approval_total) AS reported_km
-     FROM (
-       SELECT business_date,
-              approval_group,
-              MAX(reported_distance_km) AS approval_total
-       FROM (
-         SELECT business_date,
-                reported_distance_km,
-                COALESCE(approval_id, user_id || '_' || business_date::text) AS approval_group
-         FROM visits
-         WHERE business_date >= $1::date
-           AND business_date <= $2::date
-           AND (trip_type IS NULL OR trip_type NOT LIKE '%公共交通%')
-       ) t
-       WHERE reported_distance_km > 0 AND reported_distance_km <= $3
-       GROUP BY business_date, approval_group
-     ) t2
-     GROUP BY business_date
-     ORDER BY business_date`,
-    [startDate, endDate, MAX_MILEAGE_KM]
-  );
-  for (const row of dailyReportedResult.rows) {
-    const d = formatBeijingDate(row.business_date);
-    const day = dailyMap.get(d);
-    if (day) {
-      day.reportedKm = parseFloat(row.reported_km) || 0;
-    }
-  }
-
-  // 每天估算里程
-  const dailyEstimatedResult = await pool.query(
-    `SELECT business_date, COALESCE(SUM(distance_km), 0) AS estimated_km
-     FROM routes
-     WHERE business_date >= $1::date AND business_date <= $2::date
-     GROUP BY business_date
-     ORDER BY business_date`,
+  // 每天填报里程与估算里程：统一按审批单首次签到日期聚合
+  const mileageUserIdsResult = await pool.query(
+    `SELECT DISTINCT user_id FROM visits
+     WHERE business_date >= $1::date AND business_date <= $2::date`,
     [startDate, endDate]
   );
-  for (const row of dailyEstimatedResult.rows) {
-    const d = formatBeijingDate(row.business_date);
-    const day = dailyMap.get(d);
+  const mileageUserIds = mileageUserIdsResult.rows.map((r) => r.user_id);
+  const mileageResults = await computeMileageByApprovalForUsers(
+    mileageUserIds,
+    startDate,
+    endDate
+  );
+  const byDate = aggregateMileageByDate(mileageResults);
+  for (const [date, vals] of byDate) {
+    const day = dailyMap.get(date);
     if (day) {
-      day.estimatedKm = parseFloat(row.estimated_km) || 0;
+      day.reportedKm = vals.reportedKm;
+      day.estimatedKm = vals.estimatedKm;
     }
   }
 

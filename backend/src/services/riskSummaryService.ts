@@ -3,6 +3,7 @@ import { detectAnomalies } from "./anomalyDetection";
 import { detectStops } from "./stopDetection";
 import { computeAndPersistRoutes } from "./routeService";
 import { calculateRiskScore, getRiskLevel, RiskReason } from "./riskScoring";
+import { computeMileageByApprovalForUsers } from "./mileageAnalysis";
 import { Visit, Stop, Route } from "../types";
 import {
   toBeijingDayStart,
@@ -183,8 +184,17 @@ export async function computeEmployeeRiskSummary(
     );
   }
 
+  // 按审批单首次签到日期聚合估算里程（仅驾车段），与控制台口径一致
   const totalStopMinutes = stops.reduce((sum, s) => sum + s.duration_minutes, 0);
-  const totalDistance = routes.reduce((sum, r) => sum + r.distance_km, 0);
+  const mileageResults = await computeMileageByApprovalForUsers(
+    [userId],
+    dateStr,
+    dateStr
+  );
+  const totalDistance = mileageResults.reduce(
+    (sum, r) => sum + r.estimatedKm,
+    0
+  );
 
   return {
     user_id: userId,

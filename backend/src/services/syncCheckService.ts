@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import { buildRobotSignedUrl, getExportConfig } from "./dingtalkFile";
+import { getYesterdayBeijing } from "../utils/timezone";
 
 export type SyncHealthStatus = "healthy" | "warning" | "error";
 
@@ -243,9 +244,7 @@ export async function sendDailySyncSummary(): Promise<void> {
     return;
   }
 
-  const yesterday = new Date();
-  yesterday.setDate(yesterday.getDate() - 1);
-  const dateStr = yesterday.toISOString().split("T")[0];
+  const dateStr = getYesterdayBeijing();
 
   const result = await pool.query(
     `SELECT COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,

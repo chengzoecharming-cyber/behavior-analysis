@@ -82,6 +82,7 @@ export async function initDB(): Promise<void> {
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS start_odometer DOUBLE PRECISION;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS end_odometer DOUBLE PRECISION;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS reported_distance_km DOUBLE PRECISION;
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS cumulative_mileage_km DOUBLE PRECISION;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS visit_note TEXT;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS special_sign_reason TEXT;
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS photos JSONB DEFAULT '[]';
@@ -308,7 +309,8 @@ export async function initDB(): Promise<void> {
         ('long_idle', '长时间未移动', 0.05, 180, false, 'analyze', '>180分钟无移动记录'),
         ('invalid_trip_type', '异常出行方式', 0.03, 5, false, 'fact', '公共交通/特殊签到但填报较长里程'),
         ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, 'fact', '特殊签到未填写原因'),
-        ('mileage_reading_invalid', '里程读数异常', 0.02, NULL, true, 'fact', '出发/终点里程读数缺失、非单调递增或超过合理上限')
+        ('mileage_reading_invalid', '里程读数异常', 0.02, NULL, true, 'fact', '出发/终点里程读数缺失、非单调递增或超过合理上限'),
+        ('cumulative_mileage_mismatch', '今日累计里程校验异常', 0.01, NULL, true, 'fact', '表单「今日累计里程」与系统按里程表读数计算值不一致')
       ON CONFLICT (rule_key) DO UPDATE SET
         rule_name = EXCLUDED.rule_name,
         weight = EXCLUDED.weight,
@@ -322,7 +324,7 @@ export async function initDB(): Promise<void> {
       UPDATE anomaly_weights SET enabled = false, layer = 'analyze' WHERE rule_key IN ('long_stop', 'long_idle', 'route_detour');
       UPDATE anomaly_weights SET enabled = false, layer = 'fact' WHERE rule_key = 'invalid_trip_type';
       UPDATE anomaly_weights SET layer = 'fact', threshold_value = 8 WHERE rule_key = 'duplicate_location';
-      UPDATE anomaly_weights SET layer = 'fact' WHERE rule_key IN ('mileage_reading_invalid', 'missing_special_reason');
+      UPDATE anomaly_weights SET layer = 'fact' WHERE rule_key IN ('mileage_reading_invalid', 'missing_special_reason', 'cumulative_mileage_mismatch');
       UPDATE anomaly_weights SET layer = 'judge' WHERE rule_key IN ('low_visit_count', 'mileage_deviation');
 
       -- 钉钉通讯录同步（探测/缓存用）

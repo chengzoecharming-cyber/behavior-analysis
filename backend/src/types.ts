@@ -33,6 +33,7 @@ export interface Visit {
   start_odometer?: number;
   end_odometer?: number;
   reported_distance_km?: number;
+  cumulative_mileage_km?: number;
   visit_note?: string;
   special_sign_reason?: string;
   photos?: string[];
@@ -111,6 +112,7 @@ export interface ParsedVisit {
   start_odometer?: number;
   end_odometer?: number;
   reported_distance_km?: number;
+  cumulative_mileage_km?: number;
   visit_note?: string;
   special_sign_reason?: string;
   photos?: string[];

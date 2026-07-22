@@ -1,6 +1,17 @@
 import { pool } from "../db";
 import { Visit, Route } from "../types";
 import { planRoute } from "./routePlanning";
+import { formatBeijingDate, parseDateTimeAsBeijing } from "../utils/timezone";
+
+function formatBusinessDate(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  if (typeof value === "string") {
+    // 已经是 YYYY-MM-DD 则直接返回，否则按北京时间解析
+    if (/^\d{4}-\d{2}-\d{2}$/.test(value)) return value;
+    return formatBeijingDate(parseDateTimeAsBeijing(value));
+  }
+  return formatBeijingDate(value);
+}
 
 /**
  * 将 visits 按审批单分组。无 approval_id 的（如 Excel 导入）按 user_id + business_date 兜底。
@@ -52,13 +63,37 @@ export async function computeAndPersistRoutes(
   start: string,
   end: string
 ): Promise<Route[]> {
+  const startDate = start.slice(0, 10);
+  const endDate = end.slice(0, 10);
+
+  // 拉取首次签到在日期范围内的审批单完整 visits，以及无审批单（Excel）的 visits。
+  // 这样可以保证跨天审批单的路由按首次签到日期聚合，不会按 visit 日期拆分。
   const visitsResult = await pool.query(
-    `SELECT * FROM visits
-     WHERE user_id = $1
-       AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-       AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-     ORDER BY timestamp ASC`,
-    [userId, start, end]
+    `WITH approval_first_stop AS (
+       SELECT approval_id, MIN(timestamp) as first_timestamp
+       FROM visits
+       WHERE user_id = $1 AND approval_id IS NOT NULL
+       GROUP BY approval_id
+     ),
+     in_range_approvals AS (
+       SELECT a.approval_id
+       FROM approval_first_stop a
+       JOIN visits v ON v.approval_id = a.approval_id AND v.timestamp = a.first_timestamp
+       WHERE v.business_date >= $2::date AND v.business_date <= $3::date
+     )
+     SELECT v.*
+     FROM visits v
+     WHERE v.user_id = $1
+       AND (
+         v.approval_id IN (SELECT approval_id FROM in_range_approvals)
+         OR (
+           v.approval_id IS NULL
+           AND v.business_date >= $2::date
+           AND v.business_date <= $3::date
+         )
+       )
+     ORDER BY v.timestamp ASC`,
+    [userId, startDate, endDate]
   );
 
   const visits: Visit[] = visitsResult.rows;
@@ -67,16 +102,32 @@ export async function computeAndPersistRoutes(
   await pool.query(
     `DELETE FROM routes
      WHERE user_id = $1
-       AND business_date >= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
-       AND business_date <= ($3::timestamptz AT TIME ZONE 'Asia/Shanghai')::date`,
-    [userId, start, end]
+       AND business_date >= $2::date
+       AND business_date <= $3::date`,
+    [userId, startDate, endDate]
   );
+
+  const visitToFirstStopDate = new Map<number, string>();
+  const groups = groupVisitsByApproval(visits);
+  for (const group of groups.values()) {
+    group.sort(
+      (a, b) =>
+        new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    );
+    const firstStop = group[0];
+    const firstStopDate = formatBusinessDate(firstStop.business_date);
+    for (const v of group) {
+      visitToFirstStopDate.set(v.id, firstStopDate);
+    }
+  }
 
   const visitMap = new Map(visits.map((v) => [v.id, v]));
   const persisted: Route[] = [];
   for (const route of routePlans) {
     const fromVisit = visitMap.get(route.from_visit_id);
-    const businessDate = fromVisit?.business_date;
+    const businessDate =
+      visitToFirstStopDate.get(route.from_visit_id) ||
+      formatBusinessDate(fromVisit?.business_date);
     const r = await pool.query(
       `INSERT INTO routes
        (user_id, from_visit_id, to_visit_id, distance_km, duration_min, polyline, business_date)

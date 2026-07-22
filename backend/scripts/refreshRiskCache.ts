@@ -1,5 +1,6 @@
 import { pool } from "../src/db";
 import { persistRiskSummaryCache } from "../src/services/riskSummaryService";
+import { formatBeijingDate } from "../src/utils/timezone";
 
 async function main() {
   const args = process.argv.slice(2);
@@ -16,7 +17,7 @@ async function main() {
       const result = await pool.query(
         `SELECT DISTINCT DATE(timestamp) as date FROM visits ORDER BY date ASC`
       );
-      const dates = result.rows.map((r) => r.date.toISOString().split("T")[0]);
+      const dates = result.rows.map((r) => formatBeijingDate(r.date));
       console.log(`Found ${dates.length} dates to refresh.`);
 
       for (let i = 0; i < dates.length; i++) {

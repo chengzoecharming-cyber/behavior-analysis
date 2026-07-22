@@ -965,6 +965,29 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     return undefined;
   };
 
+  // 解析每个 stop 的累计里程："累计里程i"放在 stop i-1 之后，表示到达 stop i 的累计值；
+  // 最后一个 stop 优先用"今日累计里程"兜底。
+  const cumulativeByStopIndex = new Map<number, number>();
+  for (let j = 0; j < stops.length - 1; j++) {
+    const raw = findNearby(stops[j].index, /^累计里程\d*$/);
+    if (raw) {
+      const val = parseFloat(raw);
+      if (!isNaN(val) && val >= 0) {
+        cumulativeByStopIndex.set(j + 1, val);
+      }
+    }
+  }
+  const lastStopIndex = stops.length - 1;
+  const totalCumulativeRaw =
+    findNearby(stops[lastStopIndex].index, /^今日累计里程$/) ||
+    findValue(/^今日累计里程$/);
+  if (totalCumulativeRaw) {
+    const val = parseFloat(totalCumulativeRaw);
+    if (!isNaN(val) && val >= 0) {
+      cumulativeByStopIndex.set(lastStopIndex, val);
+    }
+  }
+
   const visits: ParsedVisit[] = [];
 
   for (let i = 0; i < stops.length; i++) {
@@ -1038,6 +1061,7 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
       start_odometer: i === 0 ? startOdometer : undefined,
       end_odometer: endOdometer ?? undefined,
       reported_distance_km: reportedDistanceKm ?? undefined,
+      cumulative_mileage_km: cumulativeByStopIndex.get(i),
       visit_note: visitNoteText + mileageNote,
       special_sign_reason: specialSignReasonText,
       photos,

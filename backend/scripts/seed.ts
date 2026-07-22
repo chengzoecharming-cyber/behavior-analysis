@@ -1,6 +1,7 @@
 import * as XLSX from "xlsx";
 import { pool, initDB } from "../src/db";
 import { RawVisitRow } from "../src/types";
+import { parseDateTimeAsBeijing, formatBeijingDate } from "../src/utils/timezone";
 
 function normalizeUserId(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "_");
@@ -15,8 +16,8 @@ async function main() {
 
   for (const row of rows) {
     const userId = normalizeUserId(row.user_name);
-    const timestamp = new Date(row.time as string);
-    const businessDate = timestamp.toISOString().split("T")[0];
+    const timestamp = parseDateTimeAsBeijing(row.time as string);
+    const businessDate = formatBeijingDate(timestamp);
 
     // RAW 层
     const rawResult = await pool.query(
@@ -55,6 +56,7 @@ async function main() {
         row.address,
         row.customer_name,
         "seed",
+        businessDate,
       ]
     );
   }
