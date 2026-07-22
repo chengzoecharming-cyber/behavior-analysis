@@ -11,7 +11,7 @@ export interface DingTalkFileSendConfig {
   robotSecret?: string;
 }
 
-function getExportConfig(): DingTalkFileSendConfig {
+export function getExportConfig(): DingTalkFileSendConfig {
   return {
     chatId: process.env.DINGTALK_EXPORT_CHAT_ID || "",
     robotWebhook: process.env.DINGTALK_EXPORT_ROBOT_WEBHOOK || undefined,
@@ -106,7 +106,7 @@ export async function sendFileToDingTalkChat(
 /**
  * 计算自定义机器人加签（当配置了 DINGTALK_EXPORT_ROBOT_SECRET 时）。
  */
-function buildRobotSignedUrl(
+export function buildRobotSignedUrl(
   webhook: string,
   secret: string | undefined
 ): string {

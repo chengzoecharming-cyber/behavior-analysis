@@ -8,6 +8,8 @@ import {
   User,
   AnomalyWeight,
   DingTalkSyncLog,
+  SyncHealthItem,
+  SyncAlert,
 } from "./types";
 
 const api = axios.create({
@@ -574,6 +576,41 @@ export async function fetchSyncLogs(limit = 50): Promise<DingTalkSyncLogsRespons
 
 export async function retrySyncLog(id: number): Promise<DingTalkSyncResult> {
   const res = await api.post(`/dingtalk/sync-logs/${id}/retry`);
+  return res.data;
+}
+
+export interface SyncHealthResponse {
+  success: boolean;
+  limit: number;
+  items: SyncHealthItem[];
+}
+
+export interface SyncAlertsResponse {
+  success: boolean;
+  acknowledged: boolean;
+  alerts: SyncAlert[];
+}
+
+export async function fetchSyncHealth(limit = 7): Promise<SyncHealthResponse> {
+  const res = await api.get("/dingtalk/sync-health", { params: { limit } });
+  return res.data;
+}
+
+export async function fetchSyncAlerts(acknowledged = false): Promise<SyncAlertsResponse> {
+  const res = await api.get("/dingtalk/sync-alerts", { params: { acknowledged } });
+  return res.data;
+}
+
+export async function ackSyncAlert(id: number): Promise<{ success: boolean; id: number }> {
+  const res = await api.post(`/dingtalk/sync-alerts/${id}/ack`);
+  return res.data;
+}
+
+export async function forceSyncDateRange(
+  startDate: string,
+  endDate: string
+): Promise<DingTalkSyncResult> {
+  const res = await api.post("/dingtalk/sync-force", { startDate, endDate });
   return res.data;
 }
 

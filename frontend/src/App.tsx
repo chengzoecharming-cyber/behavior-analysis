@@ -19,6 +19,7 @@ import {
   Users,
   LogOut,
   History,
+  Shield,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import ConsolePage from "./pages/ConsolePage";
@@ -27,6 +28,7 @@ import DataSyncPage from "./pages/DataSyncPage";
 import FeedbackPage from "./pages/FeedbackPage";
 import LoginPage from "./pages/LoginPage";
 import SyncLogsPage from "./pages/SyncLogsPage";
+import SyncHealthPage from "./pages/SyncHealthPage";
 import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
 
@@ -40,6 +42,7 @@ const navItems: NavItem[] = [
   { path: "/", label: "总览", icon: Home },
   { path: "/console", label: "数据&分析", icon: MapPin },
   { path: "/sync", label: "数据同步", icon: RefreshCw },
+  { path: "/sync-health", label: "同步健康", icon: Shield },
   { path: "/rules", label: "规则配置", icon: Settings },
 ];
 
@@ -376,6 +379,7 @@ function App() {
           <Route path="/map" element={<Navigate to="/" replace />} />
           <Route path="/upload" element={<Navigate to="/sync" replace />} />
           <Route path="/sync" element={<DataSyncPage />} />
+          <Route path="/sync-health" element={<SyncHealthPage />} />
           <Route path="/rules" element={<RulesConfigPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
           <Route path="/sync-logs" element={<SyncLogsPage />} />

@@ -81,6 +81,33 @@ cd backend
 npm run recompute:business-dates
 ```
 
+### 同步数据校验机制
+
+系统为钉钉同步建立了完整的数据完整性校验，避免人工反复检查。
+
+**校验指标**：
+
+| 指标 | 含义 | 正常状态 |
+|------|------|---------|
+| `total_instances` | 钉钉返回的审批单总数 | 与钉钉后台一致 |
+| `parsed_visits` | 解析出的 visit 数量 | 通常 >= 写入数量 |
+| `normalized_inserted` | 成功写入 `visits` 的数量 | 与 `parsed_visits` 接近 |
+| `raw_visit_count` | 成功写入 `raw_visits` 的数量 | 与 `parsed_visits` 一致 |
+| `missing_count` | 解析成功但库中缺失的审批单数 | 0 |
+| `duplicate_count` | `approval_id + user_id + sequence` 重复数 | 0 |
+| `source_approval_ids_hash` / `db_approval_ids_hash` | 源端与库中审批单集合的 hash | 一致 |
+
+**自动告警**：
+
+- 每次定时同步完成后，系统会立即检查上述指标，发现异常时通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送钉钉机器人告警。
+- 每天早上 9:00 发送昨日同步健康摘要（仅在有异常时发送）。
+- 前端「同步健康」页面展示最近同步状态、未处理告警和一键补同步入口。
+
+**手动处理**：
+
+- 对异常同步记录可点击「重试」重新执行同步。
+- 对指定日期范围可点击「强制同步」，绕过 `already synced` 检查重新拉取。
+
 ## 数据架构
 
 ```
@@ -122,6 +149,12 @@ DERIVED 层      →  stops / routes / anomalies（分析计算结果）
 | GET | `/routes?user=&date=` | 计算并持久化路径 Segment |
 | GET | `/analytics/mileage?user=&date=` | 每日里程与油费估算 |
 | GET | `/analytics/anomaly?user=&date=` | 异常行为检测 |
+| POST | `/dingtalk/sync` | 手动同步指定日期范围 |
+| GET | `/dingtalk/sync-logs` | 查询同步历史记录 |
+| GET | `/dingtalk/sync-health?limit=7` | 查询最近同步健康状态 |
+| GET | `/dingtalk/sync-alerts` | 查询未处理同步告警 |
+| POST | `/dingtalk/sync-alerts/:id/ack` | 确认同步告警已处理 |
+| POST | `/dingtalk/sync-force` | 强制重新同步指定日期范围 |
 | POST | `/upload-excel` | 上传 Excel，写入 RAW + NORMALIZED |
 
 ## 快速开始

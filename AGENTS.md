@@ -177,10 +177,24 @@ map/
 
 ### 定时任务
 
-后端启动时注册两个定时任务（`backend/src/services/scheduler.ts`），均按北京时间每天执行：
+后端启动时注册以下定时任务（`backend/src/services/scheduler.ts`），均按北京时间每天执行：
 
 1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
-2. **钉钉审批同步**：每天凌晨 2:30 同步昨天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
+2. **钉钉审批同步**：每 3 小时同步最近 3 天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
+3. **同步健康告警**：每次钉钉同步完成后立即检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；每天早上 9:00 发送昨日同步健康摘要。
+
+### 同步数据校验
+
+`dingtalk_sync_logs` 表记录了每次同步的对账信息，新增字段含义：
+
+- `source_approval_ids_hash`：源端（钉钉）审批单 ID 集合的 MD5 hash。
+- `db_approval_ids_hash`：落库后 `visits` 中对应审批单 ID 集合的 MD5 hash。
+- `missing_count`：解析成功但库中缺失的审批单数。
+- `duplicate_count`：库中 `approval_id + user_id + sequence` 重复记录数。
+- `raw_visit_count`：本次同步写入 `raw_visits` 的数量。
+- `alert_sent`：是否已发送告警。
+
+校验逻辑集中在 `backend/src/services/syncCheckService.ts`。新增或维护钉钉同步相关代码时，应确保同步完成后调用 `checkAndSendAlerts()` 并正确更新 `dingtalk_sync_logs` 的对账字段。
 
 ### 地理编码策略
 

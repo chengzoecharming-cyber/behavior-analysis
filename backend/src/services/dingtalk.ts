@@ -5,6 +5,7 @@ import { parseDateTimeAsBeijing, formatBeijingDate, toBeijingDayStart, toBeijing
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { recomputeDerivedDataForVisits } from "./derivedComputation";
 import { OrgTreeNode, isExcludedTopDepartment } from "./orgService";
+import crypto from "crypto";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
 
@@ -1111,11 +1112,21 @@ export async function fetchAllApprovalIds(
   return ids;
 }
 
+export interface SyncApprovalsResult extends ProcessResult {
+  totalInstances: number;
+  parsedVisits: number;
+  parseFailures: number;
+  sourceApprovalIdsHash: string;
+  dbApprovalIdsHash: string;
+  missingCount: number;
+  duplicateCount: number;
+}
+
 export async function syncApprovals(
   startTimeMs: number,
   endTimeMs: number,
   triggeredBy: "scheduler" | "manual" | "startup" = "manual"
-): Promise<ProcessResult & { totalInstances: number; parsedVisits: number; parseFailures: number }> {
+): Promise<SyncApprovalsResult> {
   if (!isDingTalkConfigured()) {
     throw new Error("DingTalk not configured");
   }
@@ -1152,6 +1163,11 @@ export async function syncApprovals(
       parseFailures?: number;
       normalizedInserted?: number;
       skipped?: number;
+      rawVisitCount?: number;
+      sourceApprovalIdsHash?: string;
+      dbApprovalIdsHash?: string;
+      missingCount?: number;
+      duplicateCount?: number;
     },
     errorMessage?: string
   ) => {
@@ -1163,9 +1179,14 @@ export async function syncApprovals(
            parse_failures = $4,
            normalized_inserted = $5,
            skipped = $6,
-           error_message = $7,
+           raw_visit_count = $7,
+           source_approval_ids_hash = $8,
+           db_approval_ids_hash = $9,
+           missing_count = $10,
+           duplicate_count = $11,
+           error_message = $12,
            finished_at = NOW()
-       WHERE id = $8`,
+       WHERE id = $13`,
       [
         status,
         data.totalInstances ?? 0,
@@ -1173,15 +1194,27 @@ export async function syncApprovals(
         data.parseFailures ?? 0,
         data.normalizedInserted ?? 0,
         data.skipped ?? 0,
+        data.rawVisitCount ?? 0,
+        data.sourceApprovalIdsHash ?? null,
+        data.dbApprovalIdsHash ?? null,
+        data.missingCount ?? 0,
+        data.duplicateCount ?? 0,
         errorMessage ?? null,
         syncLogId,
       ]
     );
   };
 
+  function computeApprovalIdsHash(ids: string[]): string {
+    if (ids.length === 0) return "";
+    const sorted = [...ids].sort();
+    return crypto.createHash("md5").update(sorted.join(",")).digest("hex");
+  }
+
   try {
     const ids = await fetchAllApprovalIds(startTimeMs, endTimeMs);
     const parsedVisits: ParsedVisit[] = [];
+    const processedApprovalIds = new Set<string>();
     let parseFailures = 0;
 
     for (const id of ids) {
@@ -1198,6 +1231,9 @@ export async function syncApprovals(
           continue;
         }
 
+        for (const v of visits) {
+          if (v.approval_id) processedApprovalIds.add(v.approval_id);
+        }
         parsedVisits.push(...visits);
       } catch (err) {
         console.error(`Failed to parse DingTalk instance ${id}:`, err);
@@ -1214,6 +1250,34 @@ export async function syncApprovals(
       });
     }
 
+    // 计算源端与落库端的审批单 ID 集合差异
+    const sourceApprovalIds = Array.from(new Set(ids));
+    const dbApprovalResult = await pool.query(
+      `SELECT DISTINCT approval_id
+       FROM visits
+       WHERE business_date BETWEEN $1 AND $2
+         AND source = 'dingtalk'`,
+      [startDate, endDate]
+    );
+    const dbApprovalIds = dbApprovalResult.rows
+      .map((r) => r.approval_id)
+      .filter((id): id is string => !!id);
+
+    const missingCount = Math.max(0, processedApprovalIds.size - dbApprovalIds.length);
+
+    // 计算重复审批单：同一 approval_id + user_id + sequence 出现多次
+    const duplicateResult = await pool.query(
+      `SELECT approval_id, user_id, sequence, COUNT(*) AS cnt
+       FROM visits
+       WHERE business_date BETWEEN $1 AND $2
+         AND source = 'dingtalk'
+         AND approval_id IS NOT NULL
+       GROUP BY approval_id, user_id, sequence
+       HAVING COUNT(*) > 1`,
+      [startDate, endDate]
+    );
+    const duplicateCount = duplicateResult.rows.length;
+
     const finalResult = {
       ...result,
       totalInstances: ids.length,
@@ -1229,10 +1293,21 @@ export async function syncApprovals(
         parseFailures: finalResult.parseFailures,
         normalizedInserted: finalResult.normalizedInserted,
         skipped: finalResult.skipped,
+        rawVisitCount: finalResult.rawInserted,
+        sourceApprovalIdsHash: computeApprovalIdsHash(sourceApprovalIds),
+        dbApprovalIdsHash: computeApprovalIdsHash(dbApprovalIds),
+        missingCount,
+        duplicateCount,
       }
     );
 
-    return finalResult;
+    return {
+      ...finalResult,
+      sourceApprovalIdsHash: computeApprovalIdsHash(sourceApprovalIds),
+      dbApprovalIdsHash: computeApprovalIdsHash(dbApprovalIds),
+      missingCount,
+      duplicateCount,
+    };
   } catch (err: any) {
     await updateLog("failed", {}, err.message || String(err));
     throw err;

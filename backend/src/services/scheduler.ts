@@ -7,6 +7,7 @@ import {
   generateWeeklyReports,
   generateMonthlyReports,
 } from "./reportGenerationService";
+import { checkAndSendAlerts, sendDailySyncSummary } from "./syncCheckService";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -189,6 +190,16 @@ async function syncLastNDays(n: number): Promise<void> {
     console.log(
       `[Scheduler] DingTalk sync completed: ${result.totalInstances} instances, ${result.normalizedInserted} visits inserted, ${result.parseFailures} failures`
     );
+
+    // 同步完成后立即检查并发送告警
+    try {
+      const alerts = await checkAndSendAlerts();
+      if (alerts.length > 0) {
+        console.log(`[Scheduler] Sent ${alerts.length} sync alert(s)`);
+      }
+    } catch (alertErr) {
+      console.error("[Scheduler] Failed to send sync alerts:", alertErr);
+    }
   } catch (err) {
     console.error(`[Scheduler] Failed to sync DingTalk approvals:`, err);
   }
@@ -240,6 +251,23 @@ export function startDingTalkSyncScheduler(): void {
     };
     scheduleRunningSync();
   }
+
+  // 同步健康每日摘要：每天早上 9:00 发送昨日摘要
+  const scheduleDailySyncSummary = () => {
+    const ms = getMillisecondsUntil(9, 0);
+    console.log(
+      `[Scheduler] Daily sync summary will run at 9:00 in ${Math.round(ms / 1000 / 60)} minutes`
+    );
+    setTimeout(async () => {
+      try {
+        await sendDailySyncSummary();
+      } catch (err) {
+        console.error("[Scheduler] Daily sync summary failed:", err);
+      }
+      scheduleDailySyncSummary();
+    }, ms);
+  };
+  scheduleDailySyncSummary();
 }
 
 function isReportGenerationConfigured(): boolean {

@@ -132,7 +132,55 @@ export interface DingTalkSyncLog {
   parse_failures: number;
   normalized_inserted: number;
   skipped: number;
+  raw_visit_count?: number;
+  source_approval_ids_hash?: string | null;
+  db_approval_ids_hash?: string | null;
+  missing_count?: number;
+  duplicate_count?: number;
+  alert_sent?: boolean;
   error_message: string | null;
   started_at: string;
   finished_at: string | null;
+}
+
+export type SyncHealthStatus = "healthy" | "warning" | "error";
+
+export interface SyncHealthItem {
+  id: number;
+  triggeredBy: string;
+  status: string;
+  startDate: string;
+  endDate: string;
+  totalInstances: number;
+  parsedVisits: number;
+  normalizedInserted: number;
+  skipped: number;
+  parseFailures: number;
+  rawVisitCount: number;
+  sourceApprovalIdsHash: string | null;
+  dbApprovalIdsHash: string | null;
+  missingCount: number;
+  duplicateCount: number;
+  healthStatus: SyncHealthStatus;
+  issues: string[];
+  startedAt: string;
+  finishedAt: string | null;
+}
+
+export interface SyncAlert {
+  id: number;
+  triggeredBy: string;
+  startDate: string;
+  endDate: string;
+  totalInstances: number;
+  parsedVisits: number;
+  normalizedInserted: number;
+  skipped: number;
+  parseFailures: number;
+  rawVisitCount: number;
+  missingCount: number;
+  duplicateCount: number;
+  issues: string[];
+  createdAt: string;
+  alertSent: boolean;
 }

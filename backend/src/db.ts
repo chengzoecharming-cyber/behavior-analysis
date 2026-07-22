@@ -382,6 +382,14 @@ export async function initDB(): Promise<void> {
         finished_at TIMESTAMPTZ
       );
 
+      -- 同步对账字段：源端与落库端审批单 ID 集合 hash、缺失/重复数量、告警标记
+      ALTER TABLE dingtalk_sync_logs ADD COLUMN IF NOT EXISTS source_approval_ids_hash TEXT;
+      ALTER TABLE dingtalk_sync_logs ADD COLUMN IF NOT EXISTS db_approval_ids_hash TEXT;
+      ALTER TABLE dingtalk_sync_logs ADD COLUMN IF NOT EXISTS missing_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE dingtalk_sync_logs ADD COLUMN IF NOT EXISTS duplicate_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE dingtalk_sync_logs ADD COLUMN IF NOT EXISTS raw_visit_count INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE dingtalk_sync_logs ADD COLUMN IF NOT EXISTS alert_sent BOOLEAN NOT NULL DEFAULT false;
+
       CREATE INDEX IF NOT EXISTS idx_dingtalk_sync_logs_status_started
         ON dingtalk_sync_logs(status, started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_dingtalk_sync_logs_dates

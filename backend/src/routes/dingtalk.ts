@@ -15,6 +15,12 @@ import {
   getDingTalkOrgUsers,
   buildDingTalkOrgTree,
 } from "../services/dingtalk";
+import {
+  checkSyncHealth,
+  getSyncAlerts,
+  ackSyncAlert,
+  checkAndSendAlerts,
+} from "../services/syncCheckService";
 import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getYesterdayBeijing } from "../utils/timezone";
 import { pool } from "../db";
 
@@ -406,6 +412,77 @@ router.post("/sync-logs/:id/retry", async (req: Request, res: Response) => {
   } catch (err: any) {
     console.error(`Failed to retry DingTalk sync log ${id}:`, err);
     res.status(500).json({ error: err.message || "Failed to retry sync" });
+  }
+});
+
+// GET /dingtalk/sync-health?limit=7
+// 返回最近 N 条同步记录的健康状态
+router.get("/sync-health", async (req: Request, res: Response) => {
+  try {
+    const limit = Math.min(parseInt((req.query.limit as string) || "7", 10) || 7, 100);
+    const items = await checkSyncHealth(limit);
+    res.json({ success: true, limit, items });
+  } catch (err) {
+    console.error("Failed to get sync health:", err);
+    res.status(500).json({ error: "Failed to get sync health" });
+  }
+});
+
+// GET /dingtalk/sync-alerts?acknowledged=false
+// 返回同步告警列表
+router.get("/sync-alerts", async (req: Request, res: Response) => {
+  try {
+    const acknowledged = req.query.acknowledged === "true";
+    const alerts = await getSyncAlerts(!acknowledged);
+    res.json({ success: true, acknowledged, alerts });
+  } catch (err) {
+    console.error("Failed to get sync alerts:", err);
+    res.status(500).json({ error: "Failed to get sync alerts" });
+  }
+});
+
+// POST /dingtalk/sync-alerts/:id/ack
+// 确认某条同步告警已处理
+router.post("/sync-alerts/:id/ack", async (req: Request, res: Response) => {
+  const id = parseInt(req.params.id, 10);
+  if (isNaN(id)) {
+    res.status(400).json({ error: "Invalid alert id" });
+    return;
+  }
+
+  try {
+    await ackSyncAlert(id);
+    res.json({ success: true, id });
+  } catch (err) {
+    console.error(`Failed to ack sync alert ${id}:`, err);
+    res.status(500).json({ error: "Failed to acknowledge alert" });
+  }
+});
+
+// POST /dingtalk/sync-force
+// 强制重新同步指定日期范围，绕过 already synced 检查
+router.post("/sync-force", async (req: Request, res: Response) => {
+  if (!isDingTalkConfigured()) {
+    res.status(400).json({ error: "DingTalk not configured" });
+    return;
+  }
+
+  const { startDate, endDate } = req.body || {};
+  if (!startDate || !endDate) {
+    res.status(400).json({ error: "Missing startDate or endDate" });
+    return;
+  }
+
+  try {
+    const result = await syncApprovals(
+      dateToStartMs(startDate),
+      dateToEndMs(endDate),
+      "manual"
+    );
+    res.json({ success: true, startDate, endDate, ...result });
+  } catch (err: any) {
+    console.error("Failed to force sync:", err);
+    res.status(500).json({ error: err.message || "Failed to force sync" });
   }
 });
 
