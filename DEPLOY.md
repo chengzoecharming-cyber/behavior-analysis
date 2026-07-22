@@ -215,6 +215,38 @@ curl -s -o /dev/null -w "%{http_code}\n" http://localhost:5173
 http://你的服务器IP:5173
 ```
 
+### 5.7 验证同步校验机制（如已配置钉钉）
+
+如果配置了钉钉同步，部署后应检查新对账字段是否生效：
+
+```bash
+# 检查 dingtalk_sync_logs 新增字段
+docker exec -i sales-map-postgres psql -U sales -d sales_map -c "
+SELECT column_name
+FROM information_schema.columns
+WHERE table_name = 'dingtalk_sync_logs'
+  AND column_name IN ('source_approval_ids_hash', 'db_approval_ids_hash', 'missing_count', 'duplicate_count', 'raw_visit_count', 'alert_sent')
+ORDER BY column_name;
+"
+
+# 手动触发一次同步，检查新字段是否有值
+docker compose -f docker-compose.ghcr.yml exec backend \
+  curl -X POST http://localhost:3000/dingtalk/sync \
+  -H "Content-Type: application/json" \
+  -d '{"startDate":"2026-07-20","endDate":"2026-07-21"}'
+
+# 查看最新同步日志的对账字段
+docker exec -i sales-map-postgres psql -U sales -d sales_map -c "
+SELECT id, status, start_date, end_date, total_instances, parsed_visits,
+       source_approval_ids_hash, db_approval_ids_hash, missing_count, duplicate_count
+FROM dingtalk_sync_logs
+ORDER BY id DESC
+LIMIT 5;
+"
+```
+
+浏览器访问 `http://你的服务器IP:5173/sync-health`，应能看到「同步健康」页面。
+
 ---
 
 ## 第六步：更新代码后重新部署
@@ -229,25 +261,27 @@ docker compose -f docker-compose.ghcr.yml up -d
 
 数据库数据会保留，不需要重新导入。
 
-### 本次更新（轨迹内容 & 异常卡片）需额外执行
+### 本次更新（同步校验机制）需额外执行
 
-本次后端改动删除了 `route_detour` 异常规则，并合并了里程相关异常口径。部署后需要重新跑历史异常检测，否则旧数据仍会保留已废弃的「路径绕行」异常：
+本次改动涉及 `dingtalk_sync_logs` 表新增字段和 `business_date` 计算口径调整。部署后执行：
 
 ```bash
 cd /root/sales-map
-# 进入 backend 容器执行重跑脚本（基于已有 routes 数据，不会重新调用高德 API）
+
+# 1. 重新计算历史 visits 的 business_date（按实际签到时间）
+docker exec -it sales-map-backend npm run recompute:business-dates
+
+# 2. 重新计算异常与风险缓存（基于新的 business_date）
 docker exec -it sales-map-backend npm run recompute:anomalies
 ```
 
-如果希望同时重新计算所有 routes（会调用高德 API，耗时较长），可执行：
+如果希望同时重新计算所有 routes（会调用高德 API，耗时较长）：
 
 ```bash
 docker exec -it sales-map-backend npm run recompute:routes
 # 然后再重新跑异常
 docker exec -it sales-map-backend npm run recompute:anomalies
 ```
-
-本地开发环境也需要单独执行一次上述命令。
 
 ---
 
