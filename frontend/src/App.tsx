@@ -42,7 +42,6 @@ const navItems: NavItem[] = [
   { path: "/", label: "总览", icon: Home },
   { path: "/console", label: "数据&分析", icon: MapPin },
   { path: "/sync", label: "数据同步", icon: RefreshCw },
-  { path: "/sync-health", label: "同步健康", icon: Shield },
   { path: "/rules", label: "规则配置", icon: Settings },
 ];
 
@@ -231,6 +230,13 @@ function App() {
                         <Link to="/sync-logs">同步记录</Link>
                       </Dropdown.Item>
                     )}
+                    <Dropdown.Item
+                      icon={<Shield className="h-4 w-4" />}
+                      style={itemStyle}
+                      onClick={() => window.open("/sync-health", "_blank")}
+                    >
+                      同步健康
+                    </Dropdown.Item>
                     <Dropdown.Item
                       icon={<MessageSquareText className="h-4 w-4" />}
                       style={itemStyle}

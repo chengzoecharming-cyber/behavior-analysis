@@ -45,6 +45,11 @@ export interface SyncAlert {
 
 function evaluateHealth(row: any): { status: SyncHealthStatus; issues: string[] } {
   const issues: string[] = [];
+  const hasReconciliationFields =
+    row.source_approval_ids_hash !== null &&
+    row.source_approval_ids_hash !== "" &&
+    row.db_approval_ids_hash !== null &&
+    row.db_approval_ids_hash !== "";
 
   if (row.status === "failed") {
     issues.push(`同步失败：${row.error_message || "未知错误"}`);
@@ -60,15 +65,23 @@ function evaluateHealth(row: any): { status: SyncHealthStatus; issues: string[] 
     if (row.parse_failures > 0) {
       issues.push(`${row.parse_failures} 条审批单解析失败`);
     }
+    // 只有新的对账字段存在时，才提示 hash 不一致；
+    // hash 不一致但缺失数为 0 时，通常是因为源端 process_instance_id 与库中 approval_id 口径不同，不做错误提示
     if (
-      row.source_approval_ids_hash &&
-      row.db_approval_ids_hash &&
-      row.source_approval_ids_hash !== row.db_approval_ids_hash
+      hasReconciliationFields &&
+      row.source_approval_ids_hash !== row.db_approval_ids_hash &&
+      row.missing_count > 0
     ) {
       issues.push("源端与库中审批单集合不一致");
     }
-    // 粗略的 raw/visits 一致性检查：如果源端有实例但入库为 0
-    if (row.total_instances > 0 && row.normalized_inserted === 0 && row.parsed_visits > 0) {
+    // raw/visits 一致性检查：要求有对账字段且缺失数大于 0，才认为真的没写入
+    if (
+      hasReconciliationFields &&
+      row.total_instances > 0 &&
+      row.normalized_inserted === 0 &&
+      row.parsed_visits > 0 &&
+      row.missing_count > 0
+    ) {
       issues.push("解析成功但未写入 visits");
     }
   }
