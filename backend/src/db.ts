@@ -397,6 +397,11 @@ export async function initDB(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_dingtalk_sync_logs_dates
         ON dingtalk_sync_logs(start_date, end_date);
     `);
+
+    // 初始化数据质量监控表
+    const { initDataQualitySchema } = await import("./services/dataQuality/schema");
+    await initDataQualitySchema(client);
+
     console.log("Database initialized");
   } finally {
     client.release();

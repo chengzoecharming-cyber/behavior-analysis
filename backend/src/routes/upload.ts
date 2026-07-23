@@ -5,7 +5,7 @@ import fs from "fs";
 import { pool } from "../db";
 import { RawVisitRow, ParsedVisit } from "../types";
 import { parseDingTalkExcel } from "../services/excelParser";
-import { processParsedVisits, GeocodeFailure, normalizeUserId } from "../services/normalization";
+import { processParsedVisits, GeocodeFailure, normalizeUserId, QualitySummary } from "../services/normalization";
 import { recomputeDerivedDataForVisits } from "../services/derivedComputation";
 
 if (!fs.existsSync("uploads")) {
@@ -24,6 +24,7 @@ interface UploadResponse {
   isDingTalk?: boolean;
   geocodeFailures?: GeocodeFailure[];
   geocodeFailureSamples?: GeocodeFailure[];
+  qualitySummary?: QualitySummary;
 }
 
 router.post("/", upload.single("file"), async (req: Request, res: Response) => {
@@ -96,6 +97,7 @@ router.post("/", upload.single("file"), async (req: Request, res: Response) => {
       skipped: processResult.skipped,
       geocodeFailures: processResult.geocodeFailures,
       geocodeFailureSamples: processResult.geocodeFailures.slice(0, 5),
+      qualitySummary: processResult.qualitySummary,
     };
 
     res.json(response);
