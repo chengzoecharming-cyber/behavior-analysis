@@ -96,6 +96,8 @@ map/
 │   │   │   ├── ConsolePage.tsx
 │   │   │   ├── UploadPage.tsx
 │   │   │   ├── DataSyncPage.tsx
+│   │   │   ├── DataSyncCenterPage.tsx  # 数据同步中心：同步概览（记录+健康+告警）+ 数据血缘 两 Tab
+│   │   │   ├── DataLineagePage.tsx     # 数据血缘面板（DataLineagePanel 被同步中心复用）
 │   │   │   ├── RulesConfigPage.tsx
 │   │   │   ├── FeedbackPage.tsx
 │   │   │   └── MapPage.tsx
@@ -325,7 +327,9 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET | `/analytics/departments` | 规范部门列表 |
 | POST | `/analytics/init-department-aliases` | 初始化部门别名映射 |
 | GET/PUT | `/analytics/department-aliases` | 部门别名 CRUD |
-| GET/POST | `/dingtalk/*` | 钉钉同步相关接口 |
+| GET/POST | `/dingtalk/*` | 钉钉同步相关接口（含 `/sync-logs`、`/sync-health`、`/sync-alerts`、`/sync-force`） |
+| GET | `/data-lineage/approvals` | 数据血缘：审批单分页列表（含签到点数、质量问题计数） |
+| GET | `/data-lineage/approvals/:id` | 数据血缘：单张审批单 原始表单→重新解析→已入库 三步对照 |
 | GET/POST/PUT/DELETE | `/users/*` | 用户管理 |
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
 | POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
