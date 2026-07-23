@@ -1,5 +1,5 @@
 import { UserOverviewResult, DailyOverview } from "./userOverviewService";
-import { Visit, Route } from "../types";
+import { Visit, Route, Stop } from "../types";
 import { ReportType } from "./dingtalkDoc";
 
 export interface MarkdownReportInput {
@@ -11,6 +11,8 @@ export interface MarkdownReportInput {
   overview: UserOverviewResult;
   visits?: Visit[];
   routes?: Route[];
+  /** 停留点列表，仅个人日报用于「理论签到里程」板块 */
+  stops?: Stop[];
   /** 系统访问链接，会追加在报告底部 */
   systemLink?: string;
 }
@@ -243,7 +245,7 @@ function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[])
     (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
   );
 
-  lines.push("## 拜访明细");
+  lines.push("## 拜访轨迹");
   lines.push("");
 
   for (let i = 0; i < sortedVisits.length; i++) {
@@ -283,8 +285,28 @@ function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[])
   }
 }
 
+/** 理论签到里程板块：总里程 + 按时间顺序的停留点列表（仅个人日报） */
+function renderMileageStops(
+  lines: string[],
+  totals: UserOverviewResult["totals"],
+  stops: Stop[]
+) {
+  lines.push("## 理论签到里程");
+  lines.push("");
+  lines.push(`总里程：${Math.round(totals.estimated_distance_km)} km`);
+  lines.push("");
+  if (stops.length > 0) {
+    lines.push("停留点（按时间顺序）：");
+    lines.push("");
+    for (let i = 0; i < stops.length; i++) {
+      lines.push(`${i + 1}. ${stops[i].location_name || "未命名地点"}`);
+    }
+    lines.push("");
+  }
+}
+
 export function renderConsoleReportMarkdown(input: MarkdownReportInput): string {
-  const { userName, start, end, reportType, overview, visits, routes } = input;
+  const { userName, start, end, reportType, overview, visits, routes, stops } = input;
   const totals = overview.totals;
   const lines: string[] = [];
 
@@ -298,6 +320,9 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   );
   lines.push("");
 
+  // 是否个人日报（停留点与拜访轨迹板块仅个人日报展示）
+  const isPersonalDaily = reportType === "日报" && !!input.userId;
+
   // 核心指标（客户数、拜访次数、理论签到里程）
   renderCoreSummary(lines, totals, visits);
 
@@ -306,11 +331,21 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
     renderCustomerList(lines, visits, !input.userId);
   }
 
+  // 个人日报：理论签到里程 + 停留点列表
+  if (isPersonalDaily && stops) {
+    renderMileageStops(lines, totals, stops);
+  }
+
   // AI 拜访总结占位
   lines.push("## 客户拜访总结");
   lines.push("");
   lines.push("（AI 总结能力待接入，后续将由 Kimi 基于拜访情况自动生成）");
   lines.push("");
+
+  // 个人日报：拜访轨迹（拜访明细 + 行驶路段）
+  if (isPersonalDaily && visits && visits.length > 0) {
+    renderDailyItinerary(lines, visits, routes || []);
+  }
 
   // 其他汇总（填报里程、异常事件等）
   renderExtraSummary(lines, totals);
@@ -318,11 +353,6 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   // 每日趋势（周报/月报）
   if (reportType !== "日报") {
     renderDailyTrend(lines, overview.daily);
-  }
-
-  // 日报：拜访明细
-  if (reportType === "日报" && visits && visits.length > 0) {
-    renderDailyItinerary(lines, visits, routes || []);
   }
 
   // 异常事件

@@ -274,16 +274,107 @@ function isReportGenerationConfigured(): boolean {
   return !!process.env.DINGTALK_OPERATOR_USERID;
 }
 
-/** 报告生成调度：日报 21:00、周报周日 18:00、月报每月 30 日 18:00（北京时间） */
+/** 检查某类报告在指定周期内是否已有成功生成的日志 */
+async function hasSuccessfulReportRun(
+  reportType: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1 FROM report_generation_logs
+     WHERE report_type = $1
+       AND period_start = $2::date
+       AND period_end = $3::date
+       AND status = 'success'
+     LIMIT 1`,
+    [reportType, periodStart, periodEnd]
+  );
+  return result.rows.length > 0;
+}
+
+/**
+ * 启动补跑：调度方式是 setTimeout 递归，进程重启即丢，
+ * 因此启动时检查「昨天的日报 / 本周周报 / 上月月报」是否已有成功日志，缺失则串行补跑。
+ * 出错只记日志，不影响服务启动。
+ */
+export async function catchUpReportGeneration(): Promise<void> {
+  if (!isReportGenerationConfigured()) {
+    console.log("[Scheduler] Report catch-up skipped: DINGTALK_OPERATOR_USERID not configured");
+    return;
+  }
+
+  const now = new Date();
+
+  // 1. 昨天的日报（日报每天 9:00 生成昨天）
+  try {
+    const yesterday = getYesterdayBeijing();
+    if (await hasSuccessfulReportRun("daily", yesterday, yesterday)) {
+      console.log(`[Scheduler] Daily report for ${yesterday} already generated, skipping`);
+    } else {
+      console.log(`[Scheduler] Catching up daily report for ${yesterday}`);
+      await generateDailyReports(yesterday, "catchup");
+    }
+  } catch (err) {
+    console.error("[Scheduler] Daily report catch-up failed:", err);
+  }
+
+  // 2. 本周周报：仅当现在已过本周日 18:00（北京时间）
+  try {
+    const weekday = getBeijingWeekday(now); // 0=周日
+    const mondayOffset = weekday === 0 ? 6 : weekday - 1;
+    const weekStart = formatBeijingDate(new Date(now.getTime() - mondayOffset * 24 * 60 * 60 * 1000));
+    const weekEnd = formatBeijingDate(new Date(now.getTime() + (6 - mondayOffset) * 24 * 60 * 60 * 1000));
+    const sundayTarget = new Date(`${weekEnd}T18:00:00+08:00`);
+    if (now.getTime() >= sundayTarget.getTime()) {
+      if (await hasSuccessfulReportRun("weekly", weekStart, weekEnd)) {
+        console.log(`[Scheduler] Weekly report for ${weekStart} ~ ${weekEnd} already generated, skipping`);
+      } else {
+        console.log(`[Scheduler] Catching up weekly report for ${weekStart} ~ ${weekEnd}`);
+        await generateWeeklyReports(weekStart, weekEnd, "catchup");
+      }
+    }
+  } catch (err) {
+    console.error("[Scheduler] Weekly report catch-up failed:", err);
+  }
+
+  // 3. 上月月报：仅当现在已过本月 1 日 9:00（北京时间）
+  try {
+    const beijingToday = formatBeijingDate(now);
+    const beijingYear = parseInt(beijingToday.slice(0, 4), 10);
+    const beijingMonth = parseInt(beijingToday.slice(5, 7), 10);
+    const monthTarget = new Date(`${beijingYear}-${pad2(beijingMonth)}-01T09:00:00+08:00`);
+    if (now.getTime() >= monthTarget.getTime()) {
+      let targetYear = beijingYear;
+      let targetMonth = beijingMonth - 1;
+      if (targetMonth === 0) {
+        targetYear -= 1;
+        targetMonth = 12;
+      }
+      const monthStart = `${targetYear}-${pad2(targetMonth)}-01`;
+      const lastDay = new Date(targetYear, targetMonth, 0).getDate();
+      const monthEnd = `${targetYear}-${pad2(targetMonth)}-${lastDay}`;
+      if (await hasSuccessfulReportRun("monthly", monthStart, monthEnd)) {
+        console.log(`[Scheduler] Monthly report for ${monthStart} ~ ${monthEnd} already generated, skipping`);
+      } else {
+        console.log(`[Scheduler] Catching up monthly report for ${monthStart} ~ ${monthEnd}`);
+        await generateMonthlyReports(targetYear, targetMonth, "catchup");
+      }
+    }
+  } catch (err) {
+    console.error("[Scheduler] Monthly report catch-up failed:", err);
+  }
+}
+
+/** 报告生成调度：日报 9:00（发昨天）、周报周日 18:00（发本周）、月报每月 1 日 9:00（发上月，北京时间） */
 export function startReportGenerationScheduler(): void {
   if (!isReportGenerationConfigured()) {
     console.log("[Scheduler] Report generation skipped: DINGTALK_OPERATOR_USERID not configured");
     return;
   }
 
-  // 日报
+  // 日报：每天 9:00 生成昨天的日报
   const scheduleDaily = () => {
-    const ms = getMillisecondsUntil(21, 0);
+    const ms = getMillisecondsUntil(9, 0);
     console.log(`[Scheduler] Daily report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
     setTimeout(async () => {
       console.log("[Scheduler] Running daily report generation");
@@ -311,9 +402,9 @@ export function startReportGenerationScheduler(): void {
     }, ms);
   };
 
-  // 月报
+  // 月报：每月 1 日 9:00 生成上月整月的月报
   const scheduleMonthly = () => {
-    const ms = getMillisecondsUntilDayOfMonth(18, 0, 30);
+    const ms = getMillisecondsUntilDayOfMonth(9, 0, 1);
     console.log(`[Scheduler] Monthly report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
     setTimeout(async () => {
       console.log("[Scheduler] Running monthly report generation");
@@ -329,4 +420,9 @@ export function startReportGenerationScheduler(): void {
   scheduleDaily();
   scheduleWeekly();
   scheduleMonthly();
+
+  // 启动时补跑缺失的报告（昨天的日报 / 本周周报 / 上月月报），串行执行、出错不影响启动
+  catchUpReportGeneration().catch((err) => {
+    console.error("[Scheduler] Report catch-up failed:", err);
+  });
 }

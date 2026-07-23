@@ -396,6 +396,28 @@ export async function initDB(): Promise<void> {
         ON dingtalk_sync_logs(status, started_at DESC);
       CREATE INDEX IF NOT EXISTS idx_dingtalk_sync_logs_dates
         ON dingtalk_sync_logs(start_date, end_date);
+
+      -- 报告生成日志表：每次自动生成报告（公司/部门/子部门/个人各维度）一行
+      CREATE TABLE IF NOT EXISTS report_generation_logs (
+        id SERIAL PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        report_type VARCHAR(16) NOT NULL,
+        period_start DATE NOT NULL,
+        period_end DATE NOT NULL,
+        scope VARCHAR(32) NOT NULL,
+        scope_name TEXT,
+        status VARCHAR(16) NOT NULL,
+        doc_url TEXT,
+        error_message TEXT,
+        duration_ms INTEGER,
+        trigger_source VARCHAR(16) NOT NULL DEFAULT 'scheduler',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_report_generation_logs_created
+        ON report_generation_logs(created_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_report_generation_logs_type_period
+        ON report_generation_logs(report_type, period_start, period_end);
     `);
     console.log("Database initialized");
   } finally {

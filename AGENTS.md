@@ -141,6 +141,7 @@ map/
 | 缓存/配置 | `risk_summary_cache`、`anomaly_weights`、`department_aliases` | 预计算缓存、异常规则、部门别名映射 |
 | 用户/权限 | `users`（含 `is_resigned` 离职标记）、`feedback`、`anomaly_exceptions` | 用户、角色、申诉、异常豁免 |
 | 钉钉同步 | `dingtalk_departments`、`dingtalk_users` | 钉钉通讯录同步缓存 |
+| 报告生成 | `report_generation_logs` | 自动报告生成日志（同一次 run 共享 `run_id`，含状态/耗时/文档链接） |
 
 **注意**：`backend/schema.sql` 是早期 P1 文档，只包含基础表。真实建表逻辑在 `backend/src/db.ts` 中，通过 `CREATE TABLE IF NOT EXISTS` 和 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 做幂等初始化。项目中没有独立的迁移框架。
 
@@ -184,6 +185,7 @@ map/
 1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
 2. **钉钉审批同步**：每 3 小时同步最近 3 天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
 3. **同步健康告警**：每次钉钉同步完成后立即检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；每天早上 9:00 发送昨日同步健康摘要。
+4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并通过机器人 webhook 发一条汇总消息。
 
 ### 同步数据校验
 
@@ -332,6 +334,8 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
 | POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
+| POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`） |
+| GET | `/export/generation-logs` | 报告生成日志（page/pageSize 分页，report_type/status/start/end 筛选） |
 
 前后端代理路径：
 

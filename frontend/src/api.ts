@@ -614,6 +614,44 @@ export async function forceSyncDateRange(
   return res.data;
 }
 
+// ===== 报告生成日志 =====
+
+export interface ReportGenerationLog {
+  id: number;
+  run_id: string;
+  report_type: string;
+  period_start: string;
+  period_end: string;
+  scope: string;
+  scope_name: string | null;
+  status: string;
+  doc_url: string | null;
+  error_message: string | null;
+  duration_ms: number | null;
+  trigger_source: string;
+  created_at: string;
+}
+
+export interface ReportGenerationLogsResponse {
+  success: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
+  logs: ReportGenerationLog[];
+}
+
+export async function fetchReportGenerationLogs(params: {
+  page?: number;
+  pageSize?: number;
+  report_type?: string;
+  status?: string;
+  start?: string;
+  end?: string;
+}): Promise<ReportGenerationLogsResponse> {
+  const res = await api.get("/export/generation-logs", { params });
+  return res.data;
+}
+
 export interface HeatMapPoint {
   lat: number;
   lng: number;

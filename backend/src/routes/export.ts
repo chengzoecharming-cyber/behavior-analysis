@@ -495,24 +495,84 @@ router.post("/generate-reports", async (req: Request, res: Response) => {
   try {
     let results;
     if (type === "daily") {
-      results = await generateDailyReports(date);
+      results = await generateDailyReports(date, "manual");
     } else if (type === "weekly") {
-      results = await generateWeeklyReports(start, end);
+      results = await generateWeeklyReports(start, end, "manual");
     } else {
       const y = year ? parseInt(String(year), 10) : undefined;
       const m = month ? parseInt(String(month), 10) : undefined;
-      results = await generateMonthlyReports(y, m);
+      results = await generateMonthlyReports(y, m, "manual");
     }
 
+    const failedCount = results.filter((r) => r.status === "failed").length;
     res.json({
-      success: true,
+      success: failedCount === 0,
       type,
       count: results.length,
+      successCount: results.length - failedCount,
+      failedCount,
       results,
     });
   } catch (err: any) {
     console.error("手动触发报告生成失败:", err);
     res.status(500).json({ error: err?.message || "生成失败" });
+  }
+});
+
+// 报告生成日志查询：分页 + report_type/status/日期范围筛选，按创建时间倒序
+router.get("/generation-logs", async (req: Request, res: Response) => {
+  const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
+  const pageSize = Math.min(
+    100,
+    Math.max(1, parseInt(String(req.query.pageSize || "20"), 10) || 20)
+  );
+  const reportType = String(req.query.report_type || "");
+  const status = String(req.query.status || "");
+  const start = String(req.query.start || "");
+  const end = String(req.query.end || "");
+
+  const conditions: string[] = [];
+  const params: any[] = [];
+  if (["daily", "weekly", "monthly"].includes(reportType)) {
+    params.push(reportType);
+    conditions.push(`report_type = $${params.length}`);
+  }
+  if (["success", "failed"].includes(status)) {
+    params.push(status);
+    conditions.push(`status = $${params.length}`);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(start)) {
+    params.push(start);
+    conditions.push(`period_end >= $${params.length}::date`);
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(end)) {
+    params.push(end);
+    conditions.push(`period_start <= $${params.length}::date`);
+  }
+  const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+
+  try {
+    const countResult = await pool.query(
+      `SELECT COUNT(*) AS total FROM report_generation_logs ${where}`,
+      params
+    );
+    const total = parseInt(countResult.rows[0]?.total, 10) || 0;
+
+    params.push(pageSize, (page - 1) * pageSize);
+    const result = await pool.query(
+      `SELECT id, run_id, report_type, period_start, period_end, scope, scope_name,
+              status, doc_url, error_message, duration_ms, trigger_source, created_at
+       FROM report_generation_logs
+       ${where}
+       ORDER BY created_at DESC, id DESC
+       LIMIT $${params.length - 1} OFFSET $${params.length}`,
+      params
+    );
+
+    res.json({ success: true, total, page, pageSize, logs: result.rows });
+  } catch (err: any) {
+    console.error("查询报告生成日志失败:", err);
+    res.status(500).json({ error: err?.message || "查询失败" });
   }
 });
 
