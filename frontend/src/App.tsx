@@ -19,8 +19,6 @@ import {
   Users,
   LogOut,
   History,
-  Shield,
-  SearchCode,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import ConsolePage from "./pages/ConsolePage";
@@ -28,9 +26,7 @@ import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
 import FeedbackPage from "./pages/FeedbackPage";
 import LoginPage from "./pages/LoginPage";
-import SyncLogsPage from "./pages/SyncLogsPage";
-import SyncHealthPage from "./pages/SyncHealthPage";
-import DataLineagePage from "./pages/DataLineagePage";
+import DataSyncCenterPage from "./pages/DataSyncCenterPage";
 import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
 
@@ -229,24 +225,9 @@ function App() {
                         icon={<History className="h-4 w-4" />}
                         style={itemStyle}
                       >
-                        <Link to="/sync-logs">同步记录</Link>
+                        <Link to="/sync-center">数据同步中心</Link>
                       </Dropdown.Item>
                     )}
-                    {currentUser?.role === "admin" && (
-                      <Dropdown.Item
-                        icon={<SearchCode className="h-4 w-4" />}
-                        style={itemStyle}
-                      >
-                        <Link to="/data-lineage">数据血缘</Link>
-                      </Dropdown.Item>
-                    )}
-                    <Dropdown.Item
-                      icon={<Shield className="h-4 w-4" />}
-                      style={itemStyle}
-                      onClick={() => window.open("/sync-health", "_blank")}
-                    >
-                      同步健康
-                    </Dropdown.Item>
                     <Dropdown.Item
                       icon={<MessageSquareText className="h-4 w-4" />}
                       style={itemStyle}
@@ -395,11 +376,13 @@ function App() {
           <Route path="/map" element={<Navigate to="/" replace />} />
           <Route path="/upload" element={<Navigate to="/sync" replace />} />
           <Route path="/sync" element={<DataSyncPage />} />
-          <Route path="/sync-health" element={<SyncHealthPage />} />
+          <Route path="/sync-center" element={<DataSyncCenterPage />} />
+          {/* 旧入口统一跳转到数据同步中心 */}
+          <Route path="/sync-health" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/sync-logs" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/data-lineage" element={<Navigate to="/sync-center" replace />} />
           <Route path="/rules" element={<RulesConfigPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
-          <Route path="/sync-logs" element={<SyncLogsPage />} />
-          <Route path="/data-lineage" element={<DataLineagePage />} />
           <Route path="/login" element={<LoginPage />} />
         </Routes>
       </main>

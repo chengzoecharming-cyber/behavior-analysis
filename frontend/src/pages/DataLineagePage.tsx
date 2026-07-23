@@ -168,8 +168,14 @@ function QualityStep({ records }: { records: LineageQualityRecord[] }) {
   );
 }
 
-export default function DataLineagePage() {
-  const [range, setRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
+/** 可控的数据血缘面板：range 由父组件控制，支持外部注入过滤条件（数据同步中心 Tab 跳转用） */
+export function DataLineagePanel({
+  range,
+  onRangeChange,
+}: {
+  range: [Dayjs | null, Dayjs | null];
+  onRangeChange: (v: [Dayjs | null, Dayjs | null]) => void;
+}) {
   const [userFilter, setUserFilter] = useState("");
   const [loading, setLoading] = useState(false);
   const [total, setTotal] = useState(0);
@@ -274,7 +280,7 @@ export default function DataLineagePage() {
         }
       >
         <Space style={{ marginBottom: 16 }} wrap>
-          <RangePicker value={range} onChange={(v) => setRange(v ?? [null, null])} />
+          <RangePicker value={range} onChange={(v) => onRangeChange(v ?? [null, null])} />
           <Input.Search
             placeholder="按员工姓名过滤"
             allowClear
@@ -385,4 +391,10 @@ export default function DataLineagePage() {
       </Drawer>
     </div>
   );
+}
+
+/** 独立路由页：自带 range 状态（数据同步中心未启用时的兜底入口） */
+export default function DataLineagePage() {
+  const [range, setRange] = useState<[Dayjs | null, Dayjs | null]>([null, null]);
+  return <DataLineagePanel range={range} onRangeChange={setRange} />;
 }
