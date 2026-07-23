@@ -143,6 +143,7 @@ map/
 | 缓存/配置 | `risk_summary_cache`、`anomaly_weights`、`department_aliases` | 预计算缓存、异常规则、部门别名映射 |
 | 用户/权限 | `users`（含 `is_resigned` 离职标记）、`feedback`、`anomaly_exceptions` | 用户、角色、申诉、异常豁免 |
 | 钉钉同步 | `dingtalk_departments`、`dingtalk_users` | 钉钉通讯录同步缓存 |
+| 报告生成 | `report_generation_logs` | 自动报告生成日志（同一次 run 共享 `run_id`，含状态/耗时/文档链接） |
 
 **注意**：`backend/schema.sql` 是早期 P1 文档，只包含基础表。真实建表逻辑在 `backend/src/db.ts` 中，通过 `CREATE TABLE IF NOT EXISTS` 和 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 做幂等初始化。项目中没有独立的迁移框架。
 
@@ -168,14 +169,16 @@ map/
 
 ### 业务日期（business_date）规则
 
-`visits.business_date` 用于控制台、决策页、排行榜、趋势分析等所有聚合口径，**统一按员工实际签到时间（北京时间）计算**。
+`visits.business_date` 用于控制台、决策页、排行榜、趋势分析等所有聚合口径：
 
-- Excel 数据：取 `visit.time` 的北京时间日期。
-- 钉钉数据：取审批单内每条签到记录的 `visit.time` 的北京时间日期，而不是审批单创建时间。
+- Excel 数据：取每条 `visit.time` 的北京时间日期。
+- 钉钉数据：**审批单级归日**——整张审批单的所有签到统一取该审批单**首次签到时间**的北京时间日期。即使审批单跨天（例如次日早上补一个收尾签到），所有签到也归到行程开始的那天，控制台一天只展示一次。
 
-为什么不用审批单创建时间？钉钉审批单可能提前提交或事后补卡，创建时间与真实拜访时间可能不一致。外勤行为分析关注的是「员工哪天真实发生了拜访」，因此业务日期以实际签到时间为准。审批单创建时间仅作为 metadata 保留在 `raw_approvals` 中，用于和钉钉后台对账。
+为什么不用审批单创建时间？钉钉审批单可能提前提交或事后补卡，创建时间与真实行程开始时间可能不一致；而「首次签到时间」就是行程真实开始的时刻。审批单创建时间仅作为 metadata 保留在 `raw_approvals` 中，用于和钉钉后台对账。
 
-历史数据需要按此规则重算时，执行 `cd backend && npm run recompute:business-dates`。
+该口径与里程口径一致（按审批单首次签到日期聚合，见 `mileageAnalysis.ts`）。注意：早期曾按「每条签到实际时间」逐条归日（d402944），后在跨天审批单上与控制台展示、里程口径冲突，已统一为审批单级归日。
+
+历史数据需要按此规则重算时，执行 `cd backend && npm run recompute:business-dates`（脚本只修正不一致的行，并对受影响的 user+date 自动重算 routes 与风险摘要缓存，支持 `dry` 预览）。
 
 ### 定时任务
 
@@ -184,6 +187,7 @@ map/
 1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
 2. **钉钉审批同步**：每 3 小时同步最近 3 天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
 3. **同步健康告警**：每次钉钉同步完成后立即检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；每天早上 9:00 发送昨日同步健康摘要。
+4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并通过机器人 webhook 发一条汇总消息。
 
 ### 同步数据校验
 
@@ -334,6 +338,8 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
 | POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
+| POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`） |
+| GET | `/export/generation-logs` | 报告生成日志（page/pageSize 分页，report_type/status/start/end 筛选） |
 
 前后端代理路径：
 
