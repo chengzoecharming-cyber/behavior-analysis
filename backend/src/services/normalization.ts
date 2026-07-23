@@ -90,14 +90,37 @@ export async function checkDuplicateVisit(
 
 async function computeBusinessDates(
   parsedVisits: ParsedVisit[],
-  _source: "excel" | "dingtalk"
+  source: "excel" | "dingtalk"
 ): Promise<string[]> {
-  // 业务日期统一按实际签到时间（北京时间）计算。
-  // 钉钉审批单的创建时间可能早于或晚于实际签到时间（补卡/提前提交），
-  // 而外勤分析关心的是员工真实发生拜访的日期，因此以 visit.time 为准。
+  // 归日口径：
+  // - Excel：按每条签到实际时间（北京时间）归日。
+  // - 钉钉：整张审批单按「首次签到日期」归日。即使审批单跨天（如次日早上补收尾签到），
+  //   所有签到也归到行程开始的那天，控制台一天只展示一次，与里程口径（按审批单
+  //   首次签到日期聚合）保持一致。审批单创建时间不作为归日依据（可能补卡/提前提交），
+  //   仅保留在 raw_approvals 用于对账。
+  if (source !== "dingtalk") {
+    return parsedVisits.map((visit) =>
+      formatBeijingDate(normalizeTimestamp(visit.time))
+    );
+  }
+
+  // 按 approval_id 分组，取每组最早签到时间的北京时间日期作为整组的业务日期
+  const firstDateByApproval = new Map<string, string>();
+  for (const visit of parsedVisits) {
+    if (!visit.approval_id) continue;
+    const d = formatBeijingDate(normalizeTimestamp(visit.time));
+    const cur = firstDateByApproval.get(visit.approval_id);
+    if (!cur || d < cur) {
+      firstDateByApproval.set(visit.approval_id, d);
+    }
+  }
+
   return parsedVisits.map((visit) => {
-    const ts = normalizeTimestamp(visit.time);
-    return formatBeijingDate(ts);
+    const own = formatBeijingDate(normalizeTimestamp(visit.time));
+    if (visit.approval_id) {
+      return firstDateByApproval.get(visit.approval_id) ?? own;
+    }
+    return own;
   });
 }
 

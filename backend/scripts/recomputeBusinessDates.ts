@@ -1,16 +1,17 @@
 import { pool } from "../src/db";
-import { formatBeijingDate } from "../src/utils/timezone";
 import {
   recomputeDerivedDataForVisits,
   AffectedUserDate,
 } from "../src/services/derivedComputation";
 
 /**
- * 一次性重刷脚本：修正钉钉 visits 的 business_date。
+ * 一次性重刷脚本：把钉钉 visits 的 business_date 统一为「审批单级归日」口径。
  *
- * 背景：d402944 之前，钉钉数据的 business_date 按审批单日期归日；
- * 现行规则是按每条记录的实际签到时间（北京时间）归日。本脚本修正历史错位数据，
- * 并对受影响的 user+date 重算衍生数据（routes + 风险摘要缓存，含异常检测）。
+ * 口径：整张审批单的所有签到，business_date = 该审批单首次签到的北京时间日期。
+ * 即使审批单跨天（次日早上补收尾签到），也归到行程开始的那天。
+ * Excel 数据（无 approval_id）不在本脚本处理范围，仍按每条签到时间归日。
+ *
+ * 同时对受影响的 user+date 重算衍生数据（routes + 风险摘要缓存，含异常检测）。
  *
  * 用法（在 backend 目录下）：
  *   npx ts-node scripts/recomputeBusinessDates.ts          # 正式执行
@@ -19,13 +20,23 @@ import {
 async function main() {
   const dryRun = process.argv.includes("dry");
   try {
-    console.log("[1/3] 查询 business_date 与实际签到日期不一致的钉钉 visits...");
+    console.log("[1/3] 查询与「审批单首次签到日期」不一致的钉钉 visits...");
     const visitsResult = await pool.query(
-      `SELECT id, user_id, business_date::text AS old_date, timestamp
-       FROM visits
-       WHERE source = 'dingtalk'
-         AND business_date <> (timestamp AT TIME ZONE 'Asia/Shanghai')::date
-       ORDER BY id`
+      `WITH first_dates AS (
+         SELECT approval_id,
+                (MIN(timestamp) AT TIME ZONE 'Asia/Shanghai')::date AS first_date
+         FROM visits
+         WHERE source = 'dingtalk' AND approval_id IS NOT NULL
+         GROUP BY approval_id
+       )
+       SELECT v.id, v.user_id,
+              v.business_date::text AS old_date,
+              f.first_date::text  AS new_date
+       FROM visits v
+       JOIN first_dates f ON f.approval_id = v.approval_id
+       WHERE v.source = 'dingtalk'
+         AND v.business_date <> f.first_date
+       ORDER BY v.id`
     );
     console.log(`找到 ${visitsResult.rows.length} 条需要修正的 visits`);
 
@@ -35,19 +46,18 @@ async function main() {
 
     for (let i = 0; i < visitsResult.rows.length; i++) {
       const row = visitsResult.rows[i];
-      const newDate = formatBeijingDate(new Date(row.timestamp));
       pairMap.set(`${row.user_id}|${row.old_date}`, {
         user_id: row.user_id,
         business_date: row.old_date,
       });
-      pairMap.set(`${row.user_id}|${newDate}`, {
+      pairMap.set(`${row.user_id}|${row.new_date}`, {
         user_id: row.user_id,
-        business_date: newDate,
+        business_date: row.new_date,
       });
 
       if (dryRun) {
         if (i < 10) {
-          console.log(`  [dry] visit ${row.id}: ${row.old_date} -> ${newDate}`);
+          console.log(`  [dry] visit ${row.id}: ${row.old_date} -> ${row.new_date}`);
         }
         continue;
       }
@@ -55,7 +65,7 @@ async function main() {
       try {
         const updateResult = await pool.query(
           `UPDATE visits SET business_date = $1 WHERE id = $2`,
-          [newDate, row.id]
+          [row.new_date, row.id]
         );
         updated += updateResult.rowCount || 0;
       } catch (err) {
