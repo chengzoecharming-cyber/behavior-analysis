@@ -1,4 +1,4 @@
-import { UserOverviewResult, DailyOverview } from "./userOverviewService";
+import { UserOverviewResult } from "./userOverviewService";
 import { Visit, Route, Stop } from "../types";
 import { ReportType } from "./dingtalkDoc";
 
@@ -11,7 +11,7 @@ export interface MarkdownReportInput {
   overview: UserOverviewResult;
   visits?: Visit[];
   routes?: Route[];
-  /** 停留点列表，仅个人日报用于「理论签到里程」板块 */
+  /** 停留点列表，仅个人日报用于「估算里程」板块 */
   stops?: Stop[];
   /** 系统访问链接，会追加在报告底部 */
   systemLink?: string;
@@ -27,19 +27,6 @@ function formatTime(dateInput: Date | string): string {
     hour: "2-digit",
     minute: "2-digit",
   });
-}
-
-function severityText(severity: string): string {
-  switch (severity) {
-    case "high":
-      return "🔴 高风险";
-    case "medium":
-      return "🟠 中风险";
-    case "low":
-      return "🟡 低风险";
-    default:
-      return `⚪ ${severity}`;
-  }
 }
 
 function buildSystemLink(input: MarkdownReportInput): string {
@@ -81,28 +68,14 @@ function resolveCustomerDisplayName(v: Visit): string {
 
 function computeCustomerFrequency(
   visits: Visit[]
-): { customerName: string; count: number; lastTime: string }[] {
-  const map = new Map<
-    string,
-    { customerName: string; count: number; lastTime: Date }
-  >();
+): { customerName: string; count: number }[] {
+  const map = new Map<string, number>();
   for (const v of visits) {
     const name = resolveCustomerDisplayName(v);
-    const existing = map.get(name);
-    const t = new Date(v.timestamp);
-    if (!existing) {
-      map.set(name, { customerName: name, count: 1, lastTime: t });
-    } else {
-      existing.count++;
-      if (t > existing.lastTime) existing.lastTime = t;
-    }
+    map.set(name, (map.get(name) || 0) + 1);
   }
-  return Array.from(map.values())
-    .map((c) => ({
-      customerName: c.customerName,
-      count: c.count,
-      lastTime: formatTime(c.lastTime),
-    }))
+  return Array.from(map.entries())
+    .map(([customerName, count]) => ({ customerName, count }))
     .sort((a, b) => b.count - a.count);
 }
 
@@ -125,70 +98,8 @@ function renderCoreSummary(
   lines.push("|---|---|");
   lines.push(`| 拜访客户数 | ${customerCount} 家 |`);
   lines.push(`| 拜访次数 | ${totals.visit_count} 次 |`);
-  lines.push(`| 理论签到里程 | ${Math.round(totals.estimated_distance_km)} km |`);
+  lines.push(`| 估算里程 | ${Math.round(totals.estimated_distance_km)} km |`);
   lines.push("");
-}
-
-function renderExtraSummary(
-  lines: string[],
-  totals: UserOverviewResult["totals"]
-) {
-  lines.push("## 其他汇总");
-  lines.push("");
-  lines.push("| 指标 | 数值 |");
-  lines.push("|---|---|");
-  lines.push(`| 填报里程 | ${totals.reported_distance_km} km |`);
-  lines.push(`| 异常事件 | ${totals.anomaly_count} 个 |`);
-  lines.push("");
-}
-
-function renderDailyTrend(lines: string[], daily: DailyOverview[]) {
-  if (daily.length <= 1) return;
-  lines.push("## 每日趋势");
-  lines.push("");
-  lines.push("| 日期 | 拜访次数 | 理论签到里程(km) | 填报里程(km) | 异常数 |");
-  lines.push("|---|---|---|---|---|");
-  for (const d of daily) {
-    const mileageInvalidFlag = d.has_mileage_reading_invalid ? " ⚠️" : "";
-    lines.push(
-      `| ${d.date} | ${d.visit_count} | ${Math.round(
-        d.estimated_distance_km
-      )} | ${d.reported_distance_km}${mileageInvalidFlag} | ${d.anomaly_count} |`
-    );
-  }
-  lines.push("");
-  if (daily.some((d) => d.has_mileage_reading_invalid)) {
-    lines.push(
-      "> ⚠️ 表示当日存在里程读数异常，建议核对填报数据。"
-    );
-    lines.push("");
-  }
-}
-
-function renderAnomalies(lines: string[], anomalies: UserOverviewResult["anomalies"]) {
-  lines.push("## 异常事件");
-  lines.push("");
-  if (anomalies.length === 0) {
-    lines.push("✅ 该时间段内未发现异常事件。");
-    lines.push("");
-    return;
-  }
-  for (const a of anomalies) {
-    lines.push(`### ${severityText(a.severity)} · ${a.anomaly_date}`);
-    lines.push("");
-    lines.push(`**类型：** ${a.type}`);
-    lines.push("");
-    lines.push(`**描述：** ${a.description}`);
-    lines.push("");
-    if (a.metadata && Object.keys(a.metadata).length > 0) {
-      lines.push("**附加信息：**");
-      lines.push("");
-      for (const [k, v] of Object.entries(a.metadata)) {
-        lines.push(`- ${k}：${v}`);
-      }
-      lines.push("");
-    }
-  }
 }
 
 function renderCustomerList(
@@ -206,8 +117,8 @@ function renderCustomerList(
 
   if (withOwner) {
     // 非个人维度：显示客户被哪些人员访问过
-    lines.push("| 排名 | 客户 | 访问次数 | 最后拜访时间 | 涉及人员 |");
-    lines.push("|---|---|---|---|---|");
+    lines.push("| 排名 | 客户 | 访问次数 | 涉及人员 |");
+    lines.push("|---|---|---|---|");
     for (let i = 0; i < customers.length; i++) {
       const c = customers[i];
       const owners = [
@@ -222,17 +133,15 @@ function renderCustomerList(
         ),
       ].join("、");
       lines.push(
-        `| ${i + 1} | ${c.customerName} | ${c.count} | ${c.lastTime} | ${owners} |`
+        `| ${i + 1} | ${c.customerName} | ${c.count} | ${owners} |`
       );
     }
   } else {
-    lines.push("| 排名 | 客户 | 访问次数 | 最后拜访时间 |");
-    lines.push("|---|---|---|---|");
+    lines.push("| 排名 | 客户 | 访问次数 |");
+    lines.push("|---|---|---|");
     for (let i = 0; i < customers.length; i++) {
       const c = customers[i];
-      lines.push(
-        `| ${i + 1} | ${c.customerName} | ${c.count} | ${c.lastTime} |`
-      );
+      lines.push(`| ${i + 1} | ${c.customerName} | ${c.count} |`);
     }
   }
   lines.push("");
@@ -285,13 +194,13 @@ function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[])
   }
 }
 
-/** 理论签到里程板块：总里程 + 按时间顺序的停留点列表（仅个人日报） */
+/** 估算里程板块：总里程 + 按时间顺序的停留点列表（仅个人日报） */
 function renderMileageStops(
   lines: string[],
   totals: UserOverviewResult["totals"],
   stops: Stop[]
 ) {
-  lines.push("## 理论签到里程");
+  lines.push("## 估算里程");
   lines.push("");
   lines.push(`总里程：${Math.round(totals.estimated_distance_km)} km`);
   lines.push("");
@@ -323,7 +232,7 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   // 是否个人日报（停留点与拜访轨迹板块仅个人日报展示）
   const isPersonalDaily = reportType === "日报" && !!input.userId;
 
-  // 核心指标（客户数、拜访次数、理论签到里程）
+  // 核心指标（客户数、拜访次数、估算里程）
   renderCoreSummary(lines, totals, visits);
 
   // 客户拜访列表
@@ -331,7 +240,7 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
     renderCustomerList(lines, visits, !input.userId);
   }
 
-  // 个人日报：理论签到里程 + 停留点列表
+  // 个人日报：估算里程 + 停留点列表
   if (isPersonalDaily && stops) {
     renderMileageStops(lines, totals, stops);
   }
@@ -346,17 +255,6 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   if (isPersonalDaily && visits && visits.length > 0) {
     renderDailyItinerary(lines, visits, routes || []);
   }
-
-  // 其他汇总（填报里程、异常事件等）
-  renderExtraSummary(lines, totals);
-
-  // 每日趋势（周报/月报）
-  if (reportType !== "日报") {
-    renderDailyTrend(lines, overview.daily);
-  }
-
-  // 异常事件
-  renderAnomalies(lines, overview.anomalies);
 
   // 系统链接
   lines.push("## 系统链接");
