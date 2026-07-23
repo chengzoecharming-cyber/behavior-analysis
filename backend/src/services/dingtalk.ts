@@ -965,7 +965,23 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     return undefined;
   };
 
-  // 解析每个 stop 的累计里程："累计里程i"放在 stop i-1 之后，表示到达 stop i 的累计值；
+  // 在当前 stop 之前、上一个 stop 之后的区间内向前找
+  // 用于客户名称字段：钉钉表单中员工在「是否前往下一个目的地」处填写的客户，
+  // 语义上属于即将前往的下一个签到点，但物理位置排在当前 stop 的字段块里，
+  // 若向后找会错挂到上一个 stop。
+  const findBefore = (stopIndex: number, pattern: RegExp): string | undefined => {
+    for (let i = stopIndex - 1; i >= 0; i--) {
+      const c = formComponents[i];
+      if (c.component_type === "TimeAndLocationField") break; // 遇到上一个定位字段停止
+      const name = (c.name || "").trim();
+      const value = (c.value || "").trim();
+      if (pattern.test(name) && value && value !== "null") return value;
+    }
+    return undefined;
+  };
+
+  // 解析每个 stop 的累计里程："累计里程i"跟在 stop i 之后，表示从出发到 stop i 的累计里程。
+  // 循环变量 j 遍历 stop 0..n-2，对每个 stop j 向后找到"累计里程(j+1)"，set 给 stop j+1。
   // 最后一个 stop 优先用"今日累计里程"兜底。
   const cumulativeByStopIndex = new Map<number, number>();
   for (let j = 0; j < stops.length - 1; j++) {
@@ -995,7 +1011,12 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     const sequence = i + 1;
 
     // 尝试提取客户名称
-    const customerRaw = findNearby(stop.index, /^客户$/) || findNearby(stop.index, /客户名称/);
+    // 客户名称在表单中属于「下一个目的地」，因此优先向前找（在当前 stop 与上一个 stop 之间）；
+    // 向前找不到时回退旧的向后逻辑，兼容其他模板或单点签到场景。
+    const customerRaw =
+      (i > 0 ? findBefore(stop.index, /^客户$/) || findBefore(stop.index, /客户名称/) : undefined) ||
+      findNearby(stop.index, /^客户$/) ||
+      findNearby(stop.index, /客户名称/);
     const customerName = customerRaw ? extractReadableName(customerRaw) : "";
 
     // 拜访情况 / 特殊签到原因 / 打卡地 / 照片分开解析
