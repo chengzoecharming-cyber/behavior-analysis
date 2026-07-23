@@ -2,20 +2,24 @@ import { pool } from "../src/db";
 import { parseApprovalInstance } from "../src/services/dingtalk";
 
 /**
- * 一次性补全脚本：重新解析所有钉钉审批单的 form_json，
- * 把 visits 表中的 customer_name 字段按正确规则补齐。
+ * 一次性重刷脚本：重新解析所有钉钉审批单的 form_json，
+ * 把 visits 表中的 customer_name 字段按正确规则覆盖更新。
  *
- * 适用场景：
- * - 修复了客户名称解析逻辑后，需要把历史数据中的 customer_name 补齐
+ * 覆盖模式：不做条件判断，直接用重新解析的值覆盖旧值，
+ * 用于修正「客户名称错挂到上一个签到点」的历史数据。
  *
  * 用法（在 backend 目录下）：
- *   npx ts-node scripts/backfillCustomerNames.ts
+ *   npx ts-node scripts/backfillCustomerNames.ts          # 正式执行
+ *   npx ts-node scripts/backfillCustomerNames.ts dry      # dry-run 预览差异，不更新
  */
 async function main() {
+  const dryRun = process.argv.includes("dry");
   const batchSize = 50;
   let offset = 0;
   let totalUpdated = 0;
   let totalSkipped = 0;
+  let totalUnchanged = 0;
+  const changes: string[] = [];
 
   while (true) {
     const result = await pool.query(
@@ -43,21 +47,46 @@ async function main() {
         if (visits.length === 0) continue;
 
         for (const visit of visits) {
-          if (!visit.customer_name) continue;
+          const newName = visit.customer_name || "";
 
-          const updateResult = await pool.query(
-            `UPDATE visits
-             SET customer_name = $1
-             WHERE approval_id = $2 AND sequence = $3
-               AND (customer_name IS NULL OR customer_name = '')
-             RETURNING id`,
-            [visit.customer_name, row.approval_id, visit.sequence]
+          // 先查出当前库里的值，对比是否有变化
+          const current = await pool.query(
+            `SELECT customer_name FROM visits
+             WHERE approval_id = $1 AND sequence = $2`,
+            [row.approval_id, visit.sequence]
           );
 
-          if (updateResult.rows.length > 0) {
+          if (current.rows.length === 0) {
+            totalSkipped++;
+            continue;
+          }
+
+          const oldName = current.rows[0].customer_name || "";
+
+          if (oldName === newName) {
+            totalUnchanged++;
+            continue;
+          }
+
+          if (dryRun) {
+            changes.push(
+              `  approval=${row.approval_id} seq=${visit.sequence}: "${oldName}" -> "${newName}"`
+            );
             totalUpdated++;
           } else {
-            totalSkipped++;
+            const updateResult = await pool.query(
+              `UPDATE visits
+               SET customer_name = $1
+               WHERE approval_id = $2 AND sequence = $3
+               RETURNING id`,
+              [newName, row.approval_id, visit.sequence]
+            );
+
+            if (updateResult.rows.length > 0) {
+              totalUpdated++;
+            } else {
+              totalSkipped++;
+            }
           }
         }
       } catch (err) {
@@ -66,11 +95,23 @@ async function main() {
     }
 
     offset += batchSize;
-    console.log(`[backfillCustomerNames] processed ${offset} approvals, updated ${totalUpdated} visits`);
+    console.log(
+      `[backfillCustomerNames] processed ${offset} approvals, ` +
+      `${dryRun ? "would-update" : "updated"}=${totalUpdated}, unchanged=${totalUnchanged}`
+    );
+  }
+
+  if (dryRun && changes.length > 0) {
+    console.log(`\n[DRY-RUN] ${changes.length} visits would be updated:\n`);
+    for (const c of changes) {
+      console.log(c);
+    }
+    console.log("");
   }
 
   console.log(
-    `[backfillCustomerNames] completed: updated=${totalUpdated}, skipped=${totalSkipped}`
+    `[backfillCustomerNames] ${dryRun ? "DRY-RUN " : ""}completed: ` +
+    `${dryRun ? "would-update" : "updated"}=${totalUpdated}, unchanged=${totalUnchanged}, skipped=${totalSkipped}`
   );
 }
 
