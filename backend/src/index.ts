@@ -15,6 +15,7 @@ import usersRouter from "./routes/users";
 import feedbackRouter from "./routes/feedback";
 import authRouter from "./routes/auth";
 import exportRouter from "./routes/export";
+import dataLineageRouter from "./routes/dataLineage";
 import {
   startRiskSummaryCacheScheduler,
   startDingTalkSyncScheduler,
@@ -42,6 +43,7 @@ app.use("/users", usersRouter);
 app.use("/feedback", feedbackRouter);
 app.use("/auth", authRouter);
 app.use("/export", exportRouter);
+app.use("/data-lineage", dataLineageRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });

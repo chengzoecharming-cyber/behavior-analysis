@@ -691,3 +691,122 @@ export async function exportScopeReportToDoc(
   const res = await api.post("/export/scope-report-to-doc", payload);
   return res.data;
 }
+
+// ============ 数据血缘查看器 ============
+
+export interface LineageApprovalItem {
+  approvalId: string;
+  processInstanceId?: string;
+  title?: string;
+  userName?: string;
+  department?: string;
+  createTime?: string;
+  finishTime?: string;
+  status?: string;
+  result?: string;
+  visitCount: number;
+  qualityErrorCount: number;
+  qualityWarningCount: number;
+}
+
+export interface LineageApprovalListResponse {
+  success: boolean;
+  total: number;
+  items: LineageApprovalItem[];
+}
+
+export interface RawFormField {
+  name: string;
+  componentType: string;
+  displayValue: string;
+  isLocation: boolean;
+  empty: boolean;
+}
+
+export interface LineageParsedVisit {
+  time?: string;
+  customer_name?: string;
+  location_name?: string;
+  visit_note?: string;
+  trip_type?: string;
+  vehicle?: string;
+  reported_distance_km?: number;
+  department?: string;
+  user_name?: string;
+  user_id?: string;
+  approval_status?: string;
+  special_sign_reason?: string;
+  sequence?: number;
+  [key: string]: unknown;
+}
+
+export interface LineageStoredVisit {
+  id: number;
+  user_id: string;
+  user_name: string;
+  department?: string;
+  timestamp?: string;
+  business_date?: string;
+  lat?: number;
+  lng?: number;
+  location_name?: string;
+  address?: string;
+  customer_name?: string;
+  sequence?: number;
+  trip_type?: string;
+  vehicle?: string;
+  start_odometer?: number;
+  end_odometer?: number;
+  reported_distance_km?: number;
+  cumulative_mileage_km?: number;
+  visit_note?: string;
+  geocode_status?: string;
+}
+
+export interface LineageQualityRecord {
+  id: number;
+  record_index?: number;
+  user_id?: string;
+  business_date?: string;
+  check_type: string;
+  severity: "ERROR" | "WARNING" | "INFO";
+  message: string;
+  raw_value?: string;
+  resolved: boolean;
+  created_at?: string;
+}
+
+export interface LineageDetail {
+  success: boolean;
+  approvalId: string;
+  meta: {
+    userName?: string;
+    department?: string;
+    createTime?: string;
+    finishTime?: string;
+    status?: string;
+    result?: string;
+  };
+  rawForm: RawFormField[];
+  parsedVisits: LineageParsedVisit[];
+  parseOk: boolean;
+  parseError?: string;
+  storedVisits: LineageStoredVisit[];
+  qualityRecords: LineageQualityRecord[];
+}
+
+export async function fetchLineageApprovals(params: {
+  start?: string;
+  end?: string;
+  user?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<LineageApprovalListResponse> {
+  const res = await api.get("/data-lineage/approvals", { params });
+  return res.data;
+}
+
+export async function fetchLineageDetail(approvalId: string): Promise<LineageDetail> {
+  const res = await api.get(`/data-lineage/approvals/${encodeURIComponent(approvalId)}`);
+  return res.data;
+}

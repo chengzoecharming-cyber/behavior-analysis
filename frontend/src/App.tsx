@@ -20,6 +20,7 @@ import {
   LogOut,
   History,
   Shield,
+  SearchCode,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import ConsolePage from "./pages/ConsolePage";
@@ -29,6 +30,7 @@ import FeedbackPage from "./pages/FeedbackPage";
 import LoginPage from "./pages/LoginPage";
 import SyncLogsPage from "./pages/SyncLogsPage";
 import SyncHealthPage from "./pages/SyncHealthPage";
+import DataLineagePage from "./pages/DataLineagePage";
 import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
 
@@ -230,6 +232,14 @@ function App() {
                         <Link to="/sync-logs">同步记录</Link>
                       </Dropdown.Item>
                     )}
+                    {currentUser?.role === "admin" && (
+                      <Dropdown.Item
+                        icon={<SearchCode className="h-4 w-4" />}
+                        style={itemStyle}
+                      >
+                        <Link to="/data-lineage">数据血缘</Link>
+                      </Dropdown.Item>
+                    )}
                     <Dropdown.Item
                       icon={<Shield className="h-4 w-4" />}
                       style={itemStyle}
@@ -389,6 +399,7 @@ function App() {
           <Route path="/rules" element={<RulesConfigPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
           <Route path="/sync-logs" element={<SyncLogsPage />} />
+          <Route path="/data-lineage" element={<DataLineagePage />} />
           <Route path="/login" element={<LoginPage />} />
         </Routes>
       </main>
