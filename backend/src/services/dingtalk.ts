@@ -1011,12 +1011,14 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     const sequence = i + 1;
 
     // 尝试提取客户名称
-    // 客户名称在表单中属于「下一个目的地」，因此优先向前找（在当前 stop 与上一个 stop 之间）；
-    // 向前找不到时回退旧的向后逻辑，兼容其他模板或单点签到场景。
+    // 钉钉表单中客户名称是员工在「是否前往下一个目的地」处填写的，语义上永远属于
+    // 即将前往的下一个签到点（物理位置排在当前 stop 的字段块末尾），因此必须严格向前找
+    // （在当前 stop 与上一个 stop 之间），不能回退向后找，否则会把下一个目的地的客户
+    // 错挂到当前 stop。第一个 stop 是出发点，没有客户。
     const customerRaw =
-      (i > 0 ? findBefore(stop.index, /^客户$/) || findBefore(stop.index, /客户名称/) : undefined) ||
-      findNearby(stop.index, /^客户$/) ||
-      findNearby(stop.index, /客户名称/);
+      i > 0
+        ? findBefore(stop.index, /^客户$/) || findBefore(stop.index, /客户名称/)
+        : undefined;
     const customerName = customerRaw ? extractReadableName(customerRaw) : "";
 
     // 拜访情况 / 特殊签到原因 / 打卡地 / 照片分开解析
