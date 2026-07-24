@@ -110,6 +110,11 @@ function renderCustomerList(
   const customers = computeCustomerFrequency(visits);
   if (customers.length === 0) return;
 
+  // 钉钉文档 API 对内容大小有限制（实测 ~69KB 会被拒），大维度报告只保留 Top N 客户
+  const MAX_CUSTOMER_ROWS = 50;
+  const truncated = customers.length > MAX_CUSTOMER_ROWS;
+  const shown = truncated ? customers.slice(0, MAX_CUSTOMER_ROWS) : customers;
+
   lines.push("## 客户拜访列表");
   lines.push("");
   lines.push("按访问频率从高到低排序：");
@@ -119,8 +124,8 @@ function renderCustomerList(
     // 非个人维度：显示客户被哪些人员访问过
     lines.push("| 排名 | 客户 | 访问次数 | 涉及人员 |");
     lines.push("|---|---|---|---|");
-    for (let i = 0; i < customers.length; i++) {
-      const c = customers[i];
+    for (let i = 0; i < shown.length; i++) {
+      const c = shown[i];
       const owners = [
         ...new Set(
           visits
@@ -139,12 +144,18 @@ function renderCustomerList(
   } else {
     lines.push("| 排名 | 客户 | 访问次数 |");
     lines.push("|---|---|---|");
-    for (let i = 0; i < customers.length; i++) {
-      const c = customers[i];
+    for (let i = 0; i < shown.length; i++) {
+      const c = shown[i];
       lines.push(`| ${i + 1} | ${c.customerName} | ${c.count} |`);
     }
   }
   lines.push("");
+  if (truncated) {
+    lines.push(
+      `> 共 ${customers.length} 个客户，仅展示前 ${MAX_CUSTOMER_ROWS} 个，完整列表请在系统中查看。`
+    );
+    lines.push("");
+  }
 }
 
 function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[]) {
