@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 import { pool } from "../db";
 import { buildOrgTree, OrgTreeNode } from "./orgService";
 import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat } from "./dingtalkFile";
+import { batchFilterHomeVisits, loadUserHomeAddresses } from "./addressWhitelistService";
 import { computeUserOverview } from "./userOverviewService";
 import { renderConsoleReportMarkdown } from "./exportConsoleReportMarkdown";
 import {
@@ -432,6 +433,11 @@ export async function exportReportToDingTalkDoc(options: {
   const scopeName = buildScopeName(scope, target);
   const titleName = scopeData.hasData ? scopeName : `${scopeName}（${reportDate}_${reportType.replace("报", "无拜访")}）`;
 
+  // 客户统计与客户列表排除员工住址（拜访轨迹仍完整展示）
+  const visitUserIds = [...new Set(scopeData.visits.map((v) => v.user_id))];
+  const homeAddressMap = await loadUserHomeAddresses(visitUserIds);
+  const homeVisitIds = await batchFilterHomeVisits(scopeData.visits, homeAddressMap);
+
   // 生成 Markdown
   const markdown = renderConsoleReportMarkdown({
     userName: titleName,
@@ -443,6 +449,7 @@ export async function exportReportToDingTalkDoc(options: {
     visits: scope === "person" ? scopeData.visits : scopeData.visits,
     routes: scope === "person" ? scopeData.routes : undefined,
     stops: scope === "person" ? personStops : undefined,
+    homeVisitIds,
     systemLink: buildSystemLink(scope, target, start, end),
   });
 

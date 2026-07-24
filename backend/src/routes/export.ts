@@ -25,6 +25,10 @@ import {
   exportReportToDingTalkDoc,
 } from "../services/reportGenerationService";
 import { ReportScopeTarget } from "../services/dingtalkDoc";
+import {
+  batchFilterHomeVisits,
+  loadUserHomeAddresses,
+} from "../services/addressWhitelistService";
 
 const router = Router();
 
@@ -128,6 +132,13 @@ router.post("/console-report-to-doc", async (req: Request, res: Response) => {
 
     const { reportType } = inferReportType(start, end);
 
+    // 客户统计与客户列表排除员工住址
+    let homeVisitIds: Set<number> | undefined;
+    if (visits && visits.length > 0) {
+      const homeAddressMap = await loadUserHomeAddresses([userId]);
+      homeVisitIds = await batchFilterHomeVisits(visits, homeAddressMap);
+    }
+
     const markdown = renderConsoleReportMarkdown({
       userName,
       userId,
@@ -137,6 +148,7 @@ router.post("/console-report-to-doc", async (req: Request, res: Response) => {
       overview,
       visits,
       routes,
+      homeVisitIds,
     });
 
     const result = await exportConsoleReportToDingTalkDoc({

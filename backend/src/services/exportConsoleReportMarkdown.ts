@@ -13,6 +13,8 @@ export interface MarkdownReportInput {
   routes?: Route[];
   /** 停留点列表，仅个人日报用于「估算里程」板块 */
   stops?: Stop[];
+  /** 命中员工住址的 visit id 集合，客户数统计与客户拜访列表中排除（拜访轨迹仍完整展示） */
+  homeVisitIds?: Set<number>;
   /** 系统访问链接，会追加在报告底部 */
   systemLink?: string;
 }
@@ -79,14 +81,22 @@ function computeCustomerFrequency(
     .sort((a, b) => b.count - a.count);
 }
 
+/** 过滤命中员工住址的拜访，客户统计与客户列表不应把住址算作客户 */
+function excludeHomeVisits(visits: Visit[] | undefined, homeVisitIds?: Set<number>): Visit[] | undefined {
+  if (!visits || !homeVisitIds || homeVisitIds.size === 0) return visits;
+  return visits.filter((v) => !homeVisitIds.has(v.id));
+}
+
 function renderCoreSummary(
   lines: string[],
   totals: UserOverviewResult["totals"],
-  visits?: Visit[]
+  visits?: Visit[],
+  homeVisitIds?: Set<number>
 ) {
-  const customerCount = visits
+  const customerVisits = excludeHomeVisits(visits, homeVisitIds);
+  const customerCount = customerVisits
     ? new Set(
-        visits.map(
+        customerVisits.map(
           (v) => v.customer_name || v.location_name || "未命名客户"
         )
       ).size
@@ -105,9 +115,10 @@ function renderCoreSummary(
 function renderCustomerList(
   lines: string[],
   visits: Visit[],
-  withOwner = false
+  withOwner = false,
+  homeVisitIds?: Set<number>
 ) {
-  const customers = computeCustomerFrequency(visits);
+  const customers = computeCustomerFrequency(excludeHomeVisits(visits, homeVisitIds) || []);
   if (customers.length === 0) return;
 
   // 钉钉文档 API 对内容大小有限制（实测 ~69KB 会被拒），大维度报告只保留 Top N 客户
@@ -226,7 +237,7 @@ function renderMileageStops(
 }
 
 export function renderConsoleReportMarkdown(input: MarkdownReportInput): string {
-  const { userName, start, end, reportType, overview, visits, routes, stops } = input;
+  const { userName, start, end, reportType, overview, visits, routes, stops, homeVisitIds } = input;
   const totals = overview.totals;
   const lines: string[] = [];
 
@@ -243,12 +254,12 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   // 是否个人日报（停留点与拜访轨迹板块仅个人日报展示）
   const isPersonalDaily = reportType === "日报" && !!input.userId;
 
-  // 核心指标（客户数、拜访次数、估算里程）
-  renderCoreSummary(lines, totals, visits);
+  // 核心指标（客户数、拜访次数、估算里程；客户数排除员工住址）
+  renderCoreSummary(lines, totals, visits, homeVisitIds);
 
-  // 客户拜访列表
+  // 客户拜访列表（排除员工住址）
   if (visits && visits.length > 0) {
-    renderCustomerList(lines, visits, !input.userId);
+    renderCustomerList(lines, visits, !input.userId, homeVisitIds);
   }
 
   // 个人日报：估算里程 + 停留点列表
