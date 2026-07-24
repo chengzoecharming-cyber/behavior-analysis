@@ -1,7 +1,7 @@
 import { randomUUID } from "crypto";
 import { pool } from "../db";
 import { buildOrgTree, OrgTreeNode } from "./orgService";
-import { buildRobotSignedUrl, getExportConfig } from "./dingtalkFile";
+import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat } from "./dingtalkFile";
 import { computeUserOverview } from "./userOverviewService";
 import { renderConsoleReportMarkdown } from "./exportConsoleReportMarkdown";
 import {
@@ -661,8 +661,9 @@ async function exportScopeWithRetry(options: {
 }
 
 /**
- * run 结束后通过机器人 webhook 发一条 markdown 汇总（成功/失败合并，避免刷屏）。
- * 有失败时标题带警告并列出失败维度；webhook 未配置则跳过。
+ * run 结束后发一条 markdown 汇总（成功/失败合并，避免刷屏）。
+ * 优先走应用群机器人 /chat/send（DINGTALK_EXPORT_CHAT_ID，无关键词限制）；
+ * 未配置 chatId 时回退到自定义机器人 webhook（受安全关键词限制）。
  */
 async function sendReportRunSummary(
   reportType: string,
@@ -671,8 +672,8 @@ async function sendReportRunSummary(
   results: ReportGenerationResult[]
 ): Promise<void> {
   try {
-    const { robotWebhook, robotSecret } = getExportConfig();
-    if (!robotWebhook) return;
+    const { robotWebhook, robotSecret, chatId } = getExportConfig();
+    if (!chatId && !robotWebhook) return;
 
     const successItems = results.filter((r) => r.status === "success");
     const failedItems = results.filter((r) => r.status === "failed");
@@ -709,7 +710,20 @@ async function sendReportRunSummary(
       lines.push("", `[查看详情](${companyUrl})`);
     }
 
-    const url = buildRobotSignedUrl(robotWebhook, robotSecret);
+    const title = `外勤${label}生成${hasFailed ? "（部分失败）" : "完成"}`;
+    const text = lines.join("\n");
+
+    // 优先走应用群机器人通道（无关键词限制），未配置 chatId 时回退 webhook
+    if (chatId) {
+      try {
+        await sendMarkdownToDingTalkChat(title, text);
+      } catch (err: any) {
+        console.warn("[Report Gen] 群聊汇总发送失败:", err?.message || err);
+      }
+      return;
+    }
+
+    const url = buildRobotSignedUrl(robotWebhook!, robotSecret);
     const res = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
