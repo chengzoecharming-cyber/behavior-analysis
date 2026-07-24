@@ -185,7 +185,7 @@ map/
 1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
 2. **钉钉审批同步**：每 3 小时同步最近 3 天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
 3. **同步健康告警**：每次钉钉同步完成后立即检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；每天早上 9:00 发送昨日同步健康摘要。
-4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并通过机器人 webhook 发一条汇总消息。
+4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。
 
 ### 同步数据校验
 
