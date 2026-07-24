@@ -680,8 +680,12 @@ async function sendReportRunSummary(
       periodStart === periodEnd ? periodStart : `${periodStart} ~ ${periodEnd}`;
     const hasFailed = failedItems.length > 0;
 
+    // 群机器人若配置了安全关键词，消息内容必须包含该关键词，否则发送被拒（310000）
+    const keyword = process.env.DINGTALK_EXPORT_ROBOT_KEYWORD || "";
+    const prefix = keyword ? `【${keyword}】` : "";
+
     const lines = [
-      `## ${hasFailed ? "⚠️" : "📊"} 外勤${label} ${periodText} 已生成`,
+      `## ${prefix}${hasFailed ? "⚠️" : "📊"} 外勤${label} ${periodText} 已生成`,
       "",
       `共 ${results.length} 份（公司 ${successCountBy("company")} / 部门 ${successCountBy("department")} / 子部门 ${successCountBy("sub_department")} / 个人 ${successCountBy("person")}），成功 ${successItems.length}、失败 ${failedItems.length}`,
     ];

@@ -345,8 +345,26 @@ const EMPLOYEE_REPORT_FOLDER_NAMES: Record<ReportType, string> = {
   月报: "03. 月报",
 };
 
-function getWeekNumber(date: Date): number {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+/** 按北京时间提取日期部件，避免服务器本地时区（容器内通常为 UTC）影响判断 */
+function beijingDateParts(dateStr: string): {
+  year: number;
+  month: number; // 0-based
+  date: number;
+  weekday: number; // 0=周日
+} {
+  const d = new Date(`${dateStr}T00:00:00+08:00`);
+  const bj = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  return {
+    year: bj.getUTCFullYear(),
+    month: bj.getUTCMonth(),
+    date: bj.getUTCDate(),
+    weekday: bj.getUTCDay(),
+  };
+}
+
+/** ISO 周数，入参为北京时间的年/月（0-based）/日 */
+function getWeekNumber(year: number, month: number, date: number): number {
+  const d = new Date(Date.UTC(year, month, date));
   const dayNum = d.getUTCDay() || 7;
   d.setUTCDate(d.getUTCDate() + 4 - dayNum);
   const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
@@ -359,6 +377,7 @@ function getWeekNumber(date: Date): number {
  * - 整周（跨度 6 天且 start 是周一）：周报，日期 YYYY-Www
  * - 整月（start 为月初、end 为月末）：月报，日期 YYYY-MM
  * - 其他：按日报处理
+ * 注意：所有判断按北京时间进行，不能直接用 Date 的本地时区 getter。
  */
 export function inferReportType(
   start: string,
@@ -368,28 +387,28 @@ export function inferReportType(
     return { reportType: "日报", reportDate: start };
   }
 
-  const s = new Date(start + "T00:00:00+08:00");
-  const e = new Date(end + "T00:00:00+08:00");
-  const diffDays = Math.round((e.getTime() - s.getTime()) / (1000 * 60 * 60 * 24));
+  const s = beijingDateParts(start);
+  const e = beijingDateParts(end);
+  const diffDays = Math.round(
+    (Date.UTC(e.year, e.month, e.date) - Date.UTC(s.year, s.month, s.date)) /
+      (1000 * 60 * 60 * 24)
+  );
 
   // 周报：跨度 6 天且开始是周一
-  if (diffDays === 6 && s.getDay() === 1) {
-    const year = s.getFullYear();
-    const week = getWeekNumber(s);
-    return { reportType: "周报", reportDate: `${year}-W${String(week).padStart(2, "0")}` };
+  if (diffDays === 6 && s.weekday === 1) {
+    const week = getWeekNumber(s.year, s.month, s.date);
+    return {
+      reportType: "周报",
+      reportDate: `${s.year}-W${String(week).padStart(2, "0")}`,
+    };
   }
 
   // 月报：start 为 1 号，end 为月末
-  const sYear = s.getFullYear();
-  const sMonth = s.getMonth();
-  const eYear = e.getFullYear();
-  const eMonth = e.getMonth();
-  const eDate = e.getDate();
-  const lastDay = new Date(eYear, eMonth + 1, 0).getDate();
-  if (sYear === eYear && sMonth === eMonth && s.getDate() === 1 && eDate === lastDay) {
+  const lastDay = new Date(Date.UTC(e.year, e.month + 1, 0)).getUTCDate();
+  if (s.year === e.year && s.month === e.month && s.date === 1 && e.date === lastDay) {
     return {
       reportType: "月报",
-      reportDate: `${sYear}-${String(sMonth + 1).padStart(2, "0")}`,
+      reportDate: `${s.year}-${String(s.month + 1).padStart(2, "0")}`,
     };
   }
 
