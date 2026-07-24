@@ -104,6 +104,45 @@ export async function sendFileToDingTalkChat(
 }
 
 /**
+ * 以应用身份发送 Markdown 消息到指定群聊（走 /chat/send，无自定义机器人关键词限制）。
+ */
+export async function sendMarkdownToDingTalkChat(
+  title: string,
+  text: string
+): Promise<void> {
+  const { chatId } = getExportConfig();
+  if (!chatId) {
+    throw new Error("未配置 DINGTALK_EXPORT_CHAT_ID");
+  }
+
+  const accessToken = await getAccessToken();
+  const url = `${DINGTALK_API_BASE}/chat/send?access_token=${encodeURIComponent(accessToken)}`;
+
+  const body = {
+    chatid: chatId,
+    msg: {
+      msgtype: "markdown",
+      markdown: { title, text },
+    },
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`钉钉 chat/send HTTP 错误: ${res.status} ${res.statusText}`);
+  }
+
+  const data: any = await res.json();
+  if (data.errcode !== 0) {
+    throw new Error(`钉钉 chat/send 失败: ${data.errmsg} (${data.errcode})`);
+  }
+}
+
+/**
  * 计算自定义机器人加签（当配置了 DINGTALK_EXPORT_ROBOT_SECRET 时）。
  */
 export function buildRobotSignedUrl(
