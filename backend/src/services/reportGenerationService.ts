@@ -446,6 +446,11 @@ export async function exportReportToDingTalkDoc(options: {
     systemLink: buildSystemLink(scope, target, start, end),
   });
 
+  // 记录内容大小，便于排查钉钉文档 API 因内容过大返回 ServiceUnavailable 的问题
+  console.log(
+    `[Report Gen] ${scope}/${scopeName} markdown 大小: ${(Buffer.byteLength(markdown, "utf8") / 1024).toFixed(1)} KB`
+  );
+
   // 定位目标文件夹
   const targetFolder = await ensureReportFolder(
     operatorUnionId,
