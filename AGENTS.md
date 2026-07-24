@@ -458,6 +458,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 - 钉钉审批同步的 `originator_user_name` 可能为空，导致 `visits.user_name` 写入数字 userid。可通过 `backend/scripts/fixUserNames.ts` 修复：在职员工调用 `topapi/v2/user/get`，已离职员工回退到智能人事花名册 `topapi/smartwork/hrm/employee/list`，并自动标记 `users.is_resigned=true`。
 - 车辆/油卡/油耗模型（Step 4）已暂缓，相关表结构在 `PLAN.md` 中有设计但未实现。
 - 月维度数据导出（Step 5）尚未实现。
+- 员工住址（`users.home_address`）用于异常检测和报告客户列表的住址排除。来源是线下收集的《国内业务人员常住地址》Excel（姓名 + 地址两列即可），通过 `backend/scripts/importEmployeeAddresses.ts` 导入：`cd backend && npx ts-node scripts/importEmployeeAddresses.ts /path/to/employee_addresses.xlsx`。脚本是幂等 UPDATE，Excel 有更新（新人入职、地址变更）时改完重跑即可；仅当员工在 `users` 或 `visits` 中已有记录才能匹配写入（新入职未产生签到数据的人会在产生数据后下次导入时补上）。目前仅覆盖业务人员，非业务部门按业务决定不收集。
 
 ## 快速开始（最小路径）
 
