@@ -17,6 +17,43 @@ export async function geocodeAddress(address: string): Promise<GeoResult | null>
 }
 
 /**
+ * 带回退简化的地理编码：完整地址解析失败时，逐级截掉楼栋/单元/室等尾缀重试。
+ * 适合住址这类包含「幢/单元/室」细节、高德常常解析不出的长地址。
+ * 返回坐标及实际命中所用的地址串（便于人工核对精度）。
+ */
+export async function geocodeAddressWithSimplification(
+  address: string
+): Promise<{ coords: GeoResult; usedAddress: string } | null> {
+  const candidates = buildSimplifiedCandidates(address);
+  for (const candidate of candidates) {
+    const coords = await geocodeAddress(candidate);
+    if (coords) {
+      return { coords, usedAddress: candidate };
+    }
+  }
+  return null;
+}
+
+/** 生成地址候选：完整地址 + 逐级截短（去掉 幢/栋/单元/室/号楼 及其后内容） */
+function buildSimplifiedCandidates(address: string): string[] {
+  const candidates: string[] = [];
+  let current = address.trim();
+  const seen = new Set<string>();
+  while (current && !seen.has(current)) {
+    seen.add(current);
+    candidates.push(current);
+    // 截掉最后一个「数字+幢/栋/单元/室/号楼」及其后内容，如 44幢2301室、57栋、19号楼一单元602
+    const next = current
+      .replace(/[\d０-９一二三四五六七八九十]+\s*(幢|栋|单元|室|号楼)[^幢栋单元室号楼]*$/u, "")
+      .replace(/[-—\s,，]+$/g, "")
+      .trim();
+    if (next === current) break;
+    current = next;
+  }
+  return candidates;
+}
+
+/**
  * 批量地理编码：对地址去重后统一解析，返回地址到坐标的映射。
  * 失败的地址会尝试查询兜底地址表，仍失败则映射为 null（不再写入 0,0）。
  */

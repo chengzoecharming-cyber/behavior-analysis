@@ -12,6 +12,8 @@
     "fix:names": "ts-node scripts/fixUserNames.ts",
     "recompute:anomalies": "ts-node scripts/recomputeAnomalies.ts",
     "import:addresses": "ts-node scripts/importEmployeeAddresses.ts",
+    "backfill:home-coords": "ts-node scripts/backfillHomeCoordinates.ts",
+    "upsert:company-address": "ts-node scripts/upsertCompanyAddress.ts",
     "recompute:routes": "ts-node scripts/recomputeMileageAndRoutes.ts",
     "recompute:business-dates": "ts-node scripts/recomputeBusinessDates.ts",
     "audit:org": "ts-node scripts/orgDataAudit.ts",
