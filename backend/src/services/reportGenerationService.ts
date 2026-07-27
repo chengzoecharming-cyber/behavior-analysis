@@ -2,7 +2,12 @@ import { randomUUID } from "crypto";
 import { pool } from "../db";
 import { buildOrgTree, OrgTreeNode } from "./orgService";
 import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat } from "./dingtalkFile";
-import { batchFilterHomeVisits, loadUserHomeAddresses } from "./addressWhitelistService";
+import {
+  batchFilterCompanyVisits,
+  batchFilterHomeVisits,
+  loadAllHomeAddresses,
+  loadCompanyAddresses,
+} from "./addressWhitelistService";
 import { computeUserOverview } from "./userOverviewService";
 import { renderConsoleReportMarkdown } from "./exportConsoleReportMarkdown";
 import {
@@ -433,10 +438,13 @@ export async function exportReportToDingTalkDoc(options: {
   const scopeName = buildScopeName(scope, target);
   const titleName = scopeData.hasData ? scopeName : `${scopeName}（${reportDate}_${reportType.replace("报", "无拜访")}）`;
 
-  // 客户统计与客户列表排除员工住址（拜访轨迹仍完整展示）
-  const visitUserIds = [...new Set(scopeData.visits.map((v) => v.user_id))];
-  const homeAddressMap = await loadUserHomeAddresses(visitUserIds);
+  // 客户统计与客户列表排除员工住址（跨员工：任何人的家都不算客户）+ 公司地址（拜访轨迹仍完整展示）
+  const homeAddressMap = await loadAllHomeAddresses();
   const homeVisitIds = await batchFilterHomeVisits(scopeData.visits, homeAddressMap);
+  const companyAddresses = await loadCompanyAddresses();
+  for (const id of batchFilterCompanyVisits(scopeData.visits, companyAddresses)) {
+    homeVisitIds.add(id);
+  }
 
   // 生成 Markdown
   const markdown = renderConsoleReportMarkdown({

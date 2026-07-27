@@ -26,8 +26,10 @@ import {
 } from "../services/reportGenerationService";
 import { ReportScopeTarget } from "../services/dingtalkDoc";
 import {
+  batchFilterCompanyVisits,
   batchFilterHomeVisits,
-  loadUserHomeAddresses,
+  loadAllHomeAddresses,
+  loadCompanyAddresses,
 } from "../services/addressWhitelistService";
 
 const router = Router();
@@ -132,11 +134,15 @@ router.post("/console-report-to-doc", async (req: Request, res: Response) => {
 
     const { reportType } = inferReportType(start, end);
 
-    // 客户统计与客户列表排除员工住址
+    // 客户统计与客户列表排除员工住址（跨员工：任何人的家都不算客户）+ 公司地址
     let homeVisitIds: Set<number> | undefined;
     if (visits && visits.length > 0) {
-      const homeAddressMap = await loadUserHomeAddresses([userId]);
+      const homeAddressMap = await loadAllHomeAddresses();
       homeVisitIds = await batchFilterHomeVisits(visits, homeAddressMap);
+      const companyAddresses = await loadCompanyAddresses();
+      for (const id of batchFilterCompanyVisits(visits, companyAddresses)) {
+        homeVisitIds.add(id);
+      }
     }
 
     const markdown = renderConsoleReportMarkdown({

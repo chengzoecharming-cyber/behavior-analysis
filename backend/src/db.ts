@@ -230,6 +230,19 @@ export async function initDB(): Promise<void> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS leader_dept_ids BIGINT[] DEFAULT '{}';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_invalid BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS home_address TEXT;
+      -- 住址坐标（导入住址 Excel 时一次性地理编码持久化，报告/异常检测运行时不再实时解析）
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lat DOUBLE PRECISION;
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lng DOUBLE PRECISION;
+
+      -- 公司地址白名单：命中以下地址的签到不计入报告客户统计（对全体员工生效）
+      CREATE TABLE IF NOT EXISTS company_addresses (
+        id SERIAL PRIMARY KEY,
+        name VARCHAR(128) NOT NULL,
+        address TEXT NOT NULL UNIQUE,
+        lat DOUBLE PRECISION,
+        lng DOUBLE PRECISION,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
 
       CREATE INDEX IF NOT EXISTS idx_users_manager
         ON users(manager_id);

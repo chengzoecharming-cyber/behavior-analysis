@@ -138,7 +138,7 @@ map/
 | RAW | `raw_visits`、`raw_approvals` | 完全保留 Excel 或钉钉审批原始数据 |
 | NORMALIZED | `visits` | 标准化后的拜访记录（用户、时间、经纬度、客户等） |
 | DERIVED | `stops`、`routes`、`anomalies` | 分析计算结果：停留点、路径段、异常事件 |
-| 缓存/配置 | `risk_summary_cache`、`anomaly_weights`、`department_aliases` | 预计算缓存、异常规则、部门别名映射 |
+| 缓存/配置 | `risk_summary_cache`、`anomaly_weights`、`department_aliases`、`company_addresses` | 预计算缓存、异常规则、部门别名映射、公司地址白名单 |
 | 用户/权限 | `users`（含 `is_resigned` 离职标记）、`feedback`、`anomaly_exceptions` | 用户、角色、申诉、异常豁免 |
 | 钉钉同步 | `dingtalk_departments`、`dingtalk_users` | 钉钉通讯录同步缓存 |
 | 报告生成 | `report_generation_logs` | 自动报告生成日志（同一次 run 共享 `run_id`，含状态/耗时/文档链接） |
@@ -185,7 +185,7 @@ map/
 1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
 2. **钉钉审批同步**：每 3 小时同步最近 3 天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
 3. **同步健康告警**：每次钉钉同步完成后立即检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；每天早上 9:00 发送昨日同步健康摘要。
-4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。
+4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，并通过 `company_addresses` 表排除公司地址签到（对全体员工生效），拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。
 
 ### 同步数据校验
 
@@ -458,7 +458,9 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 - 钉钉审批同步的 `originator_user_name` 可能为空，导致 `visits.user_name` 写入数字 userid。可通过 `backend/scripts/fixUserNames.ts` 修复：在职员工调用 `topapi/v2/user/get`，已离职员工回退到智能人事花名册 `topapi/smartwork/hrm/employee/list`，并自动标记 `users.is_resigned=true`。
 - 车辆/油卡/油耗模型（Step 4）已暂缓，相关表结构在 `PLAN.md` 中有设计但未实现。
 - 月维度数据导出（Step 5）尚未实现。
-- 员工住址（`users.home_address`）用于异常检测和报告客户列表的住址排除。来源是线下收集的《国内业务人员常住地址》Excel（姓名 + 地址两列即可），通过 `backend/scripts/importEmployeeAddresses.ts` 导入：`cd backend && npx ts-node scripts/importEmployeeAddresses.ts /path/to/employee_addresses.xlsx`。脚本是幂等 UPDATE，Excel 有更新（新人入职、地址变更）时改完重跑即可；仅当员工在 `users` 或 `visits` 中已有记录才能匹配写入（新入职未产生签到数据的人会在产生数据后下次导入时补上）。目前仅覆盖业务人员，非业务部门按业务决定不收集。
+- 员工住址（`users.home_address`）用于异常检测和报告客户列表的住址排除。报告口径是**跨员工排除**：命中任何一位员工的住址（文本匹配或 500 米坐标半径）都不算客户（例如出差留宿在同事家小区）；异常检测仍按拜访人自己的住址匹配。住址来源是线下收集的《国内业务人员常住地址》Excel（姓名 + 地址两列即可），通过 `backend/scripts/importEmployeeAddresses.ts` 导入：`cd backend && npx ts-node scripts/importEmployeeAddresses.ts /path/to/employee_addresses.xlsx`。脚本是幂等 UPDATE，Excel 有更新（新人入职、地址变更）时改完重跑即可；仅当员工在 `users` 或 `visits` 中已有记录才能匹配写入（新入职未产生签到数据的人会在产生数据后下次导入时补上）。目前仅覆盖业务人员，非业务部门按业务决定不收集。
+- 住址坐标持久化：导入/回填时把住址一次性地理编码存入 `users.home_lat/home_lng`，匹配时优先用坐标半径（500 米），不再依赖运行时实时解析高德（运行时解析曾遇限流导致整批漏过滤）。存量数据回填：`cd backend && npm run backfill:home-coords`（`--force` 全部重解析）。地理编码带回退简化（逐级截掉 幢/栋/单元/室 尾缀重试）；仍失败的记录按脚本提示人工核实坐标写入 `address_fallback_coordinates` 表后重跑（注意：高德「解析成功但位置跑偏」的情况兜底表不会生效，需直接 UPDATE users 的 home_lat/home_lng）。
+- 公司地址白名单：`company_addresses` 表（名称 + 地址 + 坐标），报告客户统计对全体员工排除命中公司地址的签到。维护：`cd backend && npm run upsert:company-address -- "创维数字大厦" "广东省深圳市宝安区石岩街道创维数字大厦"`（重复执行按 address upsert）。
 
 ## 快速开始（最小路径）
 
