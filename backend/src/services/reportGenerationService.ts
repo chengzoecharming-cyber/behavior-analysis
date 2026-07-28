@@ -1,4 +1,4 @@
-import { randomUUID } from "crypto";
+import crypto, { randomUUID } from "crypto";
 import { pool } from "../db";
 import { buildOrgTree, OrgTreeNode } from "./orgService";
 import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat } from "./dingtalkFile";
@@ -530,10 +530,21 @@ export interface ReportGenerationResult {
   error?: string;
 }
 
-/** 单维度导出最大尝试次数（首次 + 重试 1 次） */
-const MAX_EXPORT_ATTEMPTS = 2;
-/** 单维度导出失败重试间隔（毫秒） */
+/** 单维度导出最大尝试次数（含首次） */
+const MAX_EXPORT_ATTEMPTS = 3;
+/** 单维度导出失败基础重试间隔（毫秒） */
 const RETRY_INTERVAL_MS = 5000;
+
+function isTransientDingTalkDocError(err: any): boolean {
+  const msg = String(err?.message || "").toLowerCase();
+  return (
+    msg.includes("serviceunavailable") ||
+    msg.includes("temporary failure") ||
+    msg.includes("rate limit") ||
+    msg.includes("too many requests") ||
+    msg.includes("internal server error")
+  );
+}
 
 const REPORT_TYPE_LABELS: Record<string, string> = {
   daily: "日报",
@@ -649,12 +660,17 @@ async function exportScopeWithRetry(options: {
       };
     } catch (err: any) {
       lastError = err;
+      const isTransient = isTransientDingTalkDocError(err);
       console.warn(
-        `[Report Gen] ${SCOPE_LABELS[scope]}/${scopeName} 第 ${attempt} 次导出失败:`,
+        `[Report Gen] ${SCOPE_LABELS[scope]}/${scopeName} 第 ${attempt} 次导出失败${isTransient ? "（临时错误）" : ""}:`,
         err?.message || err
       );
       if (attempt < MAX_EXPORT_ATTEMPTS) {
-        await sleep(RETRY_INTERVAL_MS);
+        // ServiceUnavailable 等临时错误使用指数退避，降低连续撞上限概率
+        const delay = isTransient
+          ? RETRY_INTERVAL_MS * Math.pow(3, attempt - 1)
+          : RETRY_INTERVAL_MS;
+        await sleep(delay);
       }
     }
   }
@@ -763,6 +779,98 @@ async function sendReportRunSummary(
   }
 }
 
+async function hasSuccessfulReportRun(
+  reportType: string,
+  periodStart: string,
+  periodEnd: string
+): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT 1 FROM report_generation_logs
+     WHERE report_type = $1
+       AND period_start = $2::date
+       AND period_end = $3::date
+       AND status = 'success'
+     LIMIT 1`,
+    [reportType, periodStart, periodEnd]
+  );
+  return result.rows.length > 0;
+}
+
+class ReportGenerationSkippedError extends Error {
+  constructor(public readonly reason: "already-generated" | "already-running") {
+    super(`报告生成已跳过: ${reason}`);
+    this.name = "ReportGenerationSkippedError";
+  }
+}
+
+function toInt32(n: number): number {
+  return n > 0x7fffffff ? n - 0x100000000 : n;
+}
+
+/**
+ * 把 (reportType, periodStart, periodEnd) 映射成两个 int32，用于 pg_advisory_lock。
+ * PostgreSQL advisory lock 参数为有符号 32 位整数，因此把 32 位哈希值转换到该范围。
+ * 不要求全局唯一，只要求同一周期得到相同 key。
+ */
+function computeAdvisoryLockKeys(
+  reportType: string,
+  periodStart: string,
+  periodEnd: string
+): [number, number] {
+  const base = `${reportType}|${periodStart}|${periodEnd}`;
+  const hash = crypto.createHash("sha256").update(base).digest("hex");
+  const key1 = toInt32(parseInt(hash.slice(0, 8), 16) >>> 0);
+  const key2 = toInt32(parseInt(hash.slice(8, 16), 16) >>> 0);
+  return [key1, key2];
+}
+
+/**
+ * 为同一报告类型 + 周期提供跨连接/跨进程互斥。
+ * 先检查成功日志，再尝试获取 PostgreSQL advisory lock；
+ * 若已生成或已有其他进程在跑，抛出 ReportGenerationSkippedError。
+ */
+async function withReportGenerationLock<T>(
+  reportType: string,
+  periodStart: string,
+  periodEnd: string,
+  fn: () => Promise<T>
+): Promise<T> {
+  const [key1, key2] = computeAdvisoryLockKeys(reportType, periodStart, periodEnd);
+
+  // 1. 快速路径：已生成则跳过
+  if (await hasSuccessfulReportRun(reportType, periodStart, periodEnd)) {
+    throw new ReportGenerationSkippedError("already-generated");
+  }
+
+  const client = await pool.connect();
+  try {
+    // 2. 获取 advisory lock（同 key 全局只会有一个成功）
+    const lockResult = await client.query<{ locked: boolean }>(
+      "SELECT pg_try_advisory_lock($1, $2) AS locked",
+      [key1, key2]
+    );
+    if (!lockResult.rows[0].locked) {
+      throw new ReportGenerationSkippedError("already-running");
+    }
+
+    try {
+      // 3. 拿到锁后再检查一次，防止获取锁之前刚好有别的进程完成
+      if (await hasSuccessfulReportRun(reportType, periodStart, periodEnd)) {
+        throw new ReportGenerationSkippedError("already-generated");
+      }
+      return await fn();
+    } finally {
+      await client
+        .query("SELECT pg_advisory_unlock($1, $2)", [key1, key2])
+        .catch((err) => {
+          console.warn("[Report Gen] 释放 advisory lock 失败:", err);
+        });
+    }
+  } finally {
+    client.release();
+  }
+}
+
 async function generateReportsForPeriod(
   start: string,
   end: string,
@@ -775,7 +883,8 @@ async function generateReportsForPeriod(
     throw new Error("未配置 DINGTALK_OPERATOR_USERID");
   }
 
-  const tree = await buildOrgTree();
+  return withReportGenerationLock(reportType, start, end, async () => {
+    const tree = await buildOrgTree();
   // 同一次 run 内所有维度共享 run_id，用于聚合查询
   const runId = randomUUID();
   const results: ReportGenerationResult[] = [];
@@ -901,10 +1010,23 @@ async function generateReportsForPeriod(
     }
   }
 
-  // run 结束后发一条机器人汇总（含失败告警），失败不影响返回结果
-  await sendReportRunSummary(reportType, start, end, results);
+    // run 结束后发一条机器人汇总（含失败告警），失败不影响返回结果
+    await sendReportRunSummary(reportType, start, end, results);
 
-  return results;
+    return results;
+  });
+}
+
+function handleGenerationSkip(err: any, label: string, periodText: string): ReportGenerationResult[] {
+  if (err?.name === "ReportGenerationSkippedError") {
+    const reasonText =
+      err.reason === "already-generated"
+        ? "已成功生成过"
+        : "正在其他进程生成中";
+    console.log(`[Report Gen] ${label} ${periodText} 跳过：${reasonText}`);
+    return [];
+  }
+  throw err;
 }
 
 /** 生成某一天的日报 */
@@ -916,13 +1038,17 @@ export async function generateDailyReports(
   const workspaceName =
     process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
   console.log(`[Report Gen] 开始生成日报: ${targetDate}（${triggerSource}）`);
-  const results = await generateReportsForPeriod(targetDate, targetDate, workspaceName, {
-    reportType: "daily",
-    triggerSource,
-  });
-  const failedCount = results.filter((r) => r.status === "failed").length;
-  console.log(`[Report Gen] 日报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
-  return results;
+  try {
+    const results = await generateReportsForPeriod(targetDate, targetDate, workspaceName, {
+      reportType: "daily",
+      triggerSource,
+    });
+    const failedCount = results.filter((r) => r.status === "failed").length;
+    console.log(`[Report Gen] 日报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
+    return results;
+  } catch (err: any) {
+    return handleGenerationSkip(err, "日报", targetDate);
+  }
 }
 
 /** 生成周报（默认本周一～今天，周日 18:00 触发时即本周一～周日） */
@@ -946,14 +1072,19 @@ export async function generateWeeklyReports(
   }
   const workspaceName =
     process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
-  console.log(`[Report Gen] 开始生成周报: ${weekStart} ~ ${weekEnd}（${triggerSource}）`);
-  const results = await generateReportsForPeriod(weekStart, weekEnd, workspaceName, {
-    reportType: "weekly",
-    triggerSource,
-  });
-  const failedCount = results.filter((r) => r.status === "failed").length;
-  console.log(`[Report Gen] 周报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
-  return results;
+  const periodText = `${weekStart} ~ ${weekEnd}`;
+  console.log(`[Report Gen] 开始生成周报: ${periodText}（${triggerSource}）`);
+  try {
+    const results = await generateReportsForPeriod(weekStart, weekEnd, workspaceName, {
+      reportType: "weekly",
+      triggerSource,
+    });
+    const failedCount = results.filter((r) => r.status === "failed").length;
+    console.log(`[Report Gen] 周报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
+    return results;
+  } catch (err: any) {
+    return handleGenerationSkip(err, "周报", periodText);
+  }
 }
 
 /** 生成月报（默认上一月） */
@@ -986,12 +1117,17 @@ export async function generateMonthlyReports(
 
   const workspaceName =
     process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
-  console.log(`[Report Gen] 开始生成月报: ${monthStart} ~ ${monthEnd}（${triggerSource}）`);
-  const results = await generateReportsForPeriod(monthStart, monthEnd, workspaceName, {
-    reportType: "monthly",
-    triggerSource,
-  });
-  const failedCount = results.filter((r) => r.status === "failed").length;
-  console.log(`[Report Gen] 月报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
-  return results;
+  const periodText = `${monthStart} ~ ${monthEnd}`;
+  console.log(`[Report Gen] 开始生成月报: ${periodText}（${triggerSource}）`);
+  try {
+    const results = await generateReportsForPeriod(monthStart, monthEnd, workspaceName, {
+      reportType: "monthly",
+      triggerSource,
+    });
+    const failedCount = results.filter((r) => r.status === "failed").length;
+    console.log(`[Report Gen] 月报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
+    return results;
+  } catch (err: any) {
+    return handleGenerationSkip(err, "月报", periodText);
+  }
 }
