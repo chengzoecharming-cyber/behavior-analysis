@@ -1,11 +1,13 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { buildOrgTree, computeOrgOverview } from "../services/orgService";
+import { authMiddleware, AuthRequest } from "../services/auth";
 
 const router = Router();
 
 // GET /analytics/org-tree
 // 返回从 visits.department 解析的组织架构树
-router.get("/org-tree", async (_req: Request, res: Response) => {
+// 总览数据源：所有角色均可见全量数据，不做权限收敛
+router.get("/org-tree", authMiddleware, async (_req: AuthRequest, res: Response) => {
   try {
     const tree = await buildOrgTree();
     res.json(tree);
@@ -17,7 +19,8 @@ router.get("/org-tree", async (_req: Request, res: Response) => {
 
 // GET /analytics/org-overview?scope=company|department|sub_department&node=xxx&start=YYYY-MM-DD&end=YYYY-MM-DD
 // 返回指定组织范围在日期范围内的聚合数据
-router.get("/org-overview", async (req: Request, res: Response) => {
+// 总览数据源：所有角色均可见全量数据，不做权限收敛
+router.get("/org-overview", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { scope, node, start, end } = req.query;
 
   if (!start || !end) {

@@ -4,6 +4,7 @@ import { Button, Typography, Spin, Row, Col, Card } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
 import {
   fetchCompanyDashboard,
+  fetchCurrentUser,
   CompanyDashboardResponse,
 } from "../api";
 import EmployeeWordCloud from "../components/EmployeeWordCloud";
@@ -82,6 +83,8 @@ function DecisionPage() {
 
   const [data, setData] = useState<CompanyDashboardResponse | null>(null);
   const [loading, setLoading] = useState(false);
+  // 总览页所有角色可看全量数据，但只有 admin 可以点击内容跳转（员工卡片 → 控制台）
+  const [isAdmin, setIsAdmin] = useState(false);
 
   const [start, end] = useMemo(() => getPresetRange(mode), [mode]);
 
@@ -99,6 +102,9 @@ function DecisionPage() {
 
   useEffect(() => {
     loadData();
+    fetchCurrentUser()
+      .then((me) => setIsAdmin(me.role === "admin"))
+      .catch(() => setIsAdmin(false));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [mode]);
 
@@ -251,7 +257,7 @@ function DecisionPage() {
                 ) : (
                   <EmployeeWordCloud
                     data={data.employeeWordCloud}
-                    onClick={handleEmployeeClick}
+                    onClick={isAdmin ? handleEmployeeClick : undefined}
                   />
                 )}
               </Card>

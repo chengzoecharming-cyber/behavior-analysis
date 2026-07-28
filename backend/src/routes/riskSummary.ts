@@ -1,10 +1,12 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { getRiskSummary, getRiskSummaryRange, computeRiskSummaryForDate, persistRiskSummaryCache } from "../services/riskSummaryService";
+import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
 
 const router = Router();
 
 // GET /analytics/risk-summary?date=YYYY-MM-DD
-router.get("/risk-summary", async (req: Request, res: Response) => {
+// 总览数据源：所有角色均可见全量数据，不做权限收敛
+router.get("/risk-summary", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { date } = req.query;
   if (!date) {
     res.status(400).json({ error: "Missing date parameter" });
@@ -29,7 +31,7 @@ router.get("/risk-summary", async (req: Request, res: Response) => {
 });
 
 // GET /analytics/risk-summary/range?start=YYYY-MM-DD&end=YYYY-MM-DD
-router.get("/risk-summary/range", async (req: Request, res: Response) => {
+router.get("/risk-summary/range", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { start, end } = req.query;
   if (!start || !end) {
     res.status(400).json({ error: "Missing start or end parameter" });
@@ -56,8 +58,8 @@ router.get("/risk-summary/range", async (req: Request, res: Response) => {
 });
 
 // POST /analytics/risk-summary/refresh?date=YYYY-MM-DD
-// 手动刷新某天的缓存
-router.post("/risk-summary/refresh", async (req: Request, res: Response) => {
+// 手动刷新某天的缓存（仅 admin）
+router.post("/risk-summary/refresh", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
   const { date } = req.query;
   if (!date) {
     res.status(400).json({ error: "Missing date parameter" });

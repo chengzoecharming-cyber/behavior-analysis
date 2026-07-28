@@ -74,6 +74,17 @@ a {
 }
 
 /* 覆盖 Semi UI 默认样式 */
+/* 登录页专属黑色主题：Semi 的 token 定义在 body 上，会遮蔽 :root 的值，
+   因此用 .login-dark 作用域类覆盖，仅登录页/登录回调页使用，不影响其他页面 */
+.login-dark {
+  --semi-color-primary: #0f1419;
+  --semi-color-primary-hover: #2c3238;
+  --semi-color-primary-active: #000000;
+  --semi-color-primary-light-default: #ebecee;
+  --semi-color-primary-light-hover: #e0e2e4;
+  --semi-color-primary-light-active: #d6d8db;
+}
+
 .semi-card {
   border: none !important;
   box-shadow: none !important;

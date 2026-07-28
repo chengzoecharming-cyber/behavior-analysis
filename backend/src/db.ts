@@ -234,6 +234,17 @@ export async function initDB(): Promise<void> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lat DOUBLE PRECISION;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lng DOUBLE PRECISION;
 
+      -- 登录会话（钉钉扫码登录 / 应急密码登录签发的 token）
+      CREATE TABLE IF NOT EXISTS auth_sessions (
+        token VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(user_id),
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
+        ON auth_sessions(user_id);
+
       -- 公司地址白名单：命中以下地址的签到不计入报告客户统计（对全体员工生效）
       CREATE TABLE IF NOT EXISTS company_addresses (
         id SERIAL PRIMARY KEY,

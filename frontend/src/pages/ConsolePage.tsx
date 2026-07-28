@@ -40,12 +40,14 @@ import {
   fetchOrgOverview,
   fetchDingTalkOrgTree,
   fetchDingTalkOrgUsers,
+  fetchCurrentUser,
   exportConsoleReport,
   AvailableDate,
   UserOverviewResult,
   DailyOverview,
   OrgTreeNode,
   OrgOverviewResponse,
+  AuthUser,
 } from "../api";
 import { User, Visit, Stop, Route, Anomaly, MileageStats } from "../types";
 import MapContainer from "../components/MapContainer";
@@ -377,6 +379,7 @@ function ConsolePage() {
   // 组织架构与人员
   const [users, setUsers] = useState<User[]>([]);
   const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const cascaderData = useMemo<CascaderDataItem[]>(
     () => buildCascaderData(orgTree, users),
     [orgTree, users]
@@ -430,11 +433,12 @@ function ConsolePage() {
   useEffect(() => {
     let cancelled = false;
     setDataLoading(true);
-    Promise.all([fetchDingTalkOrgUsers(), fetchDingTalkOrgTree()])
-      .then(([userData, treeData]) => {
+    Promise.all([fetchDingTalkOrgUsers(), fetchDingTalkOrgTree(), fetchCurrentUser()])
+      .then(([userData, treeData, me]) => {
         if (cancelled) return;
         setUsers(userData);
         setOrgTree(treeData);
+        setCurrentUser(me);
       })
       .finally(() => {
         if (!cancelled) setDataLoading(false);
@@ -449,6 +453,8 @@ function ConsolePage() {
   const urlInitializedRef = useRef(false);
   useEffect(() => {
     if (urlInitializedRef.current) return;
+    // 需要等当前用户加载完，才能按角色决定初始范围
+    if (!currentUser) return;
 
     const scopeFromUrl = searchParams.get("scope") as QueryScope | null;
     const nodeFromUrl = searchParams.get("node") || undefined;
@@ -461,7 +467,11 @@ function ConsolePage() {
     let initialNode: string | undefined;
     let initialUser: string | undefined;
 
-    if (userFromUrl) {
+    if (currentUser.role === "staff") {
+      // staff 只能看自己，忽略 URL 里他人的 user 参数
+      initialScope = "person";
+      initialUser = currentUser.user_id;
+    } else if (userFromUrl) {
       initialScope = "person";
       const looksLikeUserId = /^\d+$/.test(userFromUrl);
       if (looksLikeUserId) {
@@ -476,6 +486,17 @@ function ConsolePage() {
     } else if (scopeFromUrl && ["company", "department", "sub_department", "person"].includes(scopeFromUrl)) {
       initialScope = scopeFromUrl;
       initialNode = nodeFromUrl;
+    } else if (currentUser.role === "manager") {
+      // manager 默认选中自己部门（区级 LD 为子部门）范围
+      const primaryDept = (currentUser.department || "").split(",")[0].trim();
+      if (primaryDept) {
+        initialScope = primaryDept.includes("-") ? "sub_department" : "department";
+        initialNode = primaryDept;
+      } else {
+        // 无部门：默认看自己
+        initialScope = "person";
+        initialUser = currentUser.user_id;
+      }
     }
 
     urlInitializedRef.current = true;
@@ -493,7 +514,7 @@ function ConsolePage() {
       setDateRange([dateFromUrl, dateFromUrl]);
       setSelectedDate(dateFromUrl);
     }
-  }, [searchParams, users]);
+  }, [searchParams, users, currentUser]);
 
   // 当查询范围变化时，加载可用日期列表
   useEffect(() => {
@@ -902,20 +923,23 @@ function ConsolePage() {
       <div style={{ paddingBottom: 12 }}>
         <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16 }}>
           <Col style={{ flex: "0 0 auto" }}>
-            <Cascader
-              style={{ width: 320 }}
-              dropdownClassName="console-scope-cascader"
-              placeholder={dataLoading ? "加载中..." : "选择查询范围"}
-              value={cascaderValue}
-              treeData={cascaderData}
-              onChange={(value) => handleCascaderChange(value as string[])}
-              changeOnSelect
-              showNext="hover"
-              disabled={dataLoading}
-              displayRender={(selected) =>
-                Array.isArray(selected) ? selected.join(" / ") : ""
-              }
-            />
+            {/* staff 无范围选择器，只能看自己 */}
+            {currentUser?.role !== "staff" && (
+              <Cascader
+                style={{ width: 320 }}
+                dropdownClassName="console-scope-cascader"
+                placeholder={dataLoading ? "加载中..." : "选择查询范围"}
+                value={cascaderValue}
+                treeData={cascaderData}
+                onChange={(value) => handleCascaderChange(value as string[])}
+                changeOnSelect
+                showNext="hover"
+                disabled={dataLoading}
+                displayRender={(selected) =>
+                  Array.isArray(selected) ? selected.join(" / ") : ""
+                }
+              />
+            )}
           </Col>
           <Col style={{ flex: "0 0 auto" }}>
             <DatePicker

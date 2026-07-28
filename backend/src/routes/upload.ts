@@ -7,6 +7,7 @@ import { RawVisitRow, ParsedVisit } from "../types";
 import { parseDingTalkExcel } from "../services/excelParser";
 import { processParsedVisits, GeocodeFailure, normalizeUserId, QualitySummary } from "../services/normalization";
 import { recomputeDerivedDataForVisits } from "../services/derivedComputation";
+import { authMiddleware, requireRole } from "../services/auth";
 
 if (!fs.existsSync("uploads")) {
   fs.mkdirSync("uploads", { recursive: true });
@@ -27,7 +28,7 @@ interface UploadResponse {
   qualitySummary?: QualitySummary;
 }
 
-router.post("/", upload.single("file"), async (req: Request, res: Response) => {
+router.post("/", authMiddleware, requireRole("admin"), upload.single("file"), async (req: Request, res: Response) => {
   if (!req.file) {
     res.status(400).json({ error: "No file uploaded" });
     return;

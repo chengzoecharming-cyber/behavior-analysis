@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { pool } from "../db";
 import {
   ensureBeijingTimestamp,
@@ -9,11 +9,17 @@ import {
 } from "../utils/timezone";
 import { getCanonicalDepartment } from "../services/departmentAliasService";
 import { resolveUserIdsForScope } from "../services/orgService";
+import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
+import {
+  canViewUser,
+  getVisibleUserIds,
+  FORBIDDEN_MESSAGE,
+} from "../services/permission";
 
 const router = Router();
 
-// 手动补坐标
-router.post("/:id/coordinates", async (req: Request, res: Response) => {
+// 手动补坐标（admin/manager，且目标成员在可见范围内）
+router.post("/:id/coordinates", authMiddleware, requireRole("admin", "manager"), async (req: AuthRequest, res: Response) => {
   const { id } = req.params;
   const { lat, lng } = req.body;
 
@@ -27,6 +33,17 @@ router.post("/:id/coordinates", async (req: Request, res: Response) => {
   }
 
   try {
+    // 目标签到所属成员必须在可见范围内
+    const owner = await pool.query(`SELECT user_id FROM visits WHERE id = $1`, [Number(id)]);
+    if (owner.rows.length === 0) {
+      res.status(404).json({ error: "Visit not found" });
+      return;
+    }
+    if (!(await canViewUser(req.currentUser!, owner.rows[0].user_id))) {
+      res.status(403).json({ error: FORBIDDEN_MESSAGE });
+      return;
+    }
+
     const result = await pool.query(
       `UPDATE visits
        SET lat = $1, lng = $2, geocode_status = 'manual'
@@ -34,10 +51,6 @@ router.post("/:id/coordinates", async (req: Request, res: Response) => {
        RETURNING *`,
       [lat, lng, Number(id)]
     );
-    if (result.rows.length === 0) {
-      res.status(404).json({ error: "Visit not found" });
-      return;
-    }
     res.json(result.rows[0]);
   } catch (err) {
     console.error("Failed to update coordinates:", err);
@@ -45,7 +58,7 @@ router.post("/:id/coordinates", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user, start, end } = req.query;
 
   if (!user || !start || !end) {
@@ -54,6 +67,11 @@ router.get("/", async (req: Request, res: Response) => {
   }
 
   try {
+    if (!(await canViewUser(req.currentUser!, user as string))) {
+      res.status(403).json({ error: FORBIDDEN_MESSAGE });
+      return;
+    }
+
     const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(start as string);
     const { start: rangeStart, end: rangeEnd } = isDateOnly
       ? toBeijingRange(start as string, end as string)
@@ -71,7 +89,8 @@ router.get("/", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/users", async (_req: Request, res: Response) => {
+// 控制台级联选择器数据源之一：只返回当前用户可见范围内的人员
+router.get("/users", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     // 同一 user_id 可能因部门字段写法不同出现重复，按出现次数取最常用的一条
     const result = await pool.query(
@@ -91,9 +110,14 @@ router.get("/users", async (_req: Request, res: Response) => {
        ORDER BY user_name`
     );
 
+    const visible = await getVisibleUserIds(req.currentUser!);
+    const rows = visible === null
+      ? result.rows
+      : result.rows.filter((r) => visible.includes(r.user_id));
+
     // 把原始 department 映射成规范部门
     const users = await Promise.all(
-      result.rows.map(async (row) => ({
+      rows.map(async (row) => ({
         ...row,
         department: (await getCanonicalDepartment(row.department)) || row.department,
       }))
@@ -107,19 +131,30 @@ router.get("/users", async (_req: Request, res: Response) => {
 });
 
 // 获取某用户/组织维度有数据的日期列表
-router.get("/available-dates", async (req: Request, res: Response) => {
+router.get("/available-dates", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user, scope, node, with_anomaly } = req.query;
 
   try {
+    const currentUser = req.currentUser!;
     let userIds: string[] = [];
 
     if (user) {
+      if (!(await canViewUser(currentUser, user as string))) {
+        res.status(403).json({ error: FORBIDDEN_MESSAGE });
+        return;
+      }
       userIds = [user as string];
     } else if (scope) {
       const validScope =
         scope === "department" || scope === "sub_department" ? scope : "company";
       const nodeName = typeof node === "string" && node ? node : "__ALL__";
       userIds = await resolveUserIdsForScope(validScope, nodeName);
+      // 按当前用户可见范围收敛
+      const visible = await getVisibleUserIds(currentUser);
+      if (visible !== null) {
+        const visibleSet = new Set(visible);
+        userIds = userIds.filter((id) => visibleSet.has(id));
+      }
     } else {
       res.status(400).json({ error: "Missing user or scope parameter" });
       return;

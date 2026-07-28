@@ -210,8 +210,9 @@ async function getUserIdsByOrgNode(nodeName: string): Promise<string[]> {
 
 /**
  * 获取某个节点下的所有用户ID（包括子部门）。
+ * 导出供 users 路由（manager 可见范围）及后续权限收口复用。
  */
-async function getUserIdsUnderNode(nodeName: string): Promise<string[]> {
+export async function getUserIdsUnderNode(nodeName: string): Promise<string[]> {
   const result = await pool.query(
     `WITH user_primary_dept AS (
        SELECT user_id,
@@ -401,15 +402,21 @@ async function computeProvinceDistribution(
 }
 
 /**
- * 计算组织视角总览
+ * 计算组织视角总览。
+ * restrictUserIds 为 null 表示不过滤（admin）；否则统计范围与可见人员取交集（权限收口）。
  */
 export async function computeOrgOverview(
   scope: "company" | "department" | "sub_department",
   nodeName: string,
   startDate: string,
-  endDate: string
+  endDate: string,
+  restrictUserIds: string[] | null = null
 ): Promise<OrgOverviewResult> {
-  const userIds = await resolveUserIdsForScope(scope, nodeName);
+  let userIds = await resolveUserIdsForScope(scope, nodeName);
+  if (restrictUserIds !== null) {
+    const restrictSet = new Set(restrictUserIds);
+    userIds = userIds.filter((id) => restrictSet.has(id));
+  }
 
   // 1. 基础统计：拜访数、员工数、地点数、客户数
   const overviewResult = await pool.query(

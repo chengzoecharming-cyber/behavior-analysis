@@ -1,4 +1,5 @@
 import axios from "axios";
+import { Toast } from "@douyinfe/semi-ui";
 import {
   Visit,
   Stop,
@@ -17,6 +18,13 @@ const api = axios.create({
 });
 
 api.interceptors.request.use((config) => {
+  // 优先真实登录 session（钉钉扫码/应急密码登录签发）
+  const token = localStorage.getItem("auth_token");
+  if (token) {
+    config.headers["Authorization"] = `Bearer ${token}`;
+    return config;
+  }
+  // 过渡期回退：旧的 X-User-Id 头（后端需 AUTH_HEADER_FALLBACK=true 才接受）
   const userId = localStorage.getItem("user_id");
   if (userId) {
     // HTTP header 必须 ASCII，对中文 user_id 做 URL 编码
@@ -24,6 +32,25 @@ api.interceptors.request.use((config) => {
   }
   return config;
 });
+
+// 401 统一处理：清登录态并跳回登录页（登录/回调页本身除外，避免循环）
+api.interceptors.response.use(
+  (res) => res,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem("auth_token");
+      localStorage.removeItem("user_id");
+      if (!window.location.pathname.startsWith("/login")) {
+        window.location.href = "/login";
+      }
+    } else if (error.response?.status === 403) {
+      // 越权统一友好提示，避免页面白屏
+      const msg = error.response?.data?.error;
+      Toast.error(typeof msg === "string" ? msg : "无权访问该数据");
+    }
+    return Promise.reject(error);
+  }
+);
 
 export async function fetchUsers(): Promise<User[]> {
   const res = await api.get("/visits/users");
@@ -495,6 +522,48 @@ export interface AuthUser {
   manager_id: number | null;
   is_resigned: boolean;
   created_at: string;
+  /** 最近签到日期（来自 visits.business_date 的 MAX），无签到记录时为 null */
+  last_visit_date?: string | null;
+}
+
+/** 用户对账结果（与后端 userSyncService 的 ReconcileResult 一致） */
+export interface UserReconcileResult {
+  added: string[];
+  updated: number;
+  resigned: string[];
+  restored: string[];
+  /** 近期活跃、跳过离职标记的用户（需人工复核） */
+  skippedRecentActive: string[];
+  /** 部门白名单外被置 is_invalid 的用户（只置位不自动恢复，只能管理员手工恢复） */
+  invalidated: string[];
+  contactsSynced: boolean;
+  errors: string[];
+}
+
+export async function fetchManagedUsers(): Promise<AuthUser[]> {
+  const res = await api.get("/users");
+  return res.data;
+}
+
+export async function syncUsers(dryRun: boolean): Promise<UserReconcileResult> {
+  const res = await api.post("/users/sync", { dryRun });
+  return res.data;
+}
+
+export async function updateUserRole(
+  id: number,
+  role: "admin" | "manager" | "staff"
+): Promise<AuthUser> {
+  const res = await api.put(`/users/${id}`, { role });
+  return res.data;
+}
+
+export async function updateUserResigned(
+  id: number,
+  isResigned: boolean
+): Promise<AuthUser> {
+  const res = await api.put(`/users/${id}`, { is_resigned: isResigned });
+  return res.data;
 }
 
 export interface FeedbackItem {
@@ -516,17 +585,37 @@ export async function fetchCurrentUser(): Promise<AuthUser> {
   return res.data;
 }
 
-export async function login(
-  username: string,
-  password: string
-): Promise<Pick<AuthUser, "user_id" | "user_name" | "department" | "role">> {
+export interface LoginResult {
+  token: string;
+  user: Pick<AuthUser, "user_id" | "user_name" | "department" | "role">;
+}
+
+/** 应急密码登录（管理员通道，后端需 AUTH_PASSWORD_LOGIN_ENABLED=true） */
+export async function login(username: string, password: string): Promise<LoginResult> {
   const res = await api.post("/auth/login", { username, password });
   return res.data;
 }
 
-export async function fetchAuthUsers(): Promise<AuthUser[]> {
-  const res = await api.get("/users/switchable");
+/** 获取钉钉扫码登录授权页 URL（origin 传当前前端地址） */
+export async function getDingtalkAuthorizeUrl(): Promise<{ url: string }> {
+  const res = await api.get("/auth/dingtalk/authorize-url", {
+    params: { origin: window.location.origin },
+  });
   return res.data;
+}
+
+/** 钉钉扫码回调：authCode + state 换 session token */
+export async function dingtalkCallback(
+  authCode: string,
+  state: string
+): Promise<LoginResult> {
+  const res = await api.post("/auth/dingtalk/callback", { authCode, state });
+  return res.data;
+}
+
+/** 退出登录（删除服务端 session） */
+export async function logoutApi(): Promise<void> {
+  await api.post("/auth/logout");
 }
 
 export async function createFeedback(payload: {

@@ -20,6 +20,7 @@ import {
   startRiskSummaryCacheScheduler,
   startDingTalkSyncScheduler,
   startReportGenerationScheduler,
+  startUserReconcileScheduler,
 } from "./services/scheduler";
 
 dotenv.config();
@@ -54,6 +55,7 @@ async function main() {
   startRiskSummaryCacheScheduler();
   startDingTalkSyncScheduler();
   startReportGenerationScheduler();
+  startUserReconcileScheduler();
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

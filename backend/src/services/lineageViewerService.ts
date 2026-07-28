@@ -150,6 +150,8 @@ export async function listApprovals(options: {
   userName?: string;
   limit?: number;
   offset?: number;
+  /** 权限收口：非 null 时只返回可见成员有签到入库的审批单 */
+  visibleUserIds?: string[] | null;
 }): Promise<{ total: number; items: ApprovalListItem[] }> {
   const conditions: string[] = [];
   const params: any[] = [];
@@ -165,6 +167,12 @@ export async function listApprovals(options: {
   if (options.userName) {
     params.push(`%${options.userName}%`);
     conditions.push(`ra.originator_user_name ILIKE $${params.length}`);
+  }
+  if (options.visibleUserIds) {
+    params.push(options.visibleUserIds);
+    conditions.push(
+      `EXISTS (SELECT 1 FROM visits v WHERE v.approval_id = ra.approval_id AND v.user_id = ANY($${params.length}))`
+    );
   }
 
   const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

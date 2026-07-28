@@ -32,7 +32,12 @@ import {
   loadCompanyAddresses,
 } from "../services/addressWhitelistService";
 
+import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
+
 const router = Router();
+
+// 导出接口全部需要登录；报告导出限 admin/manager（可导出任意范围，与总览数据全员可见口径一致）
+router.use(authMiddleware);
 
 function daysBetween(start: string, end: string): number {
   const s = new Date(start + "T00:00:00+08:00");
@@ -73,13 +78,14 @@ function isDocExportConfigured(): boolean {
   return !!process.env.DINGTALK_OPERATOR_USERID;
 }
 
-router.post("/console-report-to-doc", async (req: Request, res: Response) => {
+router.post("/console-report-to-doc", requireRole("admin", "manager"), async (req: AuthRequest, res: Response) => {
   const { userId, start, end } = req.body || {};
 
   if (!userId || typeof userId !== "string") {
     res.status(400).json({ error: "Missing userId" });
     return;
   }
+
   if (!start || !/^\d{4}-\d{2}-\d{2}$/.test(start)) {
     res.status(400).json({ error: "Invalid start date" });
     return;
@@ -216,8 +222,9 @@ async function buildNestedRanking(
   return ranking;
 }
 
-router.post("/console-report", async (req: Request, res: Response) => {
+router.post("/console-report", requireRole("admin", "manager"), async (req: AuthRequest, res: Response) => {
   const { scope, node, userId, start, end, amapKey, points } = req.body || {};
+
 
   const reportScope = scope || "person";
   if (!["company", "department", "sub_department", "person"].includes(reportScope)) {
@@ -423,8 +430,9 @@ router.post("/console-report", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/scope-report-to-doc", async (req: Request, res: Response) => {
+router.post("/scope-report-to-doc", requireRole("admin", "manager"), async (req: AuthRequest, res: Response) => {
   const { scope, node, userId, start, end } = req.body || {};
+
 
   if (!scope || !["company", "department", "sub_department", "person"].includes(scope)) {
     res.status(400).json({ error: "Invalid or missing scope" });
@@ -497,7 +505,7 @@ router.post("/scope-report-to-doc", async (req: Request, res: Response) => {
   }
 });
 
-router.post("/generate-reports", async (req: Request, res: Response) => {
+router.post("/generate-reports", requireRole("admin"), async (req: AuthRequest, res: Response) => {
   const { type, date, start, end, year, month } = req.body || {};
 
   if (!type || !["daily", "weekly", "monthly"].includes(type)) {
@@ -538,7 +546,7 @@ router.post("/generate-reports", async (req: Request, res: Response) => {
 });
 
 // 报告生成日志查询：分页 + report_type/status/日期范围筛选，按创建时间倒序
-router.get("/generation-logs", async (req: Request, res: Response) => {
+router.get("/generation-logs", requireRole("admin"), async (req: AuthRequest, res: Response) => {
   const page = Math.max(1, parseInt(String(req.query.page || "1"), 10) || 1);
   const pageSize = Math.min(
     100,
