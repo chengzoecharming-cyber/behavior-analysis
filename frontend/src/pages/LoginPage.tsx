@@ -1,24 +1,44 @@
 import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { login } from "../api";
+import { Banner, Button, Card, Input, Typography } from "@douyinfe/semi-ui";
+import { getDingtalkAuthorizeUrl, login } from "../api";
+
+const { Title, Text } = Typography;
 
 export default function LoginPage() {
   const navigate = useNavigate();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
+  const [dingtalkLoading, setDingtalkLoading] = useState(false);
+  const [showPasswordLogin, setShowPasswordLogin] = useState(false);
   const [error, setError] = useState("");
 
   const canSubmit = username.trim().length > 0 && password.trim().length > 0 && !loading;
 
+  // 钉钉扫码登录：取授权页 URL 后整页跳转钉钉
+  const handleDingtalkLogin = async () => {
+    setDingtalkLoading(true);
+    setError("");
+    try {
+      const { url } = await getDingtalkAuthorizeUrl();
+      window.location.href = url;
+    } catch (err: any) {
+      setError(err.response?.data?.error || "获取钉钉登录地址失败");
+      setDingtalkLoading(false);
+    }
+  };
+
+  // 应急密码登录（管理员通道，后端未启用时会返回错误提示）
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!canSubmit) return;
     setLoading(true);
     setError("");
     try {
-      const user = await login(username.trim(), password);
-      localStorage.setItem("user_id", user.user_id);
+      const { token } = await login(username.trim(), password);
+      localStorage.setItem("auth_token", token);
+      localStorage.removeItem("user_id");
       navigate("/", { replace: true });
       window.location.reload();
     } catch (err: any) {
@@ -29,71 +49,82 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex h-screen w-full items-center justify-center bg-[#F6F8FC]">
-      <div className="w-[400px] max-w-[calc(100%-2rem)] rounded-2xl bg-white p-8 shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
-        <h2 className="text-center text-2xl font-medium text-[#0f1419]">
-          销售外勤行为分析系统
-        </h2>
-        <p className="mt-2 text-center text-sm text-[#72808a]">请登录</p>
+    <div className="login-dark flex h-screen w-full items-center justify-center bg-[#F6F8FC]">
+      <Card
+        shadows="hover"
+        style={{ width: 400, maxWidth: "calc(100% - 2rem)", padding: 8 }}
+      >
+        <div className="text-center">
+          <Title heading={4} style={{ margin: 0 }}>
+            销售外勤行为分析系统
+          </Title>
+          <Text type="tertiary" style={{ display: "block", marginTop: 8 }}>
+            请登录
+          </Text>
+        </div>
 
-        <form onSubmit={handleSubmit} className="mt-8 flex flex-col">
-          <div className="flex flex-col gap-1.5">
-            <label
-              htmlFor="username"
-              className="text-sm font-medium text-[#0f1419]"
-            >
-              用户名
-            </label>
-            <input
+        <Button
+          theme="solid"
+          type="primary"
+          size="large"
+          block
+          loading={dingtalkLoading}
+          onClick={handleDingtalkLogin}
+          style={{ marginTop: 32 }}
+        >
+          钉钉扫码登录
+        </Button>
+
+        {error && (
+          <Banner
+            fullMode={false}
+            type="danger"
+            closeIcon={null}
+            description={error}
+            style={{ marginTop: 16 }}
+          />
+        )}
+
+        <div className="mt-6 text-center">
+          <Text
+            type="tertiary"
+            size="small"
+            style={{ cursor: "pointer", textDecoration: "underline" }}
+            onClick={() => setShowPasswordLogin((v) => !v)}
+          >
+            {showPasswordLogin ? "收起管理员登录" : "管理员登录"}
+          </Text>
+        </div>
+
+        {showPasswordLogin && (
+          <form onSubmit={handleSubmit} className="mt-4 flex flex-col gap-3">
+            <Input
               id="username"
-              type="text"
               placeholder="请输入用户名"
               value={username}
-              onChange={(e) => setUsername(e.target.value)}
-              required
-              className="h-10 w-full rounded-[10px] border-0 bg-[rgb(248,249,250)] px-3 text-sm font-medium text-[#0f1419] outline-none ring-0 transition-colors placeholder:font-normal placeholder:text-[#72808a]"
+              onChange={(v) => setUsername(v)}
             />
-          </div>
-
-          <div className="mt-4 flex flex-col gap-1.5">
-            <label
-              htmlFor="password"
-              className="text-sm font-medium text-[#0f1419]"
-            >
-              密码
-            </label>
-            <input
+            <Input
               id="password"
               type="password"
               placeholder="请输入密码"
               value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              required
-              className="h-10 w-full rounded-[10px] border-0 bg-[rgb(248,249,250)] px-3 text-sm font-medium text-[#0f1419] outline-none ring-0 transition-colors placeholder:font-normal placeholder:text-[#72808a]"
+              onChange={(v) => setPassword(v)}
             />
-          </div>
-
-          {error && (
-            <div className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm text-red-600">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={!canSubmit}
-            className={`mt-6 flex h-10 w-full items-center justify-center rounded-[10px] text-sm font-medium text-white transition-colors ${
-              canSubmit ? "bg-[#0f1419] hover:bg-[#2c3238]" : "bg-[#EBECED]"
-            }`}
-          >
-            {loading ? (
-              <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-            ) : (
-              "登录"
-            )}
-          </button>
-        </form>
-      </div>
+            <Button
+              theme="solid"
+              type="primary"
+              htmlType="submit"
+              block
+              loading={loading}
+              disabled={!canSubmit}
+              style={{ marginTop: 8 }}
+            >
+              登录
+            </Button>
+          </form>
+        )}
+      </Card>
     </div>
   );
 }

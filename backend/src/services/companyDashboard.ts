@@ -115,11 +115,22 @@ function getWeekRange(dateStr: string): { start: string; end: string } {
 /**
  * 计算公司级 Dashboard 数据。
  * 只统计周期内有拜访数据的员工。
+ * visibleUserIds 为 null 表示不过滤（admin）；否则只统计可见范围内的成员。
  */
 export async function computeCompanyDashboard(
   startDate: string,
-  endDate: string
+  endDate: string,
+  visibleUserIds: string[] | null = null
 ): Promise<CompanyDashboardResult> {
+  // 非 admin 的人员范围过滤条件
+  const params: any[] = [startDate, endDate];
+  let userFilter = "";
+  if (visibleUserIds !== null) {
+    params.push(visibleUserIds);
+    userFilter = `AND user_id = ANY($${params.length})`;
+  }
+  const joinUserFilter = userFilter.replace(/user_id/g, "v.user_id");
+
   // 1. 汇总指标
   const summaryResult = await pool.query(
     `SELECT
@@ -127,8 +138,9 @@ export async function computeCompanyDashboard(
        COUNT(DISTINCT user_id) AS active_employees,
        COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
      FROM visits
-     WHERE business_date >= $1::date AND business_date <= $2::date`,
-    [startDate, endDate]
+     WHERE business_date >= $1::date AND business_date <= $2::date
+       ${userFilter}`,
+    params
   );
 
   const totalVisits = parseInt(summaryResult.rows[0].total_visits, 10) || 0;
@@ -162,9 +174,10 @@ export async function computeCompanyDashboard(
     `SELECT business_date, COUNT(*) AS visit_count, COUNT(DISTINCT user_id) AS active_employees
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       ${userFilter}
      GROUP BY business_date
      ORDER BY business_date`,
-    [startDate, endDate]
+    params
   );
   for (const row of dailyVisitsResult.rows) {
     const d = formatBeijingDate(row.business_date);
@@ -179,8 +192,9 @@ export async function computeCompanyDashboard(
     `SELECT business_date, user_id
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       ${userFilter}
      GROUP BY business_date, user_id`,
-    [startDate, endDate]
+    params
   );
   for (const row of dailyUsersResult.rows) {
     const d = formatBeijingDate(row.business_date);
@@ -193,8 +207,9 @@ export async function computeCompanyDashboard(
   // 每天填报里程与估算里程：统一按审批单首次签到日期聚合
   const mileageUserIdsResult = await pool.query(
     `SELECT DISTINCT user_id FROM visits
-     WHERE business_date >= $1::date AND business_date <= $2::date`,
-    [startDate, endDate]
+     WHERE business_date >= $1::date AND business_date <= $2::date
+       ${userFilter}`,
+    params
   );
   const mileageUserIds = mileageUserIdsResult.rows.map((r) => r.user_id);
   const mileageResults = await computeMileageByApprovalForUsers(
@@ -290,9 +305,10 @@ export async function computeCompanyDashboard(
        COUNT(*) AS visit_count
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       ${userFilter}
      GROUP BY user_id
      ORDER BY visit_count DESC`,
-    [startDate, endDate]
+    params
   );
 
   const userIds = employeeResult.rows.map((r) => r.user_id);
@@ -332,9 +348,10 @@ export async function computeCompanyDashboard(
        COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       ${userFilter}
      GROUP BY dept_name
      ORDER BY visit_count DESC`,
-    [startDate, endDate]
+    params
   );
 
   // 各部门估算里程（按 route 去重，避免 join visits 后重复计算）
@@ -347,11 +364,12 @@ export async function computeCompanyDashboard(
        FROM routes r
        JOIN visits v ON r.user_id = v.user_id AND r.business_date = v.business_date
        WHERE v.business_date >= $1::date AND v.business_date <= $2::date
+         ${joinUserFilter}
      )
      SELECT dept_name, COALESCE(SUM(distance_km), 0) AS estimated_km
      FROM route_dept
      GROUP BY dept_name`,
-    [startDate, endDate]
+    params
   );
   const deptEstimatedKmMap = new Map<string, number>();
   for (const row of deptMileageResult.rows) {

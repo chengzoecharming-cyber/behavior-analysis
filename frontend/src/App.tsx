@@ -19,7 +19,6 @@ import {
   Users,
   LogOut,
   History,
-  Shield,
 } from "lucide-react";
 import DecisionPage from "./pages/DecisionPage";
 import ConsolePage from "./pages/ConsolePage";
@@ -27,9 +26,10 @@ import RulesConfigPage from "./pages/RulesConfigPage";
 import DataSyncPage from "./pages/DataSyncPage";
 import FeedbackPage from "./pages/FeedbackPage";
 import LoginPage from "./pages/LoginPage";
-import SyncLogsPage from "./pages/SyncLogsPage";
-import SyncHealthPage from "./pages/SyncHealthPage";
-import { fetchCurrentUser, fetchAuthUsers, AuthUser } from "./api";
+import LoginCallbackPage from "./pages/LoginCallbackPage";
+import DataSyncCenterPage from "./pages/DataSyncCenterPage";
+import UsersPage from "./pages/UsersPage";
+import { fetchCurrentUser, logoutApi, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
 
 interface NavItem {
@@ -53,9 +53,7 @@ function App() {
   const location = useLocation();
   const navigate = useNavigate();
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [switcherOpen, setSwitcherOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
-  const [users, setUsers] = useState<AuthUser[]>([]);
   const [checking, setChecking] = useState(true);
 
   useEffect(() => {
@@ -63,8 +61,10 @@ function App() {
   }, []);
 
   const loadCurrentUser = async () => {
-    const userId = localStorage.getItem("user_id");
-    if (!userId) {
+    // 有 session token 或过渡期 user_id 才尝试拉取当前用户
+    const hasLogin =
+      localStorage.getItem("auth_token") || localStorage.getItem("user_id");
+    if (!hasLogin) {
       setChecking(false);
       setCurrentUser(null);
       return;
@@ -74,6 +74,7 @@ function App() {
       setCurrentUser(user);
     } catch (err: any) {
       console.warn("Fetch current user failed:", err);
+      localStorage.removeItem("auth_token");
       localStorage.removeItem("user_id");
       setCurrentUser(null);
     } finally {
@@ -81,23 +82,13 @@ function App() {
     }
   };
 
-  const openSwitcher = async () => {
+  const logout = async () => {
     try {
-      const list = await fetchAuthUsers();
-      setUsers(list);
+      await logoutApi();
     } catch {
-      setUsers([]);
+      // 忽略，本地登录态照常清理
     }
-    setSwitcherOpen(true);
-  };
-
-  const switchUser = (userId: string) => {
-    localStorage.setItem("user_id", userId);
-    setSwitcherOpen(false);
-    window.location.reload();
-  };
-
-  const logout = () => {
+    localStorage.removeItem("auth_token");
     localStorage.removeItem("user_id");
     navigate("/login", { replace: true });
     window.location.reload();
@@ -112,12 +103,18 @@ function App() {
   }
 
   if (!currentUser) {
-    return <LoginPage />;
+    // 未登录时只放行登录页和钉钉扫码回调页
+    return (
+      <Routes>
+        <Route path="/login/callback" element={<LoginCallbackPage />} />
+        <Route path="*" element={<LoginPage />} />
+      </Routes>
+    );
   }
 
   const roleText: Record<string, string> = {
     admin: "管理员",
-    manager: "主管",
+    manager: "Leader",
     staff: "员工",
   };
 
@@ -129,6 +126,12 @@ function App() {
   })();
 
   const itemStyle = { height: 48, lineHeight: "48px", paddingTop: 0, paddingBottom: 0 };
+
+  // 导航按角色收敛：数据同步/规则配置是管理功能，仅 admin 可见；Leader 和员工只看总览和数据&分析
+  const visibleNavItems =
+    currentUser.role === "admin"
+      ? navItems
+      : navItems.filter((item) => item.path === "/" || item.path === "/console");
 
   return (
     <div
@@ -165,7 +168,7 @@ function App() {
 
             {/* Desktop Nav */}
             <nav className="ml-8 hidden h-16 min-w-0 items-center gap-7 overflow-x-auto md:flex">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const Icon = item.icon;
                 const active =
                   item.path === "/"
@@ -215,28 +218,22 @@ function App() {
                       </span>
                     </Dropdown.Item>
                     <Dropdown.Divider />
-                    <Dropdown.Item
-                      icon={<Users className="h-4 w-4" />}
-                      onClick={openSwitcher}
-                      style={itemStyle}
-                    >
-                      切换用户
-                    </Dropdown.Item>
                     {currentUser?.role === "admin" && (
                       <Dropdown.Item
                         icon={<History className="h-4 w-4" />}
                         style={itemStyle}
                       >
-                        <Link to="/sync-logs">同步记录</Link>
+                        <Link to="/sync-center">数据同步中心</Link>
                       </Dropdown.Item>
                     )}
-                    <Dropdown.Item
-                      icon={<Shield className="h-4 w-4" />}
-                      style={itemStyle}
-                      onClick={() => window.open("/sync-health", "_blank")}
-                    >
-                      同步健康
-                    </Dropdown.Item>
+                    {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
+                      <Dropdown.Item
+                        icon={<Users className="h-4 w-4" />}
+                        style={itemStyle}
+                      >
+                        <Link to="/users">用户管理</Link>
+                      </Dropdown.Item>
+                    )}
                     <Dropdown.Item
                       icon={<MessageSquareText className="h-4 w-4" />}
                       style={itemStyle}
@@ -284,7 +281,7 @@ function App() {
               销售外勤行为分析系统
             </div>
             <nav className="flex flex-col gap-1">
-              {navItems.map((item) => {
+              {visibleNavItems.map((item) => {
                 const Icon = item.icon;
                 const active =
                   item.path === "/"
@@ -313,69 +310,6 @@ function App() {
         </div>
       )}
 
-      {/* User Switcher Modal */}
-      {switcherOpen && (
-        <div
-          className="fixed inset-0 z-40 flex items-start justify-center bg-black/40 pt-24"
-          onClick={() => setSwitcherOpen(false)}
-        >
-          <div
-            className="w-full max-w-md rounded-xl bg-white p-5 shadow-xl"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h3 className="mb-4 text-base font-semibold text-[#0f1419]">
-              切换用户
-            </h3>
-            <div className="max-h-80 overflow-y-auto">
-              {users.length === 0 ? (
-                <div className="py-4 text-center text-sm text-stone-500">
-                  暂无用户
-                </div>
-              ) : (
-                <div className="flex flex-col">
-                  {users.map((u) => (
-                    <button
-                      key={u.user_id}
-                      type="button"
-                      className={cn(
-                        "flex w-full cursor-pointer items-center justify-between border-none px-3 py-2.5 text-sm transition",
-                        currentUser?.user_id === u.user_id
-                          ? "bg-stone-100 font-medium text-[#0f1419]"
-                          : "bg-transparent text-stone-700 hover:bg-stone-50"
-                      )}
-                      onClick={() => switchUser(u.user_id)}
-                    >
-                      <span className="flex items-center gap-2">
-                        <span>{u.user_name}</span>
-                        <span className="text-xs text-stone-500">
-                          ({roleText[u.role] || u.role})
-                        </span>
-                        {u.is_resigned && (
-                          <span className="rounded bg-stone-200 px-1.5 py-0.5 text-xs text-stone-600">
-                            已离职
-                          </span>
-                        )}
-                      </span>
-                      {currentUser?.user_id === u.user_id && (
-                        <span className="text-xs text-stone-500">当前</span>
-                      )}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="mt-4 flex justify-end">
-              <button
-                className="rounded-lg px-4 py-2 text-sm font-medium text-stone-600 transition hover:bg-stone-100"
-                onClick={() => setSwitcherOpen(false)}
-              >
-                取消
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
       {/* Content */}
       <main className="flex-1 min-h-0" style={{ padding: 24 }}>
         <Routes>
@@ -384,11 +318,16 @@ function App() {
           <Route path="/console" element={<ConsolePage />} />
           <Route path="/map" element={<Navigate to="/" replace />} />
           <Route path="/upload" element={<Navigate to="/sync" replace />} />
-          <Route path="/sync" element={<DataSyncPage />} />
-          <Route path="/sync-health" element={<SyncHealthPage />} />
-          <Route path="/rules" element={<RulesConfigPage />} />
+          {/* 管理功能页面：非 admin 直访时跳回首页（导航入口已隐藏，这里是第二道守卫） */}
+          <Route path="/sync" element={currentUser.role === "admin" ? <DataSyncPage /> : <Navigate to="/" replace />} />
+          <Route path="/sync-center" element={currentUser.role === "admin" ? <DataSyncCenterPage /> : <Navigate to="/" replace />} />
+          {/* 旧入口统一跳转到数据同步中心 */}
+          <Route path="/sync-health" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/sync-logs" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/data-lineage" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/rules" element={currentUser.role === "admin" ? <RulesConfigPage /> : <Navigate to="/" replace />} />
+          <Route path="/users" element={<UsersPage />} />
           <Route path="/feedback" element={<FeedbackPage />} />
-          <Route path="/sync-logs" element={<SyncLogsPage />} />
           <Route path="/login" element={<LoginPage />} />
         </Routes>
       </main>

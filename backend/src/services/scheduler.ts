@@ -8,6 +8,7 @@ import {
   generateMonthlyReports,
 } from "./reportGenerationService";
 import { checkAndSendAlerts, sendDailySyncSummary } from "./syncCheckService";
+import { reconcileUsers } from "./userSyncService";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -114,6 +115,32 @@ async function hasSuccessfulSync(dateStr: string): Promise<boolean> {
     [dateStr]
   );
   return result.rows.length > 0;
+}
+
+/** 每天北京时间 3:00 执行用户对账（未配置钉钉时自动降级：跳过通讯录同步，只做新增/更新） */
+export function startUserReconcileScheduler(): void {
+  const runReconcileJob = async () => {
+    console.log("[Scheduler] Running user reconcile");
+    try {
+      const result = await reconcileUsers();
+      console.log(
+        `[Scheduler] User reconcile done: added=${result.added.length}, updated=${result.updated}, ` +
+          `resigned=${result.resigned.length}, restored=${result.restored.length}, contactsSynced=${result.contactsSynced}`
+      );
+    } catch (err) {
+      console.error("[Scheduler] Failed to reconcile users:", err);
+    }
+  };
+
+  // 首次运行：等到凌晨 3 点
+  const msUntil3AM = getMillisecondsUntil(3, 0);
+  console.log(`[Scheduler] User reconcile job will run in ${Math.round(msUntil3AM / 1000 / 60)} minutes`);
+
+  setTimeout(() => {
+    runReconcileJob();
+    // 之后每 24 小时运行一次
+    setInterval(runReconcileJob, 24 * 60 * 60 * 1000);
+  }, msUntil3AM);
 }
 
 export function startRiskSummaryCacheScheduler(): void {

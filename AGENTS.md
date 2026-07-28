@@ -96,6 +96,8 @@ map/
 │   │   │   ├── ConsolePage.tsx
 │   │   │   ├── UploadPage.tsx
 │   │   │   ├── DataSyncPage.tsx
+│   │   │   ├── DataSyncCenterPage.tsx  # 数据同步中心：同步概览（记录+健康+告警）+ 数据血缘 两 Tab
+│   │   │   ├── DataLineagePage.tsx     # 数据血缘面板（DataLineagePanel 被同步中心复用）
 │   │   │   ├── RulesConfigPage.tsx
 │   │   │   ├── FeedbackPage.tsx
 │   │   │   └── MapPage.tsx
@@ -147,14 +149,22 @@ map/
 
 ### 认证方式
 
-当前不是基于 Cookie/JWT 的登录系统，而是简化方案：
+以**钉钉扫码登录 + session token** 为主：
 
-- 前端在 `localStorage` 保存 `user_id`。
-- `frontend/src/api.ts` 的请求拦截器把 `user_id` 写入请求头 `X-User-Id`。
-- 后端 `backend/src/services/auth.ts` 通过该 header 识别当前用户。
-- 本地开发默认自动以 `admin` 身份登录。
+- 登录流程：`GET /auth/dingtalk/authorize-url`（校验 origin 白名单、签发一次性 state）→ 跳转钉钉扫码页 → 回调 `/login/callback` → `POST /auth/dingtalk/callback`（authCode → 用户 token → unionId → 企业 userid → 校验 users 表：不存在/is_resigned/is_invalid 均 403）→ 签发随机 token 写入 `auth_sessions` 表（7 天有效）。
+- 前端在 `localStorage` 保存 `auth_token`，请求拦截器发 `Authorization: Bearer <token>`；收到 401 清登录态跳登录页。
+- 后端 `backend/src/services/auth.ts` 的 `authMiddleware`/`getCurrentUser` 优先解析 Bearer token（`resolveToken`，惰性清理过期 session）。
+- **应急密码登录**：`POST /auth/login` 仅当 `AUTH_PASSWORD_LOGIN_ENABLED=true` 可用，成功后同样签发 session token。
+- **旧的 X-User-Id 信任头**：仅在 `AUTH_HEADER_FALLBACK=true` 时作为回退（本地开发过渡用，生产必须关闭）。
+- 退出登录：`POST /auth/logout` 删除服务端 session。
 
-角色设计：`admin`（查看全部）、`manager`（查看本部门）、`staff`（仅查看自己）。目前 `/users`、`/feedback` 已接入权限过滤，但大量核心业务接口（`/analytics/*`、`/visits/*` 等）尚未收口。
+角色设计：`admin`（查看全部）、`manager`（查看本部门）、`staff`（仅查看自己）。权限口径分两类页面：
+
+- **总览页（DecisionPage）数据源**（`/analytics/company-dashboard`、`/analytics/org-tree`、`/analytics/org-overview`、`/analytics/risk-summary*`、`/analytics/regional-overview`、`/analytics/mileage-distribution`）：**所有角色登录即可见全公司数据**（便于横向对比），不做权限收敛；前端仅 admin 可点击页面内容跳转（员工卡片 → 控制台），manager/staff 为纯浏览视图。
+- **「数据&分析」（ConsolePage）数据源**（`/visits/*`、`/stops`、`/routes`、`/analytics/mileage`、`/analytics/anomaly`、`/analytics/user-overview`、`/analytics/risk-score`、`/dingtalk/org-tree`、`/dingtalk/users`）：按角色过滤——manager 可见范围由 `users.department` 自动决定（'销售部' → 全部门含子部门；'销售部-华东昆山' → 仅该子部门，复用 `orgService.getUserIdsUnderNode`），始终 ∪ 自己；staff 仅自己。越权返回 403「无权查看该成员数据」。
+- 管理功能：`/dingtalk` 同步运维类、`/upload-excel`、`/export/generate-reports`、`/export/generation-logs`、`/analytics/risk-summary/refresh`、`PUT /analytics/anomaly-weights`、`PUT /analytics/department-aliases`、`/analytics/init-department-aliases` 仅 admin；`/export/console-report*`、`/export/scope-report-to-doc` 限 admin/manager（可导任意范围）。
+
+统一逻辑在 `backend/src/services/permission.ts`（`getVisibleUserIds`/`canViewUser`/`clampNodeForUser`/`isNodeInRange`）。`/users/*`、`/feedback` 维持原有权限逻辑。
 
 ### 时区约定
 
@@ -185,6 +195,7 @@ map/
 1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
 2. **钉钉审批同步**：每 3 小时同步最近 3 天的钉钉审批实例到 `visits`（未配置钉钉则跳过）。
 3. **同步健康告警**：每次钉钉同步完成后立即检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；每天早上 9:00 发送昨日同步健康摘要。
+4. **用户对账**：每天凌晨 3:00 执行 `reconcileUsers()`（`userSyncService.ts`）：先同步钉钉通讯录，再把 visits 中出现的人 upsert 进 `users`（不覆盖 role；姓名优先取钉钉通讯录），并按通讯录快照标记/恢复 `is_resigned`（admin 永不自动改；未配置钉钉时降级为只做新增/更新，不标离职）。部门白名单：只纳入一级部门为「供应链管理部/销售部/产品部」的人，白名单外的非 admin 用户置 `is_invalid=true`（`/users` 接口不返回）；`is_invalid` 只置位、**不自动恢复**（恢复只能管理员手工改库，防止车辆误导入账号这类手工隐藏记录被每晚对账翻回来）。防误伤：近 30 天有签到记录的人即使不在通讯录快照也不自动标离职，记入结果的 `skippedRecentActive` 供人工复核。
 4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，并通过 `company_addresses` 表排除公司地址签到（对全体员工生效），拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。
 
 ### 同步数据校验
@@ -226,9 +237,19 @@ DATABASE_URL=postgresql://sales:sales123@localhost:5433/sales_map
 AMAP_KEY=YOUR_AMAP_KEY
 
 # 钉钉开放平台（企业内部应用）
+# 扫码登录复用这对 Key/Secret 作为 clientId/clientSecret
 DINGTALK_APP_KEY=YOUR_DINGTALK_APP_KEY
 DINGTALK_APP_SECRET=YOUR_DINGTALK_APP_SECRET
 DINGTALK_PROCESS_CODE=YOUR_DINGTALK_PROCESS_CODE
+
+# 钉钉扫码登录允许的前端回调 origin（逗号分隔），回调地址为 <origin>/login/callback
+DINGTALK_LOGIN_ALLOWED_ORIGINS=http://localhost:5173,http://8.219.97.3:5173
+
+# 应急密码登录通道（管理员），生产建议关闭
+AUTH_PASSWORD_LOGIN_ENABLED=false
+
+# 旧的 X-User-Id 信任头回退：仅限本地开发过渡，生产必须保持 false
+AUTH_HEADER_FALLBACK=false
 
 # 钉钉文档（知识库）导出操作人 user_id
 # 需要是该企业内的真实钉钉用户，用于调用钉钉文档 API 创建文档、文件夹并授权
@@ -329,8 +350,11 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET | `/analytics/departments` | 规范部门列表 |
 | POST | `/analytics/init-department-aliases` | 初始化部门别名映射 |
 | GET/PUT | `/analytics/department-aliases` | 部门别名 CRUD |
-| GET/POST | `/dingtalk/*` | 钉钉同步相关接口 |
-| GET/POST/PUT/DELETE | `/users/*` | 用户管理 |
+| GET/POST | `/dingtalk/*` | 钉钉同步相关接口（含 `/sync-logs`、`/sync-health`、`/sync-alerts`、`/sync-force`） |
+| GET | `/data-lineage/approvals` | 数据血缘：审批单分页列表（含签到点数、质量问题计数） |
+| GET | `/data-lineage/approvals/:id` | 数据血缘：单张审批单 原始表单→重新解析→已入库 三步对照 |
+| GET/POST/PUT/DELETE | `/users/*` | 用户管理（GET 返回 `last_visit_date`，按角色过滤：admin 全量 / manager 本部门含子部门 / staff 仅自己） |
+| POST | `/users/sync` | 手动触发用户对账（admin），body `{ dryRun?: boolean }`，dryRun 只预览不写库 |
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
 | POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
@@ -436,7 +460,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 
 2. **部署脚本问题**：`scripts/deploy.sh` 中硬编码了 `AMAP_KEY` 和服务器 IP，且每次运行都会生成随机数据库密码。它只适合首次全新部署；服务器上已有 postgres 数据时直接运行会导致后端连不上数据库。有数据后请按 `DEPLOY.md` 使用 `docker-compose.ghcr.yml` 部署。
 
-3. **认证机制较弱**：当前通过 `X-User-Id` header 识别用户，没有 JWT/Cookie/Session。任何人只要知道用户 ID 就能模拟该用户。如果对外开放，必须替换为正式认证方案。
+3. **认证已改为 session token**：钉钉扫码登录签发 `auth_sessions` token（7 天）。旧的 `X-User-Id` 信任头仅在 `AUTH_HEADER_FALLBACK=true` 时可用——生产环境绝不能开启，否则任何人知道用户 ID 就能模拟身份。
 
 4. **上传目录安全**：`backend/uploads/` 存放上传的 Excel 临时文件，文件名由 multer 随机生成。生产环境建议定期清理，并限制上传文件大小与类型。
 
@@ -449,13 +473,13 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 ## 已知问题与注意事项
 
 - `backend/schema.sql` 与 `backend/src/db.ts` 不同步，实际 schema 以 `db.ts` 为准。
-- 权限系统框架已完成，但大量核心业务接口尚未按角色过滤数据。
+- 权限系统已完成收口（见「认证方式」章节）：核心接口均按角色过滤数据，越权返回 403。
 - 部门名称通过 `department_aliases` 表规范化，当前有 10 个规范部门/分组。
 - 风险摘要缓存策略：历史日期优先读 `risk_summary_cache`，今天及以后实时计算。
 - 钉钉表单中的 `累计里程N` 是截至本次签到的累计值，系统统计时应按 `approval_id` 取 `MAX(reported_distance_km)`，不能直接 `SUM`。
 - 路线计算已按 `approval_id` 分组，控制台地图支持按审批单切换视图。
 - 里程读数异常上限通过环境变量 `MILEAGE_VALIDATION_MAX_KM`（后端）和 `VITE_MILEAGE_MAX_KM`（前端）配置，默认 5000 km。
-- 钉钉审批同步的 `originator_user_name` 可能为空，导致 `visits.user_name` 写入数字 userid。可通过 `backend/scripts/fixUserNames.ts` 修复：在职员工调用 `topapi/v2/user/get`，已离职员工回退到智能人事花名册 `topapi/smartwork/hrm/employee/list`，并自动标记 `users.is_resigned=true`。
+- 钉钉审批同步的 `originator_user_name` 可能为空，导致 `visits.user_name` 写入数字 userid。`userSyncService` 每日对账时会按「钉钉通讯录姓名 > visits 最近姓名」的优先级自动修正 `users.user_name`；`visits` 表里的历史姓名可通过 `backend/scripts/fixUserNames.ts` 修复：在职员工调用 `topapi/v2/user/get`，已离职员工回退到智能人事花名册 `topapi/smartwork/hrm/employee/list`，并自动标记 `users.is_resigned=true`。
 - 车辆/油卡/油耗模型（Step 4）已暂缓，相关表结构在 `PLAN.md` 中有设计但未实现。
 - 月维度数据导出（Step 5）尚未实现。
 - 员工住址（`users.home_address`）用于异常检测和报告客户列表的住址排除。报告口径是**跨员工排除**：命中任何一位员工的住址（文本匹配或 500 米坐标半径）都不算客户（例如出差留宿在同事家小区）；异常检测仍按拜访人自己的住址匹配。住址来源是线下收集的《国内业务人员常住地址》Excel（姓名 + 地址两列即可），通过 `backend/scripts/importEmployeeAddresses.ts` 导入：`cd backend && npx ts-node scripts/importEmployeeAddresses.ts /path/to/employee_addresses.xlsx`。脚本是幂等 UPDATE，Excel 有更新（新人入职、地址变更）时改完重跑即可；仅当员工在 `users` 或 `visits` 中已有记录才能匹配写入（新入职未产生签到数据的人会在产生数据后下次导入时补上）。目前仅覆盖业务人员，非业务部门按业务决定不收集。

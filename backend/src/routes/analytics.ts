@@ -30,6 +30,11 @@ import {
   getPreviousBusinessWeekRange,
 } from "../utils/businessPeriod";
 import { computeCompanyDashboard } from "../services/companyDashboard";
+import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
+import {
+  canViewUser,
+  FORBIDDEN_MESSAGE,
+} from "../services/permission";
 
 const router = Router();
 
@@ -46,11 +51,16 @@ function eachDate(startStr: string, endStr: string): string[] {
   return dates;
 }
 
-router.get("/mileage", async (req: Request, res: Response) => {
+router.get("/mileage", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user, date, start, end } = req.query;
 
   if (!user) {
     res.status(400).json({ error: "Missing user parameter" });
+    return;
+  }
+
+  if (!(await canViewUser(req.currentUser!, user as string))) {
+    res.status(403).json({ error: FORBIDDEN_MESSAGE });
     return;
   }
 
@@ -138,11 +148,16 @@ router.get("/mileage", async (req: Request, res: Response) => {
   }
 });
 
-router.get("/anomaly", async (req: Request, res: Response) => {
+router.get("/anomaly", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user, date, start, end } = req.query;
 
   if (!user) {
     res.status(400).json({ error: "Missing user parameter" });
+    return;
+  }
+
+  if (!(await canViewUser(req.currentUser!, user as string))) {
+    res.status(403).json({ error: FORBIDDEN_MESSAGE });
     return;
   }
 
@@ -271,7 +286,7 @@ router.get("/anomaly", async (req: Request, res: Response) => {
 
 // GET /analytics/mileage-distribution?start=&end=
 // 返回填报里程 vs 高德里程的偏差分布，用于训练集分析
-router.get("/mileage-distribution", async (req: Request, res: Response) => {
+router.get("/mileage-distribution", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { start, end } = req.query;
 
   if (!start || !end) {
@@ -280,6 +295,7 @@ router.get("/mileage-distribution", async (req: Request, res: Response) => {
   }
 
   try {
+    // 总览数据源：所有角色均可见全量数据，不做权限收敛
     const rangeStart = ensureBeijingTimestamp(start as string);
     const rangeEnd = ensureBeijingTimestamp(end as string);
     const visitsResult = await pool.query(
@@ -307,8 +323,8 @@ router.get("/mileage-distribution", async (req: Request, res: Response) => {
   }
 });
 
-// 异常规则权重配置
-router.get("/anomaly-weights", async (_req: Request, res: Response) => {
+// 异常规则权重配置：GET 全员可读，PUT 仅 admin
+router.get("/anomaly-weights", authMiddleware, async (_req: AuthRequest, res: Response) => {
   try {
     const weights = await getAnomalyWeights();
     res.json(Object.values(weights));
@@ -318,7 +334,7 @@ router.get("/anomaly-weights", async (_req: Request, res: Response) => {
   }
 });
 
-router.put("/anomaly-weights/:key", async (req: Request, res: Response) => {
+router.put("/anomaly-weights/:key", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
   const { key } = req.params;
   const { weight, threshold_value, enabled, rule_name, description, layer } = req.body;
 
@@ -344,11 +360,16 @@ router.put("/anomaly-weights/:key", async (req: Request, res: Response) => {
 
 
 // 单个员工周期总览
-router.get("/user-overview", async (req: Request, res: Response) => {
+router.get("/user-overview", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user, start, end } = req.query;
 
   if (!user || !start || !end) {
     res.status(400).json({ error: "Missing user, start or end parameter" });
+    return;
+  }
+
+  if (!(await canViewUser(req.currentUser!, user as string))) {
+    res.status(403).json({ error: FORBIDDEN_MESSAGE });
     return;
   }
 
@@ -366,10 +387,15 @@ router.get("/user-overview", async (req: Request, res: Response) => {
 });
 
 // 单日风险评分
-router.get("/risk-score", async (req: Request, res: Response) => {
+router.get("/risk-score", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user_id, date } = req.query;
   if (!user_id || !date) {
     res.status(400).json({ error: "Missing user_id or date parameter" });
+    return;
+  }
+
+  if (!(await canViewUser(req.currentUser!, user_id as string))) {
+    res.status(403).json({ error: FORBIDDEN_MESSAGE });
     return;
   }
 
@@ -449,8 +475,8 @@ router.get("/risk-score", async (req: Request, res: Response) => {
 
 import { calculateRiskScore, getRiskLevel } from "../services/riskScoring";
 
-// 公司级 Dashboard
-router.get("/company-dashboard", async (req: Request, res: Response) => {
+// 公司级 Dashboard（总览页数据源：所有角色均可见全公司数据，便于横向对比，不做权限收敛）
+router.get("/company-dashboard", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { start, end } = req.query;
 
   if (!start || !end) {

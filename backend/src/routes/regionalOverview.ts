@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { pool } from "../db";
 import {
   ensureBeijingTimestamp,
@@ -11,6 +11,7 @@ import {
   updateDepartmentAlias,
   TARGET_DEPARTMENTS,
 } from "../services/departmentAliasService";
+import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
 
 const router = Router();
 
@@ -48,7 +49,7 @@ interface RegionalOverviewResponse {
 }
 
 // GET /analytics/regional-overview?start=YYYY-MM-DD&end=YYYY-MM-DD&department=xxx
-router.get("/regional-overview", async (req: Request, res: Response) => {
+router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { start, end, department } = req.query;
 
   if (!start || !end) {
@@ -64,6 +65,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
       departmentFilter = "AND department ILIKE $3";
       baseParams.push(`%${department}%`);
     }
+
 
     // 1. 总拜访数、员工数、不重复地点数
     const overviewResult = await pool.query(
@@ -165,7 +167,7 @@ router.get("/regional-overview", async (req: Request, res: Response) => {
 
 // POST /analytics/init-department-aliases
 // 扫描 visits 生成部门别名映射表（幂等，可重复执行）
-router.post("/init-department-aliases", async (_req: Request, res: Response) => {
+router.post("/init-department-aliases", authMiddleware, requireRole("admin"), async (_req: AuthRequest, res: Response) => {
   try {
     const result = await initDepartmentAliases();
     res.json({
@@ -180,7 +182,7 @@ router.post("/init-department-aliases", async (_req: Request, res: Response) => 
 
 // GET /analytics/departments
 // 返回所有规范部门名称（供 Dashboard 下拉框使用）
-router.get("/departments", async (_req: Request, res: Response) => {
+router.get("/departments", authMiddleware, async (_req: AuthRequest, res: Response) => {
   try {
     const result = await pool.query(
       `SELECT DISTINCT canonical_name
@@ -198,7 +200,7 @@ router.get("/departments", async (_req: Request, res: Response) => {
 
 // GET /analytics/department-aliases
 // 列出所有部门别名映射
-router.get("/department-aliases", async (_req: Request, res: Response) => {
+router.get("/department-aliases", authMiddleware, async (_req: AuthRequest, res: Response) => {
   try {
     const aliases = await listDepartmentAliases();
     res.json(aliases);
@@ -210,7 +212,7 @@ router.get("/department-aliases", async (_req: Request, res: Response) => {
 
 // PUT /analytics/department-aliases
 // body: { alias, canonical_name }
-router.put("/department-aliases", async (req: Request, res: Response) => {
+router.put("/department-aliases", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
   const { alias, canonical_name } = req.body;
   if (!alias) {
     res.status(400).json({ error: "Missing alias parameter" });

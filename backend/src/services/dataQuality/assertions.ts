@@ -64,6 +64,43 @@ export async function recordQualityRecord(input: QualityRecordInput): Promise<vo
   );
 }
 
+/**
+* 批量写入质量记录（一次 INSERT 多行，替代逐条写入）。
+* 用于导入循环中收集所有失败项后一次性写入，避免 N 次数据库往返。
+*/
+export async function batchRecordQualityRecords(
+inputs: QualityRecordInput[]
+): Promise<void> {
+if (inputs.length === 0) return;
+
+const values: any[] = [];
+const placeholders: string[] = [];
+inputs.forEach((input, i) => {
+  const base = i * 9;
+  placeholders.push(
+    `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`
+  );
+  values.push(
+    input.source,
+    input.sourceId ?? null,
+    input.recordIndex,
+    input.userId ?? null,
+    input.businessDate ?? null,
+    input.checkType,
+    input.severity,
+    input.message,
+    input.rawValue ?? null
+  );
+});
+
+await pool.query(
+  `INSERT INTO data_quality_records
+     (source, source_id, record_index, user_id, business_date, check_type, severity, message, raw_value)
+   VALUES ${placeholders.join(", ")}`,
+  values
+);
+}
+
 export async function recordQualitySummary(input: QualitySummaryInput): Promise<void> {
   await pool.query(
     `INSERT INTO data_quality_summary
@@ -189,22 +226,60 @@ function assertOdometer(start?: number, end?: number): AssertionResult[] {
 
 function assertUser(userId: string | undefined, userName: string): AssertionResult[] {
   const results: AssertionResult[] = [];
-  if (!userName || !userName.trim()) {
+  const hasName = Boolean(userName && userName.trim());
+  const hasId = Boolean(userId && userId.trim());
+
+  // 两者都空才是真正的错误
+  if (!hasName && !hasId) {
     results.push({
       passed: false,
       severity: "error",
       checkType: "user",
-      message: "员工姓名为空",
+      message: "员工姓名和 ID 均为空",
+      rawValue: `name=${userName}, id=${userId}`,
+    });
+    return results;
+  }
+
+  // 有姓名但无 ID：Excel 导入的正常情况（系统会用姓名生成兜底 ID），降级为 info
+  if (hasName && !hasId) {
+    results.push({
+      passed: false,
+      severity: "info",
+      checkType: "user",
+      message: "无员工 ID，系统将使用姓名生成兜底 ID",
       rawValue: String(userName),
     });
   }
-  if (!userId || !userId.trim()) {
+
+  // 有 ID 但无姓名：异常，后续展示可能显示为数字 ID
+  if (!hasName && hasId) {
     results.push({
       passed: false,
-      severity: "error",
+      severity: "warning",
       checkType: "user",
-      message: "员工 ID 为空",
+      message: "员工姓名为空，展示时可能显示为 ID",
       rawValue: String(userId),
+    });
+  }
+
+  return results;
+}
+
+function assertApprovalSequence(
+  approvalId: string | undefined,
+  sequence: number | undefined | null
+): AssertionResult[] {
+  const results: AssertionResult[] = [];
+  // 只有钉钉数据（有 approval_id）才有 sequence 概念
+  if (!approvalId) return results;
+  if (sequence == null || sequence < 0) {
+    results.push({
+      passed: false,
+      severity: "warning",
+      checkType: "approval_sequence",
+      message: "钉钉审批数据缺少有效的签到序号 sequence",
+      rawValue: `approval_id=${approvalId}, sequence=${sequence}`,
     });
   }
   return results;
@@ -221,6 +296,27 @@ function assertTripType(tripType: string | undefined | null): AssertionResult[] 
     });
   }
   return results;
+}
+
+/**
+ * 检测本批次内 approval_id + sequence + user_id 重复（钉钉数据）。
+ * 纯内存计算，不查库：库内已有记录由 checkDuplicateVisit 负责，
+ * 这里只负责发现"同一批次文件/同步结果里本身就重复"的情况，
+ * 这种情况说明源数据有问题（如同一审批单被重复导出）。
+ *
+ * 返回 Map：key = `${approval_id}|${sequence}|${userId}`，value = 出现次数（>1 才有意义）。
+ */
+export function findBatchDuplicates(
+  visits: ParsedVisit[]
+): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const v of visits) {
+    if (!v.approval_id || v.sequence == null) continue;
+    const userId = v.user_id || normalizeUserId(v.user_name);
+    const key = `${v.approval_id}|${v.sequence}|${userId}`;
+    counts.set(key, (counts.get(key) ?? 0) + 1);
+  }
+  return counts;
 }
 
 /**
@@ -248,6 +344,7 @@ export function checkVisitQuality(
   failures.push(...assertOdometer(visit.start_odometer, visit.end_odometer));
   failures.push(...assertUser(visit.user_id, visit.user_name));
   failures.push(...assertTripType(visit.trip_type));
+  failures.push(...assertApprovalSequence(visit.approval_id, visit.sequence));
 
   return { failures, businessDate };
 }

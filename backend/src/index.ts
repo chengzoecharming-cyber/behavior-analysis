@@ -15,10 +15,12 @@ import usersRouter from "./routes/users";
 import feedbackRouter from "./routes/feedback";
 import authRouter from "./routes/auth";
 import exportRouter from "./routes/export";
+import dataLineageRouter from "./routes/dataLineage";
 import {
   startRiskSummaryCacheScheduler,
   startDingTalkSyncScheduler,
   startReportGenerationScheduler,
+  startUserReconcileScheduler,
 } from "./services/scheduler";
 
 dotenv.config();
@@ -42,6 +44,7 @@ app.use("/users", usersRouter);
 app.use("/feedback", feedbackRouter);
 app.use("/auth", authRouter);
 app.use("/export", exportRouter);
+app.use("/data-lineage", dataLineageRouter);
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
@@ -52,6 +55,7 @@ async function main() {
   startRiskSummaryCacheScheduler();
   startDingTalkSyncScheduler();
   startReportGenerationScheduler();
+  startUserReconcileScheduler();
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

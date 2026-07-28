@@ -1,4 +1,4 @@
-import { Router, Request, Response } from "express";
+import { Router, Response } from "express";
 import { Route } from "../types";
 import { computeAndPersistRoutes } from "../services/routeService";
 import {
@@ -6,6 +6,8 @@ import {
   toBeijingDayEnd,
   formatBeijingDate,
 } from "../utils/timezone";
+import { authMiddleware, AuthRequest } from "../services/auth";
+import { canViewUser, FORBIDDEN_MESSAGE } from "../services/permission";
 
 const router = Router();
 
@@ -22,11 +24,16 @@ function eachDate(startStr: string, endStr: string): string[] {
   return dates;
 }
 
-router.get("/", async (req: Request, res: Response) => {
+router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   const { user, date, start, end } = req.query;
 
   if (!user) {
     res.status(400).json({ error: "Missing user parameter" });
+    return;
+  }
+
+  if (!(await canViewUser(req.currentUser!, user as string))) {
+    res.status(403).json({ error: FORBIDDEN_MESSAGE });
     return;
   }
 

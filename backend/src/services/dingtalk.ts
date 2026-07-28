@@ -125,6 +125,71 @@ export async function getAccessToken(): Promise<string> {
   return data.access_token;
 }
 
+// ===== 钉钉扫码登录（第三方网站扫码授权） =====
+// clientId/clientSecret 复用企业内部应用的 DINGTALK_APP_KEY / DINGTALK_APP_SECRET，
+// 需要在钉钉开放平台为该应用开通「扫码登录」能力并配置重定向 URL。
+
+const DINGTALK_NEW_API_BASE = "https://api.dingtalk.com";
+
+/** 生成钉钉扫码登录授权页 URL（用户扫码确认后跳转 redirect_uri 并带 authCode） */
+export function getLoginAuthorizeUrl(redirectUri: string, state: string): string {
+  const cfg = getDingTalkConfig();
+  return (
+    `https://login.dingtalk.com/oauth2/auth` +
+    `?redirect_uri=${encodeURIComponent(redirectUri)}` +
+    `&response_type=code&client_id=${encodeURIComponent(cfg.appKey)}` +
+    `&scope=openid&state=${encodeURIComponent(state)}&prompt=consent`
+  );
+}
+
+/** 用 authCode 换用户级 accessToken（注意走 api.dingtalk.com 新域名，不是 oapi） */
+export async function getUserAccessToken(authCode: string): Promise<string> {
+  const cfg = getDingTalkConfig();
+  const res = await fetch(`${DINGTALK_NEW_API_BASE}/v1.0/oauth2/userAccessToken`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      clientId: cfg.appKey,
+      clientSecret: cfg.appSecret,
+      code: authCode,
+      grantType: "authorization_code",
+    }),
+  });
+  const data: any = await res.json();
+  if (!res.ok || !data.accessToken) {
+    throw new Error(`DingTalk userAccessToken failed: ${JSON.stringify(data)}`);
+  }
+  return data.accessToken;
+}
+
+/** 用用户级 token 查询扫码用户个人信息（unionId / nick / mobile） */
+export async function getUserMeByUserToken(
+  userToken: string
+): Promise<{ unionId: string; nick?: string; mobile?: string }> {
+  const res = await fetch(`${DINGTALK_NEW_API_BASE}/v1.0/contact/users/me`, {
+    headers: { "x-acs-dingtalk-access-token": userToken },
+  });
+  const data: any = await res.json();
+  if (!res.ok || !data.unionId) {
+    throw new Error(`DingTalk contact/users/me failed: ${JSON.stringify(data)}`);
+  }
+  return data;
+}
+
+/** 用应用 accessToken 把 unionId 换成企业内 userid（需通讯录读权限） */
+export async function getUserIdByUnionId(unionId: string): Promise<string> {
+  const accessToken = await getAccessToken();
+  const data = await httpPost(
+    "/topapi/user/getbyunionid",
+    { access_token: accessToken },
+    { unionid: unionId }
+  );
+  if (data.errcode !== 0) {
+    throw new Error(`DingTalk getbyunionid failed: ${data.errmsg} (${data.errcode})`);
+  }
+  return data.result.userid;
+}
+
 // 通讯录用户信息缓存
 const userNameCache: Record<string, string> = {};
 const userDetailCache: Record<string, any> = {};

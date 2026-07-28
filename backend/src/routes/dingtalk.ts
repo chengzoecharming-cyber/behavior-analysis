@@ -23,8 +23,14 @@ import {
 } from "../services/syncCheckService";
 import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getYesterdayBeijing } from "../utils/timezone";
 import { pool } from "../db";
+import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
+import { getVisibleUserIds, topDepartmentOf } from "../services/permission";
+import { OrgTreeNode } from "../services/orgService";
 
 const router = Router();
+
+// 钉钉相关接口全部需要登录；运维/同步管理类接口在各路由上追加 requireRole("admin")
+router.use(authMiddleware);
 
 function dateToStartMs(dateStr: string): number {
   return new Date(toBeijingDayStart(dateStr)).getTime();
@@ -43,7 +49,7 @@ function formatBeijingDateTime(date: Date | string | null): string | null {
 
 // GET /dingtalk/probe-user?userid=xxx
 // 探测单个用户的通讯录详情（含 dept_id_list），用于找到有权限的部门 ID
-router.get("/probe-user", async (req: Request, res: Response) => {
+router.get("/probe-user", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -79,7 +85,7 @@ router.get("/probe-user", async (req: Request, res: Response) => {
 });
 
 // GET /dingtalk/status
-router.get("/status", async (_req: Request, res: Response) => {
+router.get("/status", requireRole("admin"), async (_req: Request, res: Response) => {
   try {
     const cfg = getDingTalkConfig();
     let tokenValid = false;
@@ -109,7 +115,7 @@ router.get("/status", async (_req: Request, res: Response) => {
 
 // GET /dingtalk/discover?name=用车登记
 // 根据审批模板名称反查 process_code
-router.get("/discover", async (req: Request, res: Response) => {
+router.get("/discover", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -132,7 +138,7 @@ router.get("/discover", async (req: Request, res: Response) => {
 
 // GET /dingtalk/test?days=N
 // 拉取一条最近的审批实例，验证权限和数据格式；默认查最近 7 天
-router.get("/test", async (req: Request, res: Response) => {
+router.get("/test", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -178,7 +184,7 @@ router.get("/test", async (req: Request, res: Response) => {
 // POST /dingtalk/sync
 // body: { startDate?: "YYYY-MM-DD", endDate?: "YYYY-MM-DD" }
 // 默认同步昨天
-router.post("/sync", async (req: Request, res: Response) => {
+router.post("/sync", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -207,7 +213,7 @@ router.post("/sync", async (req: Request, res: Response) => {
 // GET /dingtalk/departments?deptId=1
 // 拉取钉钉部门树（探测接口，不改 visits 数据）
 // 默认从根部门 1 开始；如果提示 50004 可见范围不足，可传入有权限的 deptId
-router.get("/departments", async (req: Request, res: Response) => {
+router.get("/departments", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -242,7 +248,7 @@ router.get("/departments", async (req: Request, res: Response) => {
 
 // GET /dingtalk/department-users?deptId=123
 // 拉取指定部门下的用户（分页拉取完整列表）
-router.get("/department-users", async (req: Request, res: Response) => {
+router.get("/department-users", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -275,9 +281,15 @@ router.get("/department-users", async (req: Request, res: Response) => {
 
 // GET /dingtalk/users
 // 返回已同步的钉钉用户列表（用于级联选择器）
-router.get("/users", async (_req: Request, res: Response) => {
+router.get("/users", async (req: AuthRequest, res: Response) => {
   try {
-    const users = await getDingTalkOrgUsers();
+    // 控制台级联选择器数据源：只返回当前用户可见范围内的成员
+    const visible = await getVisibleUserIds(req.currentUser!);
+    let users = await getDingTalkOrgUsers();
+    if (visible !== null) {
+      const visibleSet = new Set(visible);
+      users = users.filter((u) => visibleSet.has(u.user_id));
+    }
     res.json({
       success: true,
       count: users.length,
@@ -290,15 +302,52 @@ router.get("/users", async (_req: Request, res: Response) => {
 });
 
 // GET /dingtalk/org-tree
-// 返回已同步的钉钉组织架构树（用于级联选择器）
-router.get("/org-tree", async (_req: Request, res: Response) => {
+// 返回已同步的钉钉组织架构树（用于级联选择器）：
+// admin 全树；manager 只返回以其 department 对应节点为根的子树；staff 返回空树
+router.get("/org-tree", async (req: AuthRequest, res: Response) => {
   try {
+    const currentUser = req.currentUser!;
+    const visible = await getVisibleUserIds(currentUser);
     const tree = await buildDingTalkOrgTree();
-    res.json({
-      success: true,
-      count: tree.length,
-      tree,
+
+    if (visible === null) {
+      res.json({ success: true, count: tree.length, tree });
+      return;
+    }
+
+    // 按可见范围过滤节点上的 userIds
+    const visibleSet = new Set(visible);
+    const filterNode = (node: OrgTreeNode): OrgTreeNode => ({
+      ...node,
+      userIds: (node.userIds || []).filter((id) => visibleSet.has(id)),
+      children: (node.children || []).map(filterNode),
     });
+
+    if (currentUser.role !== "manager") {
+      // staff：无组织树可见（前端也不展示级联选择器）
+      res.json({ success: true, count: 0, tree: [] });
+      return;
+    }
+
+    // manager：裁剪到自己 department 对应的子树
+    const top = topDepartmentOf(currentUser);
+    const primary = (currentUser.department || "").split(",")[0].trim();
+    const sub = primary.includes("-") ? primary.slice(primary.indexOf("-") + 1) : null;
+    const root = tree.find((n) => n.name === top);
+    if (!root) {
+      res.json({ success: true, count: 0, tree: [] });
+      return;
+    }
+    let pruned: OrgTreeNode[];
+    if (!sub) {
+      // 部门 LD：整个一级部门子树
+      pruned = [filterNode(root)];
+    } else {
+      // 区级 LD：只保留自己子部门节点（挂在父部门下保持级联层级）
+      const child = (root.children || []).find((c) => c.name === sub);
+      pruned = [{ ...root, children: child ? [filterNode(child)] : [], userIds: [] }];
+    }
+    res.json({ success: true, count: pruned.length, tree: pruned });
   } catch (err: any) {
     console.error("Failed to build DingTalk org tree:", err);
     res.status(500).json({ error: err.message || "Failed to build org tree" });
@@ -309,7 +358,7 @@ router.get("/org-tree", async (_req: Request, res: Response) => {
 // body: { departmentNames?: string[] }
 // 同步通讯录到 dingtalk_departments / dingtalk_users 表
 // 若传入 departmentNames，则只同步指定部门及其子部门
-router.post("/sync-contacts", async (req: Request, res: Response) => {
+router.post("/sync-contacts", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -335,7 +384,7 @@ router.post("/sync-contacts", async (req: Request, res: Response) => {
 
 // GET /dingtalk/sync-logs?limit=50
 // 查询钉钉同步历史记录
-router.get("/sync-logs", async (req: Request, res: Response) => {
+router.get("/sync-logs", requireRole("admin"), async (req: Request, res: Response) => {
   const limit = Math.min(parseInt((req.query.limit as string) || "50", 10) || 50, 200);
 
   try {
@@ -371,7 +420,7 @@ router.get("/sync-logs", async (req: Request, res: Response) => {
 
 // POST /dingtalk/sync-logs/:id/retry
 // 根据某条同步记录的日期范围重新执行同步
-router.post("/sync-logs/:id/retry", async (req: Request, res: Response) => {
+router.post("/sync-logs/:id/retry", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;
@@ -417,7 +466,7 @@ router.post("/sync-logs/:id/retry", async (req: Request, res: Response) => {
 
 // GET /dingtalk/sync-health?limit=7
 // 返回最近 N 条同步记录的健康状态
-router.get("/sync-health", async (req: Request, res: Response) => {
+router.get("/sync-health", requireRole("admin"), async (req: Request, res: Response) => {
   try {
     const limit = Math.min(parseInt((req.query.limit as string) || "7", 10) || 7, 100);
     const items = await checkSyncHealth(limit);
@@ -430,7 +479,7 @@ router.get("/sync-health", async (req: Request, res: Response) => {
 
 // GET /dingtalk/sync-alerts?acknowledged=false
 // 返回同步告警列表
-router.get("/sync-alerts", async (req: Request, res: Response) => {
+router.get("/sync-alerts", requireRole("admin"), async (req: Request, res: Response) => {
   try {
     const acknowledged = req.query.acknowledged === "true";
     const alerts = await getSyncAlerts(!acknowledged);
@@ -443,7 +492,7 @@ router.get("/sync-alerts", async (req: Request, res: Response) => {
 
 // POST /dingtalk/sync-alerts/:id/ack
 // 确认某条同步告警已处理
-router.post("/sync-alerts/:id/ack", async (req: Request, res: Response) => {
+router.post("/sync-alerts/:id/ack", requireRole("admin"), async (req: Request, res: Response) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) {
     res.status(400).json({ error: "Invalid alert id" });
@@ -461,7 +510,7 @@ router.post("/sync-alerts/:id/ack", async (req: Request, res: Response) => {
 
 // POST /dingtalk/sync-force
 // 强制重新同步指定日期范围，绕过 already synced 检查
-router.post("/sync-force", async (req: Request, res: Response) => {
+router.post("/sync-force", requireRole("admin"), async (req: Request, res: Response) => {
   if (!isDingTalkConfigured()) {
     res.status(400).json({ error: "DingTalk not configured" });
     return;

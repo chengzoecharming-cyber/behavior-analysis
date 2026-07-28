@@ -14,12 +14,24 @@ export interface AffectedUserDate {
   business_date: string;
 }
 
+export interface QualitySummary {
+  totalRecords: number;
+  errorCount: number;
+  warningCount: number;
+  infoCount: number;
+  insertedCount: number;
+  skippedCount: number;
+  /** 按 check_type 分组的失败计数，方便前端快速定位主要问题类型 */
+  byCheckType: Record<string, number>;
+}
+
 export interface ProcessResult {
   rawInserted: number;
   normalizedInserted: number;
   skipped: number;
   geocodeFailures: GeocodeFailure[];
   affectedUserDates: AffectedUserDate[];
+  qualitySummary?: QualitySummary;
 }
 
 export function normalizeUserId(name: string): string {
@@ -135,6 +147,25 @@ export async function processParsedVisits(
   const affectedUserDates = new Set<string>();
   const businessDates = await computeBusinessDates(parsedVisits, source);
 
+  // 导入断言：收集质量问题，循环结束后批量写入，绝不影响导入本身。
+  // 注意：assertions.ts 依赖本文件（normalizeTimestamp 等），存在循环引用，
+  // 因此用动态 import() 延迟加载，且只加载一次而非每次循环。
+  type AssertionsModule = typeof import("./dataQuality/assertions");
+  let assertionsModule: AssertionsModule | null = null;
+  try {
+    assertionsModule = await import("./dataQuality/assertions");
+  } catch {
+    // 加载失败时静默跳过质量检查
+  }
+  const qualityFailures: import("./dataQuality/assertions").QualityRecordInput[] = [];
+
+  // 批内重复检测（钉钉数据）：同一批次里 approval_id+sequence+user_id 出现多次，
+  // 说明源数据本身重复（如重复导出）。库内已有记录由 checkDuplicateVisit 负责。
+  const batchDuplicateCounts = assertionsModule
+    ? assertionsModule.findBatchDuplicates(parsedVisits)
+    : new Map<string, number>();
+  const reportedBatchDupKeys = new Set<string>();
+
   for (let i = 0; i < parsedVisits.length; i++) {
     const visit = parsedVisits[i];
     const userId = visit.user_id || normalizeUserId(visit.user_name);
@@ -142,6 +173,55 @@ export async function processParsedVisits(
     const lat = normalizeCoordinate(visit.lat);
     const lng = normalizeCoordinate(visit.lng);
     const geocodeStatus = lat == null || lng == null ? "failed" : "success";
+
+    // 收集该条记录的质量断言结果（不写入，循环结束后批量写）
+    if (assertionsModule) {
+      try {
+        const { failures, businessDate } = assertionsModule.checkVisitQuality(visit, i + 1);
+        for (const f of failures) {
+          qualityFailures.push({
+            source,
+            sourceId: visit.approval_id ?? undefined,
+            recordIndex: i + 1,
+            userId,
+            businessDate,
+            checkType: f.checkType,
+            severity: f.severity,
+            message: f.message,
+            rawValue: f.rawValue,
+          });
+        }
+      } catch {
+        // 断言本身失败时静默跳过，绝不影响导入
+      }
+
+      // 批内重复：每个重复 key 只记一条 error（在第二次遇到时记录，首次出现不记，避免误报）
+      try {
+        if (visit.approval_id && visit.sequence != null) {
+          const dupKey = `${visit.approval_id}|${visit.sequence}|${userId}`;
+          const cnt = batchDuplicateCounts.get(dupKey) ?? 0;
+          // cnt>1 表示该 key 在批内重复；用 seenCounts 追踪当前是第几次遇到
+          const seen = (reportedBatchDupKeys.has(dupKey) ? 1 : 0) + 1;
+          if (cnt > 1 && seen === 2) {
+            qualityFailures.push({
+              source,
+              sourceId: visit.approval_id ?? undefined,
+              recordIndex: i + 1,
+              userId,
+              businessDate: businessDates[i],
+              checkType: "duplicate",
+              severity: "error",
+              message: `同一批次内 approval_id+sequence+user_id 重复出现 ${cnt} 次，源数据可能重复导出`,
+              rawValue: `approval_id=${visit.approval_id}, sequence=${visit.sequence}, user_id=${userId}`,
+            });
+          }
+          // 标记已遇到过该 key（无论是否记录）
+          reportedBatchDupKeys.add(dupKey);
+        }
+      } catch {
+        // 重复检测失败时静默跳过
+      }
+    }
 
     if (geocodeStatus === "failed") {
       geocodeFailures.push({
@@ -230,11 +310,64 @@ export async function processParsedVisits(
     );
   }
 
+  // 循环结束后批量写入质量断言结果，失败时静默跳过，绝不影响导入返回
+  if (assertionsModule && qualityFailures.length > 0) {
+    try {
+      await assertionsModule.batchRecordQualityRecords(qualityFailures);
+    } catch (err) {
+      console.warn("[dataQuality] 批量写入质量记录失败:", err);
+    }
+  }
+
+  // 汇总质量统计并写入 data_quality_summary（每个导入批次一条）
+  let qualitySummary: QualitySummary | undefined;
+  if (assertionsModule) {
+    try {
+      const byCheckType: Record<string, number> = {};
+      let errorCount = 0;
+      let warningCount = 0;
+      let infoCount = 0;
+      for (const f of qualityFailures) {
+        byCheckType[f.checkType] = (byCheckType[f.checkType] ?? 0) + 1;
+        if (f.severity === "error") errorCount++;
+        else if (f.severity === "warning") warningCount++;
+        else infoCount++;
+      }
+
+      const businessDateValues = businessDates.filter(Boolean).sort();
+      await assertionsModule.recordQualitySummary({
+        jobType: source === "excel" ? "excel_upload" : "dingtalk_sync",
+        startDate: businessDateValues[0],
+        endDate: businessDateValues[businessDateValues.length - 1],
+        totalRecords: parsedVisits.length,
+        errorCount,
+        warningCount,
+        infoCount,
+        insertedCount: insertedNormalized.length,
+        skippedCount,
+        details: { byCheckType, geocodeFailureCount: geocodeFailures.length },
+      });
+
+      qualitySummary = {
+        totalRecords: parsedVisits.length,
+        errorCount,
+        warningCount,
+        infoCount,
+        insertedCount: insertedNormalized.length,
+        skippedCount,
+        byCheckType,
+      };
+    } catch (err) {
+      console.warn("[dataQuality] 写入质量汇总失败:", err);
+    }
+  }
+
   return {
     rawInserted: insertedRaw.length,
     normalizedInserted: insertedNormalized.length,
     skipped: skippedCount,
     geocodeFailures,
     affectedUserDates: Array.from(affectedUserDates).map((s) => JSON.parse(s)),
+    qualitySummary,
   };
 }

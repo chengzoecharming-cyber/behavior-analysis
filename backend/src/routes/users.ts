@@ -5,6 +5,8 @@ import {
   AuthRequest,
   requireRole,
 } from "../services/auth";
+import { getUserIdsUnderNode } from "../services/orgService";
+import { previewReconcile, reconcileUsers } from "../services/userSyncService";
 
 const router = Router();
 
@@ -12,39 +14,57 @@ router.get("/me", authMiddleware, async (req: AuthRequest, res: Response) => {
   res.json(req.currentUser);
 });
 
-// 切换用户列表：返回所有用户，不区分权限（仅用于本地演示/切换身份）
-router.get("/switchable", async (req: AuthRequest, res: Response) => {
-  try {
-    const result = await pool.query(
-      "SELECT * FROM users ORDER BY role, user_name"
-    );
-    res.json(result.rows);
-  } catch (err) {
-    console.error("Failed to list switchable users:", err);
-    res.status(500).json({ error: "Database error" });
-  }
-});
-
+// 用户列表：附带 last_visit_date（最近签到日期）；is_invalid（部门白名单外）用户不返回
+// 权限：admin 全量；manager 看自己 + 本部门（含子部门）成员；staff 仅自己
 router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const user = req.currentUser!;
+    const baseSelect = `
+      SELECT u.*, v.last_visit_date
+      FROM users u
+      LEFT JOIN (
+        SELECT user_id, MAX(business_date) AS last_visit_date
+        FROM visits
+        GROUP BY user_id
+      ) v ON v.user_id = u.user_id
+      WHERE u.is_invalid = false`;
+
     let result;
     if (user.role === "admin") {
-      result = await pool.query(
-        "SELECT * FROM users ORDER BY created_at DESC"
-      );
+      result = await pool.query(`${baseSelect} ORDER BY u.created_at DESC`);
     } else if (user.role === "manager") {
+      // department 为空时仅自己；否则加上本部门（含子部门）成员
+      const visibleUserIds = user.department
+        ? await getUserIdsUnderNode(user.department)
+        : [];
+      const ids = Array.from(new Set([user.user_id, ...visibleUserIds]));
       result = await pool.query(
-        "SELECT * FROM users WHERE id = $1 OR manager_id = $1 ORDER BY created_at DESC",
-        [user.id]
+        `${baseSelect} AND u.user_id = ANY($1) ORDER BY u.created_at DESC`,
+        [ids]
       );
     } else {
-      result = await pool.query("SELECT * FROM users WHERE id = $1", [user.id]);
+      result = await pool.query(
+        `${baseSelect} AND u.user_id = $1`,
+        [user.user_id]
+      );
     }
     res.json(result.rows);
   } catch (err) {
     console.error("Failed to list users:", err);
     res.status(500).json({ error: "Database error" });
+  }
+});
+
+// 手动触发用户对账：body { dryRun?: boolean }
+// dryRun=true 只返回预览不写库；否则执行真实对账
+router.post("/sync", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+  const dryRun = !!req.body?.dryRun;
+  try {
+    const result = dryRun ? await previewReconcile() : await reconcileUsers();
+    res.json(result);
+  } catch (err) {
+    console.error("Failed to reconcile users:", err);
+    res.status(500).json({ error: "User reconcile failed" });
   }
 });
 
