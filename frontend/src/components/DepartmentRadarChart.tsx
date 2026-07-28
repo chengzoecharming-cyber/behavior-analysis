@@ -1,3 +1,4 @@
+import "./vchartSetup";
 import { VChart } from "@visactor/react-vchart";
 import type { IRadarChartSpec } from "@visactor/vchart";
 import { useMemo } from "react";

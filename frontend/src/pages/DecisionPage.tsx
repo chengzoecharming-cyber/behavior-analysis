@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button, Typography, Spin, Row, Col, Card } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
@@ -7,10 +7,18 @@ import {
   fetchCurrentUser,
   CompanyDashboardResponse,
 } from "../api";
-import EmployeeWordCloud from "../components/EmployeeWordCloud";
-import DepartmentRadarChart from "../components/DepartmentRadarChart";
-import VisitCountTrendChart from "../components/VisitCountTrendChart";
-import MileageAreaChart from "../components/MileageAreaChart";
+// 图表组件懒加载：vchart 体积 2MB+，延后加载让页面骨架先渲染
+const EmployeeWordCloud = lazy(() => import("../components/EmployeeWordCloud"));
+const DepartmentRadarChart = lazy(() => import("../components/DepartmentRadarChart"));
+const VisitCountTrendChart = lazy(() => import("../components/VisitCountTrendChart"));
+const MileageAreaChart = lazy(() => import("../components/MileageAreaChart"));
+
+// 图表加载中的占位，保持卡片高度避免布局跳动
+const chartFallback = (
+  <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <Spin />
+  </div>
+);
 import {
   getCurrentBusinessWeekRange,
   getPreviousBusinessWeekRange,
@@ -226,7 +234,9 @@ function DecisionPage() {
                 headerStyle={{ paddingBottom: 0 }}
                 bodyStyle={{ padding: 12, height: 500 }}
               >
-                <VisitCountTrendChart data={data.weeklyTrend} />
+                <Suspense fallback={chartFallback}>
+                  <VisitCountTrendChart data={data.weeklyTrend} />
+                </Suspense>
               </Card>
             </Col>
             <Col span={12}>
@@ -236,7 +246,9 @@ function DecisionPage() {
                 headerStyle={{ paddingBottom: 0 }}
                 bodyStyle={{ padding: 12, height: 500 }}
               >
-                <MileageAreaChart data={data.weeklyTrend} />
+                <Suspense fallback={chartFallback}>
+                  <MileageAreaChart data={data.weeklyTrend} />
+                </Suspense>
               </Card>
             </Col>
           </Row>
@@ -255,10 +267,12 @@ function DecisionPage() {
                     暂无员工数据
                   </div>
                 ) : (
-                  <EmployeeWordCloud
-                    data={data.employeeWordCloud}
-                    onClick={isAdmin ? handleEmployeeClick : undefined}
-                  />
+                  <Suspense fallback={chartFallback}>
+                    <EmployeeWordCloud
+                      data={data.employeeWordCloud}
+                      onClick={isAdmin ? handleEmployeeClick : undefined}
+                    />
+                  </Suspense>
                 )}
               </Card>
             </Col>
@@ -283,7 +297,9 @@ function DecisionPage() {
                     暂无部门数据
                   </div>
                 ) : (
-                  <DepartmentRadarChart data={data.departmentRadar} />
+                  <Suspense fallback={chartFallback}>
+                    <DepartmentRadarChart data={data.departmentRadar} />
+                  </Suspense>
                 )}
               </Card>
             </Col>

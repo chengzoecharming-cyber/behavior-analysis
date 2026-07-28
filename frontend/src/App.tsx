@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Routes,
   Route,
@@ -20,17 +20,25 @@ import {
   LogOut,
   History,
 } from "lucide-react";
-import DecisionPage from "./pages/DecisionPage";
-import ConsolePage from "./pages/ConsolePage";
-import RulesConfigPage from "./pages/RulesConfigPage";
-import DataSyncPage from "./pages/DataSyncPage";
-import FeedbackPage from "./pages/FeedbackPage";
-import LoginPage from "./pages/LoginPage";
-import LoginCallbackPage from "./pages/LoginCallbackPage";
-import DataSyncCenterPage from "./pages/DataSyncCenterPage";
-import UsersPage from "./pages/UsersPage";
+// 页面级懒加载：按路由拆分 chunk，首屏只下载当前页面所需代码
+const DecisionPage = lazy(() => import("./pages/DecisionPage"));
+const ConsolePage = lazy(() => import("./pages/ConsolePage"));
+const RulesConfigPage = lazy(() => import("./pages/RulesConfigPage"));
+const DataSyncPage = lazy(() => import("./pages/DataSyncPage"));
+const FeedbackPage = lazy(() => import("./pages/FeedbackPage"));
+const LoginPage = lazy(() => import("./pages/LoginPage"));
+const LoginCallbackPage = lazy(() => import("./pages/LoginCallbackPage"));
+const DataSyncCenterPage = lazy(() => import("./pages/DataSyncCenterPage"));
+const UsersPage = lazy(() => import("./pages/UsersPage"));
 import { fetchCurrentUser, logoutApi, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
+
+// 懒加载页面切换时的占位
+const pageFallback = (
+  <div className="flex h-64 w-full items-center justify-center">
+    <div className="text-sm text-[#72808a]">页面加载中...</div>
+  </div>
+);
 
 interface NavItem {
   path: string;
@@ -105,10 +113,12 @@ function App() {
   if (!currentUser) {
     // 未登录时只放行登录页和钉钉扫码回调页
     return (
-      <Routes>
-        <Route path="/login/callback" element={<LoginCallbackPage />} />
-        <Route path="*" element={<LoginPage />} />
-      </Routes>
+      <Suspense fallback={pageFallback}>
+        <Routes>
+          <Route path="/login/callback" element={<LoginCallbackPage />} />
+          <Route path="*" element={<LoginPage />} />
+        </Routes>
+      </Suspense>
     );
   }
 
@@ -312,24 +322,26 @@ function App() {
 
       {/* Content */}
       <main className="flex-1 min-h-0" style={{ padding: 24 }}>
-        <Routes>
-          <Route path="/" element={<DecisionPage />} />
-          <Route path="/dashboard" element={<Navigate to="/" replace />} />
-          <Route path="/console" element={<ConsolePage />} />
-          <Route path="/map" element={<Navigate to="/" replace />} />
-          <Route path="/upload" element={<Navigate to="/sync" replace />} />
-          {/* 管理功能页面：非 admin 直访时跳回首页（导航入口已隐藏，这里是第二道守卫） */}
-          <Route path="/sync" element={currentUser.role === "admin" ? <DataSyncPage /> : <Navigate to="/" replace />} />
-          <Route path="/sync-center" element={currentUser.role === "admin" ? <DataSyncCenterPage /> : <Navigate to="/" replace />} />
-          {/* 旧入口统一跳转到数据同步中心 */}
-          <Route path="/sync-health" element={<Navigate to="/sync-center" replace />} />
-          <Route path="/sync-logs" element={<Navigate to="/sync-center" replace />} />
-          <Route path="/data-lineage" element={<Navigate to="/sync-center" replace />} />
-          <Route path="/rules" element={currentUser.role === "admin" ? <RulesConfigPage /> : <Navigate to="/" replace />} />
-          <Route path="/users" element={<UsersPage />} />
-          <Route path="/feedback" element={<FeedbackPage />} />
-          <Route path="/login" element={<LoginPage />} />
-        </Routes>
+        <Suspense fallback={pageFallback}>
+          <Routes>
+            <Route path="/" element={<DecisionPage />} />
+            <Route path="/dashboard" element={<Navigate to="/" replace />} />
+            <Route path="/console" element={<ConsolePage />} />
+            <Route path="/map" element={<Navigate to="/" replace />} />
+            <Route path="/upload" element={<Navigate to="/sync" replace />} />
+            {/* 管理功能页面：非 admin 直访时跳回首页（导航入口已隐藏，这里是第二道守卫） */}
+            <Route path="/sync" element={currentUser.role === "admin" ? <DataSyncPage /> : <Navigate to="/" replace />} />
+            <Route path="/sync-center" element={currentUser.role === "admin" ? <DataSyncCenterPage /> : <Navigate to="/" replace />} />
+            {/* 旧入口统一跳转到数据同步中心 */}
+            <Route path="/sync-health" element={<Navigate to="/sync-center" replace />} />
+            <Route path="/sync-logs" element={<Navigate to="/sync-center" replace />} />
+            <Route path="/data-lineage" element={<Navigate to="/sync-center" replace />} />
+            <Route path="/rules" element={currentUser.role === "admin" ? <RulesConfigPage /> : <Navigate to="/" replace />} />
+            <Route path="/users" element={<UsersPage />} />
+            <Route path="/feedback" element={<FeedbackPage />} />
+            <Route path="/login" element={<LoginPage />} />
+          </Routes>
+        </Suspense>
       </main>
     </div>
   );

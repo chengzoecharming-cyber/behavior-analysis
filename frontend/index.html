@@ -7,7 +7,11 @@
     <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png?v=2" />
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png?v=2" />
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@douyinfe/semi-ui@2.72.2/dist/css/semi.min.css" />
-    <script src="https://webapi.amap.com/loader.js"></script>
+    <!-- 高德 JS API / 瓦片域名预热：提前建立连接，加快地图初始化（瓦片本身无法本地缓存） -->
+    <link rel="preconnect" href="https://webapi.amap.com" crossorigin />
+    <link rel="dns-prefetch" href="https://webapi.amap.com" />
+    <link rel="dns-prefetch" href="https://restapi.amap.com" />
+    <link rel="dns-prefetch" href="https://webrd01.is.autonavi.com" />
   </head>
   <body>
     <div id="root"></div>

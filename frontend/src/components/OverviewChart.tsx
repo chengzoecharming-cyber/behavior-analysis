@@ -1,4 +1,5 @@
 import { useMemo, useState, useCallback } from "react";
+import "./vchartSetup";
 import { VChart } from "@visactor/react-vchart";
 import type { ICommonChartSpec } from "@visactor/vchart";
 import dayjs from "dayjs";
