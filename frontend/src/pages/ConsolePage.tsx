@@ -412,6 +412,7 @@ function ConsolePage() {
   const [mileage, setMileage] = useState<MileageStats | null>(null);
   const [routeProgressMap, setRouteProgressMap] = useState<Record<string, number>>({});
   const [playingRoutes, setPlayingRoutes] = useState<Set<string>>(new Set());
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1);
 
   // 周期总览状态
   const [overviewLoading, setOverviewLoading] = useState(false);
@@ -856,6 +857,7 @@ function ConsolePage() {
     }
 
     let animationFrameId: number;
+    const BASE_DURATION_MS = 10000;
 
     const animate = (timestamp: number) => {
       if (startTime === null) startTime = timestamp;
@@ -865,7 +867,10 @@ function ConsolePage() {
 
       for (const key of Array.from(playingRoutes)) {
         const startProgress = startProgressMap.get(key) ?? 0;
-        const newProgress = Math.min(1, startProgress + elapsed / 10000);
+        const newProgress = Math.min(
+          1,
+          startProgress + (elapsed * playbackSpeed) / BASE_DURATION_MS
+        );
         next[key] = newProgress;
         if (newProgress < 1) stillPlaying = true;
       }
@@ -881,7 +886,7 @@ function ConsolePage() {
 
     animationFrameId = requestAnimationFrame(animate);
     return () => cancelAnimationFrame(animationFrameId);
-  }, [playingRoutes]);
+  }, [playingRoutes, playbackSpeed]);
 
   const handleSelectDate = (dateStr: string) => {
     if (!availableDateInfos.some((i) => i.date === dateStr)) return;
@@ -1321,6 +1326,34 @@ function ConsolePage() {
                       >
                         <IconRedo />
                       </button>
+                      <div
+                        style={{
+                          width: 1,
+                          height: 16,
+                          backgroundColor: "#d9d9d9",
+                          margin: "0 4px",
+                        }}
+                      />
+                      {[0.5, 1, 2, 4].map((speed) => (
+                        <button
+                          key={speed}
+                          onClick={() => setPlaybackSpeed(speed)}
+                          style={{
+                            background: playbackSpeed === speed ? "#0f1419" : "none",
+                            color: playbackSpeed === speed ? "#fff" : "#666",
+                            border: "none",
+                            borderRadius: 10,
+                            cursor: "pointer",
+                            fontSize: 12,
+                            fontWeight: 600,
+                            padding: "2px 6px",
+                            lineHeight: 1,
+                          }}
+                          title={`${speed}x 速度`}
+                        >
+                          {speed}x
+                        </button>
+                      ))}
                     </div>
                   )}
                 </div>

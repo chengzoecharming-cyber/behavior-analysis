@@ -88,6 +88,62 @@ function buildRoutePath(routes: Route[]): [number, number][] {
   return fullPath;
 }
 
+function computePathAngle(from: [number, number], to: [number, number]): number {
+  const dx = to[0] - from[0];
+  const dy = to[1] - from[1];
+  const degrees = Math.atan2(dy, dx) * (180 / Math.PI);
+  // 标准 atan2 给出从正东（x 轴）逆时针的角度；转换为从正北顺时针的角度
+  return 90 - degrees;
+}
+
+function getCarStateOnPath(
+  path: [number, number][],
+  progress: number
+): { position: [number, number]; angle: number } | null {
+  if (path.length === 0) return null;
+  if (path.length === 1) {
+    return { position: path[0], angle: 0 };
+  }
+
+  if (progress <= 0) {
+    return { position: path[0], angle: computePathAngle(path[0], path[1]) };
+  }
+  if (progress >= 1) {
+    const last = path[path.length - 1];
+    const prev = path[path.length - 2];
+    return { position: last, angle: computePathAngle(prev, last) };
+  }
+
+  const targetIndex = progress * (path.length - 1);
+  const currentIndex = Math.floor(targetIndex);
+  const ratio = targetIndex - currentIndex;
+  const start = path[currentIndex];
+  const end = path[Math.min(currentIndex + 1, path.length - 1)];
+  const position: [number, number] = [
+    start[0] + (end[0] - start[0]) * ratio,
+    start[1] + (end[1] - start[1]) * ratio,
+  ];
+
+  // 用当前点与下一个原始点计算车头朝向，平滑且与线路切线一致
+  const lookAheadIndex = Math.min(currentIndex + 1, path.length - 1);
+  const angle = computePathAngle(position, path[lookAheadIndex]);
+  return { position, angle };
+}
+
+function getCarMarkerContent(color: string) {
+  // 车顶视角的小车，默认车头朝上（北）
+  return `
+    <svg width="28" height="36" viewBox="0 0 28 36" style="display:block;overflow:visible;">
+      <ellipse cx="14" cy="32" rx="9" ry="3" fill="rgba(0,0,0,0.18)"/>
+      <path d="M7 30 L7 17 L9 12 L9 8 Q9 4 14 4 Q19 4 19 8 L19 12 L21 17 L21 30 Q21 34 14 34 Q7 34 7 30 Z" fill="${color}" stroke="#fff" stroke-width="2"/>
+      <path d="M9 13 L19 13 L17 9 L11 9 Z" fill="rgba(255,255,255,0.55)"/>
+      <path d="M8 18 L20 18 L20 22 Q14 23 8 22 Z" fill="rgba(255,255,255,0.35)"/>
+      <circle cx="10.5" cy="8.5" r="1.4" fill="#fff9c4"/>
+      <circle cx="17.5" cy="8.5" r="1.4" fill="#fff9c4"/>
+    </svg>
+  `;
+}
+
 function DescItem({ label, children }: { label: string; children: ReactNode }) {
   return (
     <Descriptions.Item
@@ -136,6 +192,8 @@ export default function MapContainer({
   const polylines = useRef<any[]>([]);
   const coloredLinesRef = useRef<Record<string, any>>({});
   const fullPathMap = useRef<Record<string, [number, number][]>>({});
+  const carMarkers = useRef<Record<string, any>>({});
+  const carAngleMap = useRef<Record<string, number>>({});
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
@@ -186,10 +244,13 @@ export default function MapContainer({
 
     markers.current.forEach((m) => m.setMap(null));
     polylines.current.forEach((p) => p.setMap(null));
+    Object.values(carMarkers.current).forEach((m) => m.setMap(null));
     markers.current = [];
     polylines.current = [];
     coloredLinesRef.current = {};
     fullPathMap.current = {};
+    carMarkers.current = {};
+    carAngleMap.current = {};
 
     const allVisits: Visit[] = [];
     const visitIds = new Set<number>();
@@ -240,6 +301,16 @@ export default function MapContainer({
         colorLine.setMap(mapInstance.current);
         polylines.current.push(colorLine);
         coloredLinesRef.current[group.key] = colorLine;
+
+        // 播放小车标记：默认隐藏，由进度 effect 控制显隐/位置/朝向
+        const carMarker = new AMap.Marker({
+          position: path[0],
+          content: getCarMarkerContent(group.color),
+          offset: new AMap.Pixel(-14, -18),
+          zIndex: 200,
+          angle: 0,
+        });
+        carMarkers.current[group.key] = carMarker;
 
         // 非驾车段用紫色虚线叠加
         const visitMap = new Map(uniqueVisits.map((v) => [v.id, v]));
@@ -389,6 +460,29 @@ export default function MapContainer({
       if (fullPath && line) {
         line.setPath(getPassedPath(fullPath, p));
       }
+    });
+
+    Object.entries(carMarkers.current).forEach(([key, marker]) => {
+      const fullPath = fullPathMap.current[key];
+      const p = activeProgressMap[key] ?? 1;
+      if (!fullPath || !marker) return;
+
+      if (p >= 1) {
+        marker.setMap(null);
+        return;
+      }
+
+      const state = getCarStateOnPath(fullPath, p);
+      if (!state) return;
+
+      marker.setPosition(state.position);
+      // 只有角度变化超过阈值才更新，避免高频旋转造成的抖动
+      const lastAngle = carAngleMap.current[key];
+      if (lastAngle === undefined || Math.abs(state.angle - lastAngle) > 1) {
+        marker.setAngle(state.angle);
+        carAngleMap.current[key] = state.angle;
+      }
+      marker.setMap(mapInstance.current);
     });
   }, [progress, progressMap, loaded, activeProgressMap]);
 
