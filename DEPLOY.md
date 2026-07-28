@@ -326,6 +326,42 @@ docker exec -it sales-map-backend npm run recompute:anomalies
 
 ---
 
+## 指定管理员（从钉钉通讯录）
+
+部署后，如果要把某位同事从钉钉通讯录同步到系统并设为 `admin`，在服务器执行：
+
+```bash
+cd /root/sales-map
+
+# 等 GitHub Actions 构建并推送最新镜像后，先更新容器
+docker compose -f docker-compose.ghcr.yml pull backend
+docker compose -f docker-compose.ghcr.yml up -d
+
+# 执行脚本（把「某名字」替换为钉钉通讯录中的真实姓名）
+docker exec sales-map-backend npx ts-node scripts/addAdminFromDingTalk.ts 某名字
+```
+
+例如给「李杰」添加管理员权限：
+
+```bash
+docker exec sales-map-backend npx ts-node scripts/addAdminFromDingTalk.ts 李杰
+```
+
+脚本会：
+
+1. 全量同步钉钉通讯录到 `dingtalk_departments` / `dingtalk_users`；
+2. 按姓名精确匹配通讯录人员；
+3. 在 `users` 表新建或更新该用户，并设置 `role = 'admin'`。
+
+注意事项：
+
+- 姓名必须和钉钉通讯录里完全一致，否则会报「未找到」。
+- 如果存在多个同名人员，脚本会列出所有匹配项并退出，需要另外处理。
+- 该脚本会刷新整棵部门树，但对现有业务数据无影响。
+- 若用户已存在于 `users` 表但角色不是 `admin`，脚本会将其升级为 `admin`。
+
+---
+
 ## 常见问题
 
 ### 1. 端口访问不了
