@@ -11,6 +11,10 @@ export interface DingTalkFileSendConfig {
   robotSecret?: string;
 }
 
+export interface DingTalkWorkNotificationConfig {
+  agentId: string;
+}
+
 export function getExportConfig(): DingTalkFileSendConfig {
   return {
     chatId: process.env.DINGTALK_EXPORT_CHAT_ID || "",
@@ -19,8 +23,18 @@ export function getExportConfig(): DingTalkFileSendConfig {
   };
 }
 
+export function getWorkNotificationConfig(): DingTalkWorkNotificationConfig {
+  return {
+    agentId: process.env.DINGTALK_AGENT_ID || "",
+  };
+}
+
 export function isExportConfigured(): boolean {
   return !!getExportConfig().chatId;
+}
+
+export function isWorkNotificationConfigured(): boolean {
+  return !!getWorkNotificationConfig().agentId;
 }
 
 /**
@@ -140,6 +154,79 @@ export async function sendMarkdownToDingTalkChat(
   if (data.errcode !== 0) {
     throw new Error(`钉钉 chat/send 失败: ${data.errmsg} (${data.errcode})`);
   }
+}
+
+/**
+ * 以应用身份发送工作通知（ corpconversation/asyncsend_v2 ）到指定用户。
+ */
+async function sendWorkNotificationToUsers(
+  userIds: string[],
+  msg: { msgtype: string; [key: string]: any }
+): Promise<void> {
+  const { agentId } = getWorkNotificationConfig();
+  if (!agentId) {
+    throw new Error("未配置 DINGTALK_AGENT_ID");
+  }
+
+  const accessToken = await getAccessToken();
+  const url = `${DINGTALK_API_BASE}/topapi/message/corpconversation/asyncsend_v2?access_token=${encodeURIComponent(
+    accessToken
+  )}`;
+
+  const body = {
+    agent_id: agentId,
+    userid_list: userIds.join(","),
+    msg,
+  };
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+  if (!res.ok) {
+    throw new Error(`钉钉工作通知 HTTP 错误: ${res.status} ${res.statusText}`);
+  }
+
+  const data: any = await res.json();
+  if (data.errcode !== 0) {
+    throw new Error(`钉钉工作通知发送失败: ${data.errmsg} (${data.errcode})`);
+  }
+  console.log(`[DingTalk WorkNotification] task_id=${data.task_id}, request_id=${data.request_id}, userIds=${userIds.join(",")}`);
+}
+
+/**
+ * 以应用身份发送文件类型工作通知到指定用户。
+ */
+export async function sendWorkNotificationFile(
+  userIds: string[],
+  mediaId: string
+): Promise<void> {
+  if (userIds.length === 0) {
+    throw new Error("接收用户列表为空");
+  }
+  await sendWorkNotificationToUsers(userIds, {
+    msgtype: "file",
+    file: { media_id: mediaId },
+  });
+}
+
+/**
+ * 以应用身份发送 Markdown 类型工作通知到指定用户。
+ */
+export async function sendWorkNotificationMarkdown(
+  userIds: string[],
+  title: string,
+  text: string
+): Promise<void> {
+  if (userIds.length === 0) {
+    throw new Error("接收用户列表为空");
+  }
+  await sendWorkNotificationToUsers(userIds, {
+    msgtype: "markdown",
+    markdown: { title, text },
+  });
 }
 
 /**

@@ -994,7 +994,7 @@ function ConsolePage() {
                   fontWeight: 500,
                 }}
               >
-                {exportLoading ? "发送中..." : "导出并发送到钉钉"}
+                {exportLoading ? "发送中..." : "导出到我的工作通知"}
               </button>
             )}
           </Col>

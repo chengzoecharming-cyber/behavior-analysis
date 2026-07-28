@@ -162,7 +162,7 @@ map/
 
 - **总览页（DecisionPage）数据源**（`/analytics/company-dashboard`、`/analytics/org-tree`、`/analytics/org-overview`、`/analytics/risk-summary*`、`/analytics/regional-overview`、`/analytics/mileage-distribution`）：**所有角色登录即可见全公司数据**（便于横向对比），不做权限收敛；前端仅 admin 可点击页面内容跳转（员工卡片 → 控制台），manager/staff 为纯浏览视图。
 - **「数据&分析」（ConsolePage）数据源**（`/visits/*`、`/stops`、`/routes`、`/analytics/mileage`、`/analytics/anomaly`、`/analytics/user-overview`、`/analytics/risk-score`、`/dingtalk/org-tree`、`/dingtalk/users`）：按角色过滤——manager 可见范围由 `users.department` 自动决定（'销售部' → 全部门含子部门；'销售部-华东昆山' → 仅该子部门，复用 `orgService.getUserIdsUnderNode`），始终 ∪ 自己；staff 仅自己。越权返回 403「无权查看该成员数据」。
-- 管理功能：`/dingtalk` 同步运维类、`/upload-excel`、`/export/generate-reports`、`/export/generation-logs`、`/analytics/risk-summary/refresh`、`PUT /analytics/anomaly-weights`、`PUT /analytics/department-aliases`、`/analytics/init-department-aliases` 仅 admin；`/export/console-report*`、`/export/scope-report-to-doc` 限 admin/manager（可导任意范围）。
+- 管理功能：`/dingtalk` 同步运维类、`/upload-excel`、`/export/generate-reports`、`/export/generation-logs`、`/analytics/risk-summary/refresh`、`PUT /analytics/anomaly-weights`、`PUT /analytics/department-aliases`、`/analytics/init-department-aliases` 仅 admin；`/export/scope-report-to-doc` 限 admin/manager（可导任意范围）。`/export/console-report` 对所有角色开放，但数据范围按 ConsolePage 口径收敛，且只发送到当前登录用户的钉钉工作通知。
 
 统一逻辑在 `backend/src/services/permission.ts`（`getVisibleUserIds`/`canViewUser`/`clampNodeForUser`/`isNodeInRange`）。`/users/*`、`/feedback` 维持原有权限逻辑。
 
@@ -263,6 +263,9 @@ DINGTALK_EXPORT_CHAT_ID=
 
 # 可选：自定义机器人 webhook，用于发送文字摘要
 DINGTALK_EXPORT_ROBOT_WEBHOOK=
+
+# 钉钉企业内部应用 AgentId，用于 ConsolePage「导出到我的工作通知」
+DINGTALK_AGENT_ID=YOUR_DINGTALK_AGENT_ID
 ```
 
 ### 前端 `frontend/.env.example`
@@ -356,7 +359,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET/POST/PUT/DELETE | `/users/*` | 用户管理（GET 返回 `last_visit_date`，按角色过滤：admin 全量 / manager 本部门含子部门 / staff 仅自己） |
 | POST | `/users/sync` | 手动触发用户对账（admin），body `{ dryRun?: boolean }`，dryRun 只预览不写库 |
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
-| POST | `/export/console-report` | 导出控制台报告并发送到钉钉群 |
+| POST | `/export/console-report` | 导出控制台报告并发送到当前登录用户的钉钉工作通知 |
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
 | POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`） |
 | GET | `/export/generation-logs` | 报告生成日志（page/pageSize 分页，report_type/status/start/end 筛选） |

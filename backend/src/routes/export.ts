@@ -13,10 +13,10 @@ import {
 } from "../services/dingtalkDoc";
 import { computeMileageByApprovalForUsers } from "../services/mileageAnalysis";
 import {
-  isExportConfigured,
+  isWorkNotificationConfigured,
   uploadMediaToDingTalk,
-  sendFileToDingTalkChat,
-  sendReportSummaryByRobot,
+  sendWorkNotificationFile,
+  sendWorkNotificationMarkdown,
 } from "../services/dingtalkFile";
 import {
   generateDailyReports,
@@ -33,10 +33,12 @@ import {
 } from "../services/addressWhitelistService";
 
 import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
+import { canViewUser, getVisibleUserIds, isNodeInRange, FORBIDDEN_MESSAGE } from "../services/permission";
 
 const router = Router();
 
-// 导出接口全部需要登录；报告导出限 admin/manager（可导出任意范围，与总览数据全员可见口径一致）
+// 导出接口全部需要登录；wiki/文档导出仍限 admin/manager
+// 控制台报告导出对所有角色开放，但数据范围按 ConsolePage 口径收敛
 router.use(authMiddleware);
 
 function daysBetween(start: string, end: string): number {
@@ -199,21 +201,22 @@ async function buildNestedRanking(
   scope: "company" | "department" | "sub_department",
   node: string,
   start: string,
-  end: string
+  end: string,
+  restrictUserIds: string[] | null = null
 ): Promise<NestedRankingItem[]> {
-  const overview = await computeOrgOverview(scope, node, start, end);
+  const overview = await computeOrgOverview(scope, node, start, end, restrictUserIds);
   const ranking: NestedRankingItem[] = overview.ranking.map((r) => ({ ...r }));
 
   if (scope === "company") {
     for (const dept of ranking) {
       if (dept.hasChildren) {
-        dept.children = await buildNestedRanking("department", dept.key, start, end);
+        dept.children = await buildNestedRanking("department", dept.key, start, end, restrictUserIds);
       }
     }
   } else if (scope === "department") {
     for (const sub of ranking) {
       if (sub.hasChildren) {
-        sub.children = await buildNestedRanking("sub_department", sub.key, start, end);
+        sub.children = await buildNestedRanking("sub_department", sub.key, start, end, restrictUserIds);
       }
     }
   }
@@ -222,9 +225,9 @@ async function buildNestedRanking(
   return ranking;
 }
 
-router.post("/console-report", requireRole("admin", "manager"), async (req: AuthRequest, res: Response) => {
+router.post("/console-report", async (req: AuthRequest, res: Response) => {
   const { scope, node, userId, start, end, amapKey, points } = req.body || {};
-
+  const currentUser = req.currentUser!;
 
   const reportScope = scope || "person";
   if (!["company", "department", "sub_department", "person"].includes(reportScope)) {
@@ -255,10 +258,27 @@ router.post("/console-report", requireRole("admin", "manager"), async (req: Auth
     res.status(400).json({ error: "Missing node for department/sub_department scope" });
     return;
   }
-  if (!isExportConfigured()) {
-    res.status(503).json({ error: "未配置 DINGTALK_EXPORT_CHAT_ID" });
+  if (!isWorkNotificationConfigured()) {
+    res.status(503).json({ error: "未配置 DINGTALK_AGENT_ID" });
     return;
   }
+
+  // 按 ConsolePage 口径收敛数据可见范围
+  const visibleUserIds = await getVisibleUserIds(currentUser);
+  const restrictUserIds: string[] | null = visibleUserIds;
+
+  if (reportScope === "person") {
+    if (!(await canViewUser(currentUser, userId))) {
+      res.status(403).json({ error: FORBIDDEN_MESSAGE });
+      return;
+    }
+  } else if (reportScope === "department" || reportScope === "sub_department") {
+    if (!isNodeInRange(currentUser, node)) {
+      res.status(403).json({ error: FORBIDDEN_MESSAGE });
+      return;
+    }
+  }
+  // company 维度 admin 直接通过；manager/staff 理论上不会选到 company，但若选了也按可见范围收敛
 
   let tempFile = "";
   try {
@@ -364,13 +384,15 @@ router.post("/console-report", requireRole("admin", "manager"), async (req: Auth
           reportScope as "company" | "department" | "sub_department",
           nodeName,
           start,
-          end
+          end,
+          restrictUserIds
         ),
         buildNestedRanking(
           reportScope as "company" | "department" | "sub_department",
           nodeName,
           start,
-          end
+          end,
+          restrictUserIds
         ),
       ]);
 
@@ -408,12 +430,38 @@ router.post("/console-report", requireRole("admin", "manager"), async (req: Auth
     fs.writeFileSync(tempFile, html, "utf-8");
 
     const mediaId = await uploadMediaToDingTalk(tempFile, fileName);
-    await sendFileToDingTalkChat(mediaId, fileName);
 
-    const summary = `**${summaryName}** 外勤行为报告已生成\n\n时间：${start} ~ ${end}\n\n${summaryMetrics}`;
-    await sendReportSummaryByRobot(summary);
+    // 发送目标固定为当前登录用户自己的工作通知
+    const receiverUserIds = [currentUser.user_id];
 
-    res.json({ success: true, message: "已发送到钉钉群" });
+    // 先尝试发文件；若文件发送失败，仍发送文字摘要以便用户看到报告概览
+    let fileSent = false;
+    try {
+      await sendWorkNotificationFile(receiverUserIds, mediaId);
+      fileSent = true;
+    } catch (err: any) {
+      console.warn("[console-report] 文件类型工作通知发送失败:", err?.message || err);
+    }
+
+    const summaryLines = [
+      `**${summaryName}** 外勤行为报告已生成`,
+      "",
+      `时间：${start} ~ ${end}`,
+      "",
+      summaryMetrics,
+    ];
+    if (!fileSent) {
+      summaryLines.push("", "> 报告文件发送失败，请在系统中查看详情。");
+    }
+    const summary = summaryLines.join("\n");
+    await sendWorkNotificationMarkdown(receiverUserIds, "外勤行为报告", summary);
+
+    res.json({
+      success: true,
+      message: fileSent
+        ? "已发送到你的钉钉工作通知"
+        : "文字摘要已发送，报告文件发送失败",
+    });
   } catch (err: any) {
     console.error("导出控制台报告失败:", err);
     res.status(500).json({
