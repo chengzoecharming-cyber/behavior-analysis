@@ -10,6 +10,7 @@
 | 2026-07-22 | `5cd57c2` | 第一层「导入时断言」收尾：批内重复检测、质量汇总记录、接口透传 |
 | 2026-07-22 | `a4c3577` | 数据血缘查看器：钉钉审批单 ① 原始表单 → ② 重新解析 → ③ 已入库 三步对照 |
 | 2026-07-23 | `2f5107f` | 「数据同步中心」页：同步记录 + 同步健康 + 数据血缘三合一 |
+| 2026-07-29 | （待提交） | 修复 `visits.approval_status` 卡死：同步后对齐 `raw_approvals.status`，回填 109 条 |
 
 ---
 
@@ -139,6 +140,64 @@
 
 - 第一层（导入断言）新增候选规则：归日一致性、客户名与拜访类型的占位冲突检测（仅记录不拦截）。
 - 「口径文档」雏形：AGENTS.md 的 business_date 一节 + 占位客户文档，未来应收敛成一份完整的**钉钉表单语义规格**（每个字段的控件形态、编号约定、映射规则）。
+
+---
+
+## 六、幂等键讨论与 `approval_status` 卡死修复（2026-07-29）
+
+> 起因是学习「幂等键（Idempotency Key）」概念时发起的一次讨论：当前钉钉同步是「历遍」（每 3 小时重拉 3 天窗口内所有审批单详情），是否值得引入幂等键优化。结论是**不引入，但顺手抓出了一个真实的正确性 bug**。本节记录决策框架，供以后遇到同类问题时直接套用。
+
+### 已有幂等设计盘点
+
+讨论中发现项目写入层其实已经在用幂等键思想，只是没有这么叫：
+
+| 层 | 机制 | 相当于幂等键的东西 |
+|---|---|---|
+| `raw_approvals` | `approval_id` UNIQUE + `ON CONFLICT DO UPDATE` | `approval_id` 天然幂等键，重跑安全且内容刷新 |
+| `visits` | 插入前 `checkDuplicateVisit` 查重跳过 | `approval_id + sequence + user_id` 复合键 |
+| `risk_summary_cache` | `UNIQUE(user_id, date)` + upsert | `user_id + date` |
+
+所以「重复同步会产生重复数据」这个问题并不存在。抓取层（每 3 小时对所有单调详情接口）的「历遍」是**浪费**，不是**错误**。
+
+### 决策框架：效率看量级，正确性不看量级
+
+幂等键这类机制解决两类问题，判断标准完全不同：
+
+- **解决「浪费」（效率类）**：看量级，量级小就不急。
+- **解决「错误」（正确性类）**：不看量级，有错就修。
+
+用真实数据套这个框架（2026-07-29 本地库实测）：
+
+- `visits` 全表 2,736 条；工作日每天 30~40 张审批单、60~80 个签到点。
+- 3 天窗口 72 张单中 66 张已是终态——「跳过终态」优化能省约 92% 的详情 API 调用，但绝对值只是「每 3 小时 72 次调用」，对钉钉配额约等于零。
+
+**决策一：抓取层「跳过终态」优化不做，记入待办。** 触发条件写死：单日审批量涨到几百张、或同步日志出现限流报错时再回头做。届时思路是：只对「新 ID + RUNNING 单」调 `getApprovalDetail`，终态单跳过（`syncRunningApprovals` 已是这个思路的镜像）。前提假设「终态审批单在钉钉上不会再变」已与业务确认成立。
+
+### 决策二：`approval_status` 卡死是 bug，立刻修
+
+讨论中核实：`processParsedVisits` 对钉钉数据是「存在即跳过」（`checkDuplicateVisit`，`normalization.ts:82-88`），整个后端对 `visits` 唯一的 UPDATE 是手动修坐标接口——**同步链路对 `visits` 只插不改**。审批单从 RUNNING 变为 COMPLETED 后，`raw_approvals` 那边 ON CONFLICT 刷新了，`visits.approval_status` 却永远停在 RUNNING。
+
+这不是理论问题：前端 `MapContainer.tsx:358` 和 `TrajectoryTimeline.tsx:119` 拿 `approval_status === "RUNNING"` 判定轨迹终点画「终」还是「途n」。实测线上 **109 条**签到记录（占 4%）的审批单早已完结，地图上却永远显示「途n」。
+
+**修复**（`dingtalk.ts`）：
+
+```sql
+UPDATE visits v
+SET approval_status = r.status
+FROM raw_approvals r
+WHERE v.approval_id = r.approval_id
+  AND r.status IS NOT NULL
+  AND v.approval_status IS DISTINCT FROM r.status
+```
+
+- 新增 `refreshVisitApprovalStatus()`，在 `syncApprovals` 和 `syncRunningApprovals` 末尾各执行一次。语句幂等、全表代价极低，每次同步都跑，兼有自愈存量的作用——生产环境部署后下一次同步即自动回填，无需单独迁移脚本。
+- 本地已手动执行一次：109 条全部修正，复查卡死记录为 0。
+
+### 教训
+
+1. **「存在即跳过」的查重只防重复、不保鲜。** 新签到点能进来（新复合键查不到），但已有行的任何字段变更都被跳过。凡是有「源端状态会迁移」的字段（如审批状态），写入层的幂等设计必须回答「变更怎么传播」，答案是 upsert 或事后对齐，不能是 skip。
+2. **对账口径要跟着字段走。** `syncCheckService` 的 MD5 对账只比对审批单 ID 集合，ID 全集一致时一片绿，但字段级漂移（如这次的 status）完全照不出来。这次是靠手工 SQL 对出来的。未来若再有类似字段漂移，应考虑把关键字段纳入对账口径（如对 `(approval_id, status)` 元组算 hash）。
+3. **学习概念时顺手盘点现有实现，往往能抓到真 bug。** 幂等键讨论的预期产出是一个优化方案，实际产出是一个正确性修复——因为「系统其实已经部分实现了这个概念，但实现得不完整」是常态。
 
 ---
 

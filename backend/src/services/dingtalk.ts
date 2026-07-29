@@ -1208,6 +1208,22 @@ export async function saveRawApproval(instance: any, processInstanceId?: string)
   }
 }
 
+// 把 visits.approval_status 与 raw_approvals.status 对齐。
+// 背景：processParsedVisits 对已有行「存在即跳过」，字段不会被刷新；
+// 而审批单会从 RUNNING 变为 COMPLETED，不刷新会导致前端轨迹终点永远显示「途n」而不是「终」。
+// 该语句幂等且全表代价很低，每次同步都执行，兼有自愈存量数据的作用。
+async function refreshVisitApprovalStatus(): Promise<number> {
+  const result = await pool.query(
+    `UPDATE visits v
+     SET approval_status = r.status
+     FROM raw_approvals r
+     WHERE v.approval_id = r.approval_id
+       AND r.status IS NOT NULL
+       AND v.approval_status IS DISTINCT FROM r.status`
+  );
+  return result.rowCount ?? 0;
+}
+
 export async function fetchAllApprovalIds(
   startTimeMs: number,
   endTimeMs: number
@@ -1355,6 +1371,12 @@ export async function syncApprovals(
 
     const result = await processParsedVisits(parsedVisits, "dingtalk");
 
+    // 对齐已有 visits 行的审批状态（RUNNING → COMPLETED 等），修复前端「终/途」标记卡死
+    const statusRefreshed = await refreshVisitApprovalStatus();
+    if (statusRefreshed > 0) {
+      console.log(`[syncApprovals] 已对齐 ${statusRefreshed} 条 visits 的审批状态`);
+    }
+
     // 后台自动补算路线和异常，避免用户手动跑脚本
     if (result.affectedUserDates.length > 0) {
       recomputeDerivedDataForVisits(result.affectedUserDates).catch((err) => {
@@ -1487,8 +1509,11 @@ export async function syncRunningApprovals(): Promise<{
     }
   }
 
+  // 兜底同步走 syncApprovals 已包含状态对齐；这里再统一执行一次，覆盖上面的逐条刷新路径
+  const statusRefreshed = await refreshVisitApprovalStatus();
+
   console.log(
-    `[syncRunningApprovals] completed: total=${result.rows.length}, updated=${updated}, fallbackDates=${fallbackDates.size}, errors=${errors}`
+    `[syncRunningApprovals] completed: total=${result.rows.length}, updated=${updated}, fallbackDates=${fallbackDates.size}, errors=${errors}, statusRefreshed=${statusRefreshed}`
   );
   return { total: result.rows.length, updated, errors };
 }
