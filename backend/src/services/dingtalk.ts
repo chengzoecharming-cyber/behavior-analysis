@@ -498,10 +498,11 @@ export async function syncContacts(
 
   const errors: string[] = [];
 
-  // 1. 清空旧同步数据
-  await pool.query("TRUNCATE dingtalk_departments, dingtalk_users");
+  // 原子替换策略：先把钉钉数据全部拉取到内存，再在单个事务里 TRUNCATE + 写入。
+  // 任何一步拉取失败都不会触碰旧缓存（旧版本先 TRUNCATE 再拉取，
+  // API 超时会把组织树清空，导致级联选择器只剩「全公司」）。
 
-  // 2. 拉取部门树
+  // 1. 拉取部门树
   let departments: DingTalkDepartment[] = [];
   try {
     departments = await getDepartmentList(1);
@@ -509,8 +510,11 @@ export async function syncContacts(
     errors.push(`拉取部门失败: ${err.message}`);
     throw err;
   }
+  if (departments.length === 0) {
+    throw new Error("拉取部门列表为空，取消同步以保护旧缓存");
+  }
 
-  // 3. 如果指定了目标部门，只同步目标部门及其子部门
+  // 2. 如果指定了目标部门，只同步目标部门及其子部门
   if (targetDeptNames && targetDeptNames.length > 0) {
     const normalizedTargets = targetDeptNames.map((n) => n.trim()).filter(Boolean);
     const childrenMap = new Map<number, number[]>();
@@ -548,21 +552,6 @@ export async function syncContacts(
     departments = departments.filter((d) => allowedIds.has(d.dept_id));
   }
 
-  for (const dept of departments) {
-    try {
-      await pool.query(
-        `INSERT INTO dingtalk_departments (dept_id, parent_id, name)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (dept_id) DO UPDATE SET
-           parent_id = EXCLUDED.parent_id,
-           name = EXCLUDED.name`,
-        [dept.dept_id, dept.parent_id ?? null, dept.name]
-      );
-    } catch (err: any) {
-      errors.push(`保存部门 ${dept.name}(${dept.dept_id}) 失败: ${err.message}`);
-    }
-  }
-
   // 3. 拉取每个部门的用户，按用户聚合其完整 dept_id_list
   const userMap = new Map<string, DingTalkUser>();
 
@@ -588,20 +577,42 @@ export async function syncContacts(
     }
   }
 
-  // 4. 根据部门深度计算每个用户的 source_dept_id，并写入数据库
+  // 防护：部门非空但一个用户都没拉到（如中途 token 失效、网络中断），放弃写入
+  if (userMap.size === 0) {
+    throw new Error(
+      `未拉到任何用户（${errors.length} 个部门拉取失败），取消同步以保护旧缓存`
+    );
+  }
+
+  // 4. 根据部门深度计算每个用户的 source_dept_id（纯内存计算，不写库）
   // 原则：用户同时在父部门和子部门时，优先归入层级最深的部门；
   // 仅挂在父部门的人员（如总 leader）仍保留在父部门；
   // 顶层被排除的部门（如销售渠道）不作为首选来源。
   const depthMap = buildDepthMap(departments);
   const deptMap = new Map<number, DingTalkDepartment>();
   for (const d of departments) deptMap.set(d.dept_id, d);
+
+  // 5. 单个事务内原子替换：任一写入失败整体回滚，旧数据保留
+  const client = await pool.connect();
   let totalUsers = 0;
+  try {
+    await client.query("BEGIN");
+    await client.query("TRUNCATE dingtalk_departments, dingtalk_users");
 
-  for (const [userid, user] of userMap) {
-    try {
+    for (const dept of departments) {
+      await client.query(
+        `INSERT INTO dingtalk_departments (dept_id, parent_id, name)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (dept_id) DO UPDATE SET
+           parent_id = EXCLUDED.parent_id,
+           name = EXCLUDED.name`,
+        [dept.dept_id, dept.parent_id ?? null, dept.name]
+      );
+    }
+
+    for (const [userid, user] of userMap) {
       const sourceDeptId = pickSourceDeptId(user.dept_id_list, depthMap, deptMap);
-
-      await pool.query(
+      await client.query(
         `INSERT INTO dingtalk_users
          (userid, name, mobile, title, dept_id_list, source_dept_id)
          VALUES ($1, $2, $3, $4, $5, $6)
@@ -613,7 +624,7 @@ export async function syncContacts(
            source_dept_id = EXCLUDED.source_dept_id,
            updated_at = NOW()`,
         [
-          user.userid,
+          userid,
           user.name,
           user.mobile || null,
           user.title || null,
@@ -622,9 +633,15 @@ export async function syncContacts(
         ]
       );
       totalUsers++;
-    } catch (err: any) {
-      errors.push(`保存用户 ${user.name}(${userid}) 失败: ${err.message}`);
     }
+
+    await client.query("COMMIT");
+  } catch (err: any) {
+    await client.query("ROLLBACK");
+    errors.push(`写入数据库失败，已回滚保留旧缓存: ${err.message}`);
+    throw err;
+  } finally {
+    client.release();
   }
 
   return {
