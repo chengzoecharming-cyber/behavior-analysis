@@ -6,7 +6,9 @@ import { pool } from "../db";
 import { isMileageRequiredTrip } from "./tripType";
 import {
   loadUserHomeAddresses,
+  loadCompanyAddresses,
   isHomeAddress,
+  isCompanyAddress,
 } from "./addressWhitelistService";
 import {
   parseDateTimeAsBeijing,
@@ -66,43 +68,16 @@ function formatBeijingTime(date: Date | string): string {
   return `${get("year")}-${get("month")}-${get("day")} ${get("hour")}:${get("minute")}`;
 }
 
-// 全局排除地址（办公室、公司地址等）
-const GLOBAL_EXCLUDED_ADDRESSES = [
-  "广东省深圳市宝安区创维数字大厦",
-];
-
-function normalizeAddress(value: string | null | undefined): string {
-  if (!value) return "";
-  return value
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, "")
-    .replace(/[,.，。]/g, "");
-}
-
-async function isGlobalExcludedAddress(visit: Visit): Promise<boolean> {
-  const textToCheck = [visit.address, visit.location_name].filter(Boolean) as string[];
-  const visitAddress = textToCheck.join("");
-  const normalizedVisit = normalizeAddress(visitAddress);
-
-  for (const excluded of GLOBAL_EXCLUDED_ADDRESSES) {
-    const normalizedExcluded = normalizeAddress(excluded);
-    if (
-      normalizedVisit.includes(normalizedExcluded) ||
-      normalizedExcluded.includes(normalizedVisit)
-    ) {
-      return true;
-    }
-  }
-  return false;
-}
-
+/**
+ * 过滤不应计入拜访统计的签到：员工本人住址 + 公司地址白名单（company_addresses 表）。
+ * 拜访量不足与重复签到两条规则共用。
+ */
 async function filterExcludedVisits(visits: Visit[], userId: string): Promise<Set<number>> {
   const excludedIds = new Set<number>();
 
-  // 员工住址排除
   const homeAddressMap = await loadUserHomeAddresses([userId]);
   const homeAddress = homeAddressMap.get(userId);
+  const companyAddresses = await loadCompanyAddresses();
 
   await Promise.all(
     visits.map(async (v) => {
@@ -110,7 +85,7 @@ async function filterExcludedVisits(visits: Visit[], userId: string): Promise<Se
         excludedIds.add(v.id);
         return;
       }
-      if (await isGlobalExcludedAddress(v)) {
+      if (isCompanyAddress(v, companyAddresses)) {
         excludedIds.add(v.id);
       }
     })
@@ -203,13 +178,15 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
   const { analysisDate, visitsToday, stopsToday, routesToday, currentWeekVisits, previousWeekVisits } = ctx;
 
   // 1. 拜访量不足：当前完整业务周拜访量 < 阈值（仅在业务周周日展示）
+  // 统计时排除员工住址与公司地址白名单（company_addresses）的签到
   const lowVisitConfig = weights["low_visit_count"];
   if (lowVisitConfig && currentWeekVisits && isBusinessWeekEnd(analysisDate)) {
     const threshold = getThreshold(lowVisitConfig, 10);
     const periodRange = getCurrentBusinessWeekRange(analysisDate);
+    const excludedVisitIds = await filterExcludedVisits(currentWeekVisits, ctx.userId);
     const weeklyVisits = currentWeekVisits.filter((v) => {
       const d = new Date(v.timestamp);
-      return d >= periodRange.start && d <= periodRange.end;
+      return d >= periodRange.start && d <= periodRange.end && !excludedVisitIds.has(v.id);
     });
 
     if (weeklyVisits.length < threshold) {
@@ -288,7 +265,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
           severity: info.count >= threshold + 2 ? "high" : "medium",
           related_visit_ids: info.visitIds,
           metadata: {
-            excluded_home_visits: 0,
+            excluded_home_visits: excludedVisitIds.size,
             location_name: info.name,
             address: info.address,
             sequence: info.sequence,
