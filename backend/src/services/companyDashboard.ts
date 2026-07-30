@@ -10,10 +10,6 @@ import {
   getBusinessWeekNumber,
 } from "../utils/businessPeriod";
 import {
-  EXCLUDED_TOP_DEPARTMENTS,
-  isExcludedTopDepartment,
-} from "./orgService";
-import {
   computeMileageByApprovalForUsers,
   aggregateMileageByDate,
 } from "./mileageAnalysis";
@@ -67,6 +63,9 @@ const JUDGE_LAYER_ANOMALY_TYPES = [
   "mileage_deviation",
   "mileage_reading_invalid",
 ];
+
+/** 决策页雷达图固定对比的四个销售部子部门 */
+const RADAR_SALES_SUB_DEPARTMENTS = ["华南一部", "华东昆山", "华东宁波", "华北一部"];
 
 /**
  * 生成 [startStr, endStr] 之间（含）的所有北京日期字符串
@@ -339,19 +338,28 @@ export async function computeCompanyDashboard(
     anomalyCount: anomalyCountMap.get(row.user_id) || 0,
   }));
 
-  // 4. 部门雷达：只包含有数据的非排除顶层部门，销售部置顶
+  // 4. 部门雷达：只对比销售部下的四个指定子部门
+  const radarParams = [
+    ...params,
+    "销售部",
+    RADAR_SALES_SUB_DEPARTMENTS,
+  ];
+  const parentIdx = params.length + 1;
+  const subIdx = params.length + 2;
   const departmentResult = await pool.query(
     `SELECT
-       SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) AS dept_name,
+       SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) AS dept_name,
        COUNT(*) AS visit_count,
        COUNT(DISTINCT user_id) AS employee_count,
        COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        ${userFilter}
+       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) = $${parentIdx}
+       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) = ANY($${subIdx}::text[])
      GROUP BY dept_name
      ORDER BY visit_count DESC`,
-    params
+    radarParams
   );
 
   // 各部门估算里程（按 route 去重，避免 join visits 后重复计算）
@@ -360,46 +368,39 @@ export async function computeCompanyDashboard(
        SELECT DISTINCT
          r.id,
          r.distance_km,
-         SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 1) AS dept_name
+         SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 2) AS dept_name
        FROM routes r
        JOIN visits v ON r.user_id = v.user_id AND r.business_date = v.business_date
        WHERE v.business_date >= $1::date AND v.business_date <= $2::date
          ${joinUserFilter}
+         AND SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 1) = $${parentIdx}
+         AND SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 2) = ANY($${subIdx}::text[])
      )
      SELECT dept_name, COALESCE(SUM(distance_km), 0) AS estimated_km
      FROM route_dept
      GROUP BY dept_name`,
-    params
+    radarParams
   );
   const deptEstimatedKmMap = new Map<string, number>();
   for (const row of deptMileageResult.rows) {
     deptEstimatedKmMap.set(row.dept_name, parseFloat(row.estimated_km) || 0);
   }
 
-  const departmentRadar: DepartmentRadarItem[] = departmentResult.rows
-    .filter((row) => !isExcludedTopDepartment(String(row.dept_name)))
-    .map((row) => {
-      const employeeCount = parseInt(row.employee_count, 10) || 0;
-      const visitCount = parseInt(row.visit_count, 10) || 0;
-      const customerCoverage = parseInt(row.customer_coverage, 10) || 0;
-      const estimatedKm = deptEstimatedKmMap.get(row.dept_name) || 0;
-      return {
-        department: row.dept_name,
-        avgVisitsPerEmployee:
-          employeeCount > 0 ? parseFloat((visitCount / employeeCount).toFixed(1)) : 0,
-        avgCustomerCoverage:
-          employeeCount > 0 ? parseFloat((customerCoverage / employeeCount).toFixed(1)) : 0,
-        avgEstimatedKm:
-          employeeCount > 0 ? parseFloat((estimatedKm / employeeCount).toFixed(1)) : 0,
-      };
-    });
-
-  // 销售部置顶
-  const salesIndex = departmentRadar.findIndex((d) => d.department === "销售部");
-  if (salesIndex > 0) {
-    const [sales] = departmentRadar.splice(salesIndex, 1);
-    departmentRadar.unshift(sales);
-  }
+  const departmentRadar: DepartmentRadarItem[] = departmentResult.rows.map((row) => {
+    const employeeCount = parseInt(row.employee_count, 10) || 0;
+    const visitCount = parseInt(row.visit_count, 10) || 0;
+    const customerCoverage = parseInt(row.customer_coverage, 10) || 0;
+    const estimatedKm = deptEstimatedKmMap.get(row.dept_name) || 0;
+    return {
+      department: row.dept_name,
+      avgVisitsPerEmployee:
+        employeeCount > 0 ? parseFloat((visitCount / employeeCount).toFixed(1)) : 0,
+      avgCustomerCoverage:
+        employeeCount > 0 ? parseFloat((customerCoverage / employeeCount).toFixed(1)) : 0,
+      avgEstimatedKm:
+        employeeCount > 0 ? parseFloat((estimatedKm / employeeCount).toFixed(1)) : 0,
+    };
+  });
 
   // 平均拜访频率：总拜访 / 活跃员工 / 周数
   const weekCount = weeklyTrend.length || 1;

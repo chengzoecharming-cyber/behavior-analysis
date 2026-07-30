@@ -1,14 +1,14 @@
 import { pool } from "../db";
 
-// 业务方确认的目标销售部门
+// 业务方确认的目标销售部门（以钉钉通讯录「销售部」下子部门为准）
 export const TARGET_DEPARTMENTS = [
   "华南一部",
   "华东昆山",
   "华东宁波",
   "华北一部",
-  "东南一部",
+  "新品业务部",
+  "软件业务部",
   "海外业务部",
-  "软件产品线",
 ];
 
 /**
@@ -61,25 +61,21 @@ async function saveAlias(
 /**
  * 规则推断：
  * 1. 本身就在目标列表中 → 原样
- * 2. 销售渠道-前缀 → 单独保留（如销售渠道-华南区域）
- * 3. 销售部-前缀 → 去掉前缀后匹配目标
- * 4. 包含多个目标部门名 → 取最后一个匹配（通常靠后的更具体）
- * 5. 其他 → 保留原样（canonical_name = null 表示待人工确认）
+ * 2. 销售部-前缀 → 去掉前缀后匹配目标
+ * 3. 包含多个目标部门名 → 取最后一个匹配（通常靠后的更具体）
+ * 4. 其他 → 保留原样（canonical_name = null 表示待人工确认）
  */
 export function inferCanonicalDepartment(raw: string): string | null {
   // 1. 完全匹配
   if (TARGET_DEPARTMENTS.includes(raw)) return raw;
 
-  // 2. 销售渠道-前缀：单独保留
-  if (raw.startsWith("销售渠道-")) return raw;
-
-  // 3. 销售部-前缀
+  // 2. 销售部-前缀
   if (raw.startsWith("销售部-")) {
     const suffix = raw.slice("销售部-".length);
     if (TARGET_DEPARTMENTS.includes(suffix)) return suffix;
   }
 
-  // 4. 包含目标部门名，取最后一个匹配
+  // 3. 包含目标部门名，取最后一个匹配
   let lastMatch: string | null = null;
   for (const dept of TARGET_DEPARTMENTS) {
     if (raw.includes(dept)) {
@@ -88,7 +84,7 @@ export function inferCanonicalDepartment(raw: string): string | null {
   }
   if (lastMatch) return lastMatch;
 
-  // 5. 无法推断，留空待确认
+  // 4. 无法推断，留空待确认
   return null;
 }
 
