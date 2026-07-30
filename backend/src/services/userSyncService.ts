@@ -165,13 +165,20 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
   };
 
   // a/b/c：visits 中的人新增或更新（不覆盖 role）；一级部门不在白名单的人不新增
+  // 防护：通讯录快照为空时（如旧版同步曾把缓存清表），禁止用 visits 姓名/部门
+  // 回写已有用户——visits 姓名可能是脏数据（2026-07-29 事故：快照被清空后，
+  // 一条 user_name=「陈总」的异常签到覆盖了管理员的真实姓名）。
+  const canUpdateExisting = contactNameMap.size > 0;
+  if (!canUpdateExisting) {
+    plan.errors.push("通讯录快照为空，本次跳过已有用户的姓名/部门更新");
+  }
   for (const vu of visitUsers) {
     const name = resolveName(vu.user_id, vu.user_name);
     const existing = existingMap.get(vu.user_id);
     if (!existing) {
       if (!isInWhitelist(vu.primary_dept)) continue;
       plan.added.push({ user_id: vu.user_id, user_name: name, department: vu.primary_dept });
-    } else if (existing.user_name !== name || existing.department !== vu.primary_dept) {
+    } else if (canUpdateExisting && (existing.user_name !== name || existing.department !== vu.primary_dept)) {
       plan.updated.push({ user_id: vu.user_id, user_name: name, department: vu.primary_dept });
     }
   }
