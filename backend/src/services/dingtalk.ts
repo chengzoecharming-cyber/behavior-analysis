@@ -879,7 +879,8 @@ function parsePhotoUrls(value: string): string[] {
   return [];
 }
 
-// 从 "华南/徐加乐 赣K56927" 或 "浙江/贺鹏程 川A E495Q" 中提取车牌和用户名
+// 从 "华南/徐加乐 赣K56927" 或 "浙江/贺鹏程 川A E495Q" 中提取车牌和车辆名
+// （userName 是车辆的常用驾驶人，仅作信息保留，不能当作签到人姓名使用）
 function parseVehicle(value: string): { vehicle: string; plate: string; userName: string } {
   const vehicle = value.trim();
   const parts = vehicle.split("/");
@@ -999,17 +1000,16 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
     ? NaN
     : parseFloat(findValue(/出发里程读数/) || "NaN");
 
-  // 解析车辆信息，同时拿到用户名
+  // 解析车辆信息（车牌/车辆名；其中的人名不再用于推断签到人，见下方 fallback 注释）
   const vehicleInfo = vehicleRaw ? parseVehicle(vehicleRaw) : undefined;
 
-  // 用户名 fallback：originator_user_name → 表单姓名 → 车辆字段中的人名 → 通讯录 API → originator_userid
+  // 用户名 fallback：originator_user_name → 表单姓名 → 通讯录 API → originator_userid
+  // 注意：不要用车辆字段中的人名兜底——vehicle 里的名字是「这辆车的常用驾驶人」
+  // （如 公司车/陈总 粤B0PN76），别人开这辆车时会把姓名错写成车主（2026-07 串名事故）。
   let userName = originatorUserName;
   if (!userName) {
     const formName = findValue(/^(姓名|申请人|提交人)$/);
     if (formName) userName = formName;
-  }
-  if (!userName && vehicleInfo?.userName) {
-    userName = vehicleInfo.userName;
   }
   if (!userName && originatorUserId) {
     const contactName = await getUserNameById(originatorUserId);
