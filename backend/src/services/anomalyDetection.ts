@@ -69,8 +69,8 @@ function formatBeijingTime(date: Date | string): string {
 }
 
 /**
- * 过滤不应计入拜访统计的签到：员工本人住址 + 公司地址白名单（company_addresses 表）。
- * 拜访量不足与重复签到两条规则共用。
+ * 过滤不应计入重复签到统计的签到：员工本人住址 + 公司地址白名单（company_addresses 表）。
+ * 目前仅 duplicate_location 规则使用。
  */
 async function filterExcludedVisits(visits: Visit[], userId: string): Promise<Set<number>> {
   const excludedIds = new Set<number>();
@@ -178,15 +178,13 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
   const { analysisDate, visitsToday, stopsToday, routesToday, currentWeekVisits, previousWeekVisits } = ctx;
 
   // 1. 拜访量不足：当前完整业务周拜访量 < 阈值（仅在业务周周日展示）
-  // 统计时排除员工住址与公司地址白名单（company_addresses）的签到
   const lowVisitConfig = weights["low_visit_count"];
   if (lowVisitConfig && currentWeekVisits && isBusinessWeekEnd(analysisDate)) {
     const threshold = getThreshold(lowVisitConfig, 10);
     const periodRange = getCurrentBusinessWeekRange(analysisDate);
-    const excludedVisitIds = await filterExcludedVisits(currentWeekVisits, ctx.userId);
     const weeklyVisits = currentWeekVisits.filter((v) => {
       const d = new Date(v.timestamp);
-      return d >= periodRange.start && d <= periodRange.end && !excludedVisitIds.has(v.id);
+      return d >= periodRange.start && d <= periodRange.end;
     });
 
     if (weeklyVisits.length < threshold) {
