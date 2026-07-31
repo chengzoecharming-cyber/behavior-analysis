@@ -78,6 +78,7 @@ map/
 │   ├── scripts/
 │   │   ├── seed.ts                       # 从 data/mock-visits.xlsx 导入模拟数据
 │   │   ├── refreshRiskCache.ts           # 手动刷新风险摘要缓存
+│   │   ├── recomputeLowVisitCount.ts     # 定向重算 low_visit_count 异常（拜访量统计排除住址/公司地址后使用，--dry 预览）
 │   │   └── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
