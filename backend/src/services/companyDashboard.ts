@@ -138,6 +138,7 @@ export async function computeCompanyDashboard(
        COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
        ${userFilter}`,
     params
   );
@@ -173,6 +174,7 @@ export async function computeCompanyDashboard(
     `SELECT business_date, COUNT(*) AS visit_count, COUNT(DISTINCT user_id) AS active_employees
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
        ${userFilter}
      GROUP BY business_date
      ORDER BY business_date`,
@@ -191,6 +193,7 @@ export async function computeCompanyDashboard(
     `SELECT business_date, user_id
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
        ${userFilter}
      GROUP BY business_date, user_id`,
     params
@@ -304,6 +307,7 @@ export async function computeCompanyDashboard(
        COUNT(*) AS visit_count
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
        ${userFilter}
      GROUP BY user_id
      ORDER BY visit_count DESC`,
@@ -354,6 +358,7 @@ export async function computeCompanyDashboard(
        COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
        ${userFilter}
        AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) = $${parentIdx}
        AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) = ANY($${subIdx}::text[])

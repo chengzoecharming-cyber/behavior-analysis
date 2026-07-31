@@ -55,6 +55,7 @@ export async function computeUserOverview(
      WHERE user_id = $1
        AND business_date >= $2::date
        AND business_date <= $3::date
+       AND NOT exclude_from_visit_count
      GROUP BY business_date
      ORDER BY business_date`,
     [userId, startDate, endDate]

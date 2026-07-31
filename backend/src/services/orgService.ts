@@ -429,6 +429,7 @@ export async function computeOrgOverview(
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND lat IS NOT NULL AND lng IS NOT NULL
        AND (lat <> 0 OR lng <> 0)
+       AND NOT exclude_from_visit_count
        AND user_id = ANY($3::text[])`,
     [startDate, endDate, userIds]
   );
@@ -521,6 +522,7 @@ async function computeRanking(
        FROM visits
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND user_id = ANY($3)
+         AND NOT exclude_from_visit_count
        GROUP BY dept_name
        ORDER BY visit_count DESC`,
       [startDate, endDate, userIds]
@@ -585,6 +587,7 @@ async function computeRanking(
          FROM visits
          WHERE business_date >= $1::date AND business_date <= $2::date
            AND user_id = ANY($3)
+           AND NOT exclude_from_visit_count
            AND SPLIT_PART(department, ',', 1) LIKE $4 || '-%'
          GROUP BY sub_dept_name
          ORDER BY visit_count DESC`,
@@ -630,6 +633,7 @@ async function computeRanking(
        FROM visits
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND user_id = ANY($3)
+         AND NOT exclude_from_visit_count
          AND SPLIT_PART(department, ',', 1) LIKE $4 || '-%'
        GROUP BY sub_dept_name
        ORDER BY visit_count DESC`,
@@ -663,6 +667,7 @@ async function computeRanking(
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND user_id = ANY($3)
+       AND NOT exclude_from_visit_count
      GROUP BY user_id
      ORDER BY visit_count DESC`,
     [startDate, endDate, userIds]
@@ -784,6 +789,7 @@ async function computeTrend(
        WHERE user_id = ANY($1)
          AND business_date >= $2::date
          AND business_date <= $3::date
+         AND NOT exclude_from_visit_count
        GROUP BY business_date
        ORDER BY business_date`,
       [userIds, startDate, endDate]

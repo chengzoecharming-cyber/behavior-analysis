@@ -78,6 +78,7 @@ map/
 │   ├── scripts/
 │   │   ├── seed.ts                       # 从 data/mock-visits.xlsx 导入模拟数据
 │   │   ├── refreshRiskCache.ts           # 手动刷新风险摘要缓存
+│   │   ├── backfillVisitExclusion.ts     # 回填 visits.exclude_from_visit_count（拜访次数排除住址/公司地址，--dry 预览）
 │   │   └── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
@@ -488,6 +489,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 - 员工住址（`users.home_address`）用于异常检测和报告客户列表的住址排除。报告口径是**跨员工排除**：命中任何一位员工的住址（文本匹配或 500 米坐标半径）都不算客户（例如出差留宿在同事家小区）；异常检测仍按拜访人自己的住址匹配。住址来源是线下收集的《国内业务人员常住地址》Excel（姓名 + 地址两列即可），通过 `backend/scripts/importEmployeeAddresses.ts` 导入：`cd backend && npx ts-node scripts/importEmployeeAddresses.ts /path/to/employee_addresses.xlsx`。脚本是幂等 UPDATE，Excel 有更新（新人入职、地址变更）时改完重跑即可；仅当员工在 `users` 或 `visits` 中已有记录才能匹配写入（新入职未产生签到数据的人会在产生数据后下次导入时补上）。目前仅覆盖业务人员，非业务部门按业务决定不收集。
 - 住址坐标持久化：导入/回填时把住址一次性地理编码存入 `users.home_lat/home_lng`，匹配时优先用坐标半径（500 米），不再依赖运行时实时解析高德（运行时解析曾遇限流导致整批漏过滤）。存量数据回填：`cd backend && npm run backfill:home-coords`（`--force` 全部重解析）。地理编码带回退简化（逐级截掉 幢/栋/单元/室 尾缀重试）；仍失败的记录按脚本提示人工核实坐标写入 `address_fallback_coordinates` 表后重跑（注意：高德「解析成功但位置跑偏」的情况兜底表不会生效，需直接 UPDATE users 的 home_lat/home_lng）。
 - 公司地址白名单：`company_addresses` 表（名称 + 地址 + 坐标），报告客户统计与异常检测（重复签到，见 `anomalyDetection.ts` 的 `filterExcludedVisits`）都会对全体员工排除命中公司地址的签到。维护：`cd backend && npm run upsert:company-address -- "创维数字大厦" "广东省深圳市宝安区石岩街道创维数字大厦"`（重复执行按 address upsert）。
+- 拜访次数统计口径：`visits.exclude_from_visit_count` 标记命中**员工本人住址**或**公司地址白名单**的签到，全系统「拜访次数」类统计（决策页总拜访/趋势/活跃度/部门人均、控制台拜访频率/人均/排行榜/拜访点数、风险摘要 visit_count、日周月报与导出报告）统一加 `AND NOT exclude_from_visit_count` 过滤；**不影响**轨迹展示、停留点、里程与异常检测（「拜访量不足」规则刻意保持原口径，待重新设计）。打标时机：新数据在 `processParsedVisits` 入库时自动打标；存量与住址/公司地址变更后需重跑 `cd backend && npm run backfill:visit-exclusion`（幂等全量重打标，`--dry` 预览，同时修正 `risk_summary_cache.visit_count`）。
 
 ## 快速开始（最小路径）
 

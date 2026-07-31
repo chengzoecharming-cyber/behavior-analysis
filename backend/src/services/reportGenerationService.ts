@@ -139,7 +139,8 @@ async function computeScopeOverview(
      FROM visits
      WHERE user_id = ANY($1::text[])
        AND business_date >= $2::date
-       AND business_date <= $3::date`,
+       AND business_date <= $3::date
+       AND NOT exclude_from_visit_count`,
     [userIds, start, end]
   );
 
@@ -152,6 +153,7 @@ async function computeScopeOverview(
      WHERE user_id = ANY($1::text[])
        AND business_date >= $2::date
        AND business_date <= $3::date
+       AND NOT exclude_from_visit_count
      GROUP BY business_date
      ORDER BY business_date`,
     [userIds, start, end]

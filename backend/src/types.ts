@@ -40,6 +40,7 @@ export interface Visit {
   geocode_status?: string;
   source_detail?: string;
   business_date?: string;
+  exclude_from_visit_count?: boolean;
 }
 
 export interface Stop {

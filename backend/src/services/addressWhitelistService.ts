@@ -22,6 +22,14 @@ export interface CompanyAddress {
   lng: number | null;
 }
 
+/** 地址匹配所需的最小字段（Visit 天然满足；导入中尚未落库的记录也可直接传入） */
+export interface VisitLocationLike {
+  address?: string | null;
+  location_name?: string | null;
+  lat?: number | null;
+  lng?: number | null;
+}
+
 // 地理编码结果缓存（仅缓存成功结果；失败不缓存，避免一次限流/抖动毒化整个检测周期）
 const geocodeCache = new Map<string, { lat: number; lng: number }>();
 // 防止同一地址并发多次请求高德
@@ -153,7 +161,7 @@ async function geocodeHomeAddress(address: string): Promise<{ lat: number; lng: 
 }
 
 function isWithinRadius(
-  visit: Visit,
+  visit: VisitLocationLike,
   homeCoords: { lat: number; lng: number }
 ): boolean {
   if (visit.lat == null || visit.lng == null) return false;
@@ -167,7 +175,7 @@ function isWithinRadius(
  * 优先使用导入时持久化的 home_lat/home_lng；缺失时才实时地理编码兜底。
  */
 export async function isHomeAddress(
-  visit: Visit,
+  visit: VisitLocationLike,
   home: HomeAddressInfo
 ): Promise<boolean> {
   if (!home || !home.address || !home.address.trim()) return false;
@@ -186,7 +194,7 @@ export async function isHomeAddress(
 }
 
 /** 同步匹配：文本 + 持久化坐标（不做实时地理编码，适合批量跨员工匹配） */
-function matchHomeTextAndStoredCoords(visit: Visit, home: HomeAddressInfo): boolean {
+function matchHomeTextAndStoredCoords(visit: VisitLocationLike, home: HomeAddressInfo): boolean {
   const textToCheck = [visit.address, visit.location_name].filter(Boolean) as string[];
   for (const text of textToCheck) {
     if (hasSubstringMatch(text, home.address)) {
@@ -203,7 +211,7 @@ function matchHomeTextAndStoredCoords(visit: Visit, home: HomeAddressInfo): bool
  * 判断一次 visit 是否命中公司地址白名单（对全体员工生效）。
  * 文本匹配公司名/地址，或坐标落在半径内。
  */
-export function isCompanyAddress(visit: Visit, companies: CompanyAddress[]): boolean {
+export function isCompanyAddress(visit: VisitLocationLike, companies: CompanyAddress[]): boolean {
   if (companies.length === 0) return false;
   const textToCheck = [visit.address, visit.location_name].filter(Boolean) as string[];
 

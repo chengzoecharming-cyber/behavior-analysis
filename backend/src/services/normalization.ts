@@ -2,6 +2,14 @@ import * as XLSX from "xlsx";
 import { pool } from "../db";
 import { ParsedVisit } from "../types";
 import { parseDateTimeAsBeijing, formatBeijingDate } from "../utils/timezone";
+import {
+  loadUserHomeAddresses,
+  loadCompanyAddresses,
+  isHomeAddress,
+  isCompanyAddress,
+  HomeAddressInfo,
+  CompanyAddress,
+} from "./addressWhitelistService";
 
 export interface GeocodeFailure {
   row: number;
@@ -166,6 +174,17 @@ export async function processParsedVisits(
     : new Map<string, number>();
   const reportedBatchDupKeys = new Set<string>();
 
+  // 拜访次数统计排除打标：公司地址全批加载一次；员工住址按 userId 惰性加载并缓存
+  const companyAddresses: CompanyAddress[] = await loadCompanyAddresses();
+  const homeAddressCache = new Map<string, HomeAddressInfo | null>();
+  const getHomeAddress = async (userId: string): Promise<HomeAddressInfo | null> => {
+    if (!homeAddressCache.has(userId)) {
+      const map = await loadUserHomeAddresses([userId]);
+      homeAddressCache.set(userId, map.get(userId) ?? null);
+    }
+    return homeAddressCache.get(userId) ?? null;
+  };
+
   for (let i = 0; i < parsedVisits.length; i++) {
     const visit = parsedVisits[i];
     const userId = visit.user_id || normalizeUserId(visit.user_name);
@@ -263,15 +282,27 @@ export async function processParsedVisits(
     const rawVisitId = rawResult.rows[0].id;
     insertedRaw.push(rawVisitId);
 
+    // 拜访次数统计排除：命中员工本人住址或公司地址白名单（不影响轨迹/停留/里程/异常）
+    const homeAddress = await getHomeAddress(userId);
+    const visitLocation = {
+      address: visit.address,
+      location_name: visit.location_name,
+      lat,
+      lng,
+    };
+    const excludeFromVisitCount =
+      (homeAddress ? await isHomeAddress(visitLocation, homeAddress) : false) ||
+      isCompanyAddress(visitLocation, companyAddresses);
+
     const visitResult = await pool.query(
       `INSERT INTO visits
        (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
         location_name, address, customer_name, source,
         approval_id, approval_status, sequence, trip_type, vehicle, start_odometer, end_odometer,
         reported_distance_km, cumulative_mileage_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
-        business_date)
+        business_date, exclude_from_visit_count)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26)
+               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
        RETURNING id`,
       [
         rawVisitId,
@@ -302,6 +333,7 @@ export async function processParsedVisits(
         geocodeStatus,
         visit.source_detail ?? null,
         businessDates[i],
+        excludeFromVisitCount,
       ]
     );
     insertedNormalized.push(visitResult.rows[0].id);

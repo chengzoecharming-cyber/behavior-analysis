@@ -1036,7 +1036,7 @@ function ConsolePage() {
             <Col span={6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>拜访点数</span>
-                <span style={statValueStyle}>{overviewGroup.visits.length}</span>
+                <span style={statValueStyle}>{overviewGroup.visits.filter((v) => !v.exclude_from_visit_count).length}</span>
               </div>
             </Col>
             <Col span={6}>

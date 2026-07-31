@@ -336,6 +336,9 @@ router.post("/console-report", async (req: AuthRequest, res: Response) => {
           0
         );
 
+        // 拜访点数按新口径排除住址/公司地址签到；轨迹仍展示全部点位
+        const countableVisits = visits.filter((v) => !v.exclude_from_visit_count);
+
         html = renderPersonSingleDayHtml({
           userName,
           userId,
@@ -355,7 +358,7 @@ router.post("/console-report", async (req: AuthRequest, res: Response) => {
 
         fileName = `${userName}_${start}_外勤报告.html`;
         summaryName = userName;
-        summaryMetrics = `拜访点数：${visits.length}\n\n总里程/估算里程：${reportedDistanceKm || 0} / ${Math.round(totalKm)} km\n\n估算油费：${(totalKm * 0.8).toFixed(2)} 元\n\nSegment 数：${routes.length}`;
+        summaryMetrics = `拜访点数：${countableVisits.length}\n\n总里程/估算里程：${reportedDistanceKm || 0} / ${Math.round(totalKm)} km\n\n估算油费：${(totalKm * 0.8).toFixed(2)} 元\n\nSegment 数：${routes.length}`;
       } else {
         const overview = await computeUserOverview(userId, start, end);
         const estimatedFuelCost = overview.totals.estimated_distance_km * 0.8;

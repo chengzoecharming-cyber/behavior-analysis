@@ -27,6 +27,7 @@ export interface Visit {
   geocode_status?: string;
   source_detail?: string;
   approval_status?: string;
+  exclude_from_visit_count?: boolean;
 }
 
 export interface RawVisit {

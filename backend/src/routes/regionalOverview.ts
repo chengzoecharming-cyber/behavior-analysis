@@ -77,6 +77,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
+         AND NOT exclude_from_visit_count
          ${departmentFilter}`,
       baseParams
     );
@@ -91,6 +92,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
+         AND NOT exclude_from_visit_count
          ${departmentFilter}
        GROUP BY department
        ORDER BY visit_count DESC`,
@@ -111,6 +113,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
+         AND NOT exclude_from_visit_count
          ${departmentFilter}
        GROUP BY lat, lng
        ORDER BY count DESC`,

@@ -196,6 +196,9 @@ export async function computeEmployeeRiskSummary(
     0
   );
 
+  // 拜访次数统计排除命中住址/公司地址白名单的签到（visitsToday 全量仍供异常检测使用）
+  const countableVisitCount = visitsToday.filter((v) => !v.exclude_from_visit_count).length;
+
   return {
     user_id: userId,
     user_name: userName,
@@ -206,7 +209,7 @@ export async function computeEmployeeRiskSummary(
     high_anomaly_count: highAnomalies.length,
     medium_anomaly_count: mediumAnomalies.length,
     low_anomaly_count: lowAnomalies.length,
-    visit_count: visitsToday.length,
+    visit_count: countableVisitCount,
     total_stop_minutes: totalStopMinutes,
     total_distance_km: parseFloat(totalDistance.toFixed(2)),
     risk_reasons: reasons,
@@ -215,7 +218,7 @@ export async function computeEmployeeRiskSummary(
       riskLevel,
       anomalies.length,
       highAnomalies.length,
-      visitsToday.length,
+      countableVisitCount,
       totalStopMinutes
     ),
   };

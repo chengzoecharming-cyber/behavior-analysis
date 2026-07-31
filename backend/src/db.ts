@@ -89,6 +89,9 @@ export async function initDB(): Promise<void> {
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS geocode_status VARCHAR(16) DEFAULT 'pending';
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS source_detail VARCHAR(64);
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS business_date DATE;
+      -- 拜访次数统计排除标记：命中员工本人住址或公司地址白名单的签到不计入「拜访次数」类统计
+      -- （不影响轨迹/停留/里程/异常检测），写入时打标，存量由 scripts/backfillVisitExclusion.ts 回填
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS exclude_from_visit_count BOOLEAN NOT NULL DEFAULT false;
 
       -- 坐标失败后允许为 NULL，不再写入 0,0
       ALTER TABLE visits ALTER COLUMN lat DROP NOT NULL;
