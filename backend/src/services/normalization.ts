@@ -174,6 +174,10 @@ export async function processParsedVisits(
     : new Map<string, number>();
   const reportedBatchDupKeys = new Set<string>();
 
+  // 批内去重（钉钉数据）：同一 approval_id+user_id+sequence 在本批次只插入第一条，
+  // 其余直接跳过——此前只记质量报告不跳过，批内重复会双双入库
+  const insertedKeys = new Set<string>();
+
   // 拜访次数统计排除打标：公司地址全批加载一次；员工住址按 userId 惰性加载并缓存
   const companyAddresses: CompanyAddress[] = await loadCompanyAddresses();
   const homeAddressCache = new Map<string, HomeAddressInfo | null>();
@@ -263,24 +267,15 @@ export async function processParsedVisits(
       continue;
     }
 
-    const rawResult = await pool.query(
-      `INSERT INTO raw_visits
-       (raw_user_name, raw_time, raw_location, raw_address, raw_lat, raw_lng, raw_customer_name, source)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-       RETURNING id`,
-      [
-        visit.user_name,
-        visit.time,
-        visit.location_name,
-        visit.address,
-        String(visit.lat ?? ""),
-        String(visit.lng ?? ""),
-        visit.customer_name,
-        source,
-      ]
-    );
-    const rawVisitId = rawResult.rows[0].id;
-    insertedRaw.push(rawVisitId);
+    // 批内去重：钉钉数据同一审批单序号在本批次已插入过则跳过
+    if (visit.approval_id && visit.sequence != null) {
+      const key = `${visit.approval_id}|${userId}|${visit.sequence}`;
+      if (insertedKeys.has(key)) {
+        skippedCount++;
+        continue;
+      }
+      insertedKeys.add(key);
+    }
 
     // 拜访次数统计排除：命中员工本人住址或公司地址白名单（不影响轨迹/停留/里程/异常）
     const homeAddress = await getHomeAddress(userId);
@@ -294,52 +289,94 @@ export async function processParsedVisits(
       (homeAddress ? await isHomeAddress(visitLocation, homeAddress) : false) ||
       isCompanyAddress(visitLocation, companyAddresses);
 
-    const visitResult = await pool.query(
-      `INSERT INTO visits
-       (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
-        location_name, address, customer_name, source,
-        approval_id, approval_status, sequence, trip_type, vehicle, start_odometer, end_odometer,
-        reported_distance_km, cumulative_mileage_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
-        business_date, exclude_from_visit_count)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-               $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
-       RETURNING id`,
-      [
-        rawVisitId,
-        userId,
-        visit.user_name,
-        visit.department,
-        timestamp,
-        lat,
-        lng,
-        visit.location_name,
-        visit.address,
-        visit.customer_name,
-        source,
-        visit.approval_id ?? null,
-        visit.approval_status ?? null,
-        visit.sequence ?? 0,
-        visit.trip_type ?? null,
-        visit.vehicle ?? null,
-        visit.start_odometer ?? null,
-        visit.end_odometer ?? null,
-        visit.reported_distance_km ?? null,
-        visit.cumulative_mileage_km ?? null,
-        visit.visit_note ?? null,
-        visit.special_sign_reason ?? null,
-        Array.isArray(visit.photos) && visit.photos.length > 0
-          ? JSON.stringify(visit.photos)
-          : "[]",
-        geocodeStatus,
-        visit.source_detail ?? null,
-        businessDates[i],
-        excludeFromVisitCount,
-      ]
-    );
-    insertedNormalized.push(visitResult.rows[0].id);
-    affectedUserDates.add(
-      JSON.stringify({ user_id: userId, business_date: businessDates[i] })
-    );
+    // raw_visits + visits 在同一事务写入；visits 靠部分唯一索引
+    // (approval_id, user_id, sequence) 兜底防并发重复——
+    // 冲突时整事务回滚，避免 raw_visits 留下孤儿行（坏数据每轮同步膨胀）
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+
+      const rawResult = await client.query(
+        `INSERT INTO raw_visits
+         (raw_user_name, raw_time, raw_location, raw_address, raw_lat, raw_lng, raw_customer_name, source)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
+        [
+          visit.user_name,
+          visit.time,
+          visit.location_name,
+          visit.address,
+          String(visit.lat ?? ""),
+          String(visit.lng ?? ""),
+          visit.customer_name,
+          source,
+        ]
+      );
+      const rawVisitId = rawResult.rows[0].id;
+
+      const visitResult = await client.query(
+        `INSERT INTO visits
+         (raw_visit_id, user_id, user_name, department, timestamp, lat, lng,
+          location_name, address, customer_name, source,
+          approval_id, approval_status, sequence, trip_type, vehicle, start_odometer, end_odometer,
+          reported_distance_km, cumulative_mileage_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
+          business_date, exclude_from_visit_count)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+         ON CONFLICT (approval_id, user_id, sequence) WHERE approval_id IS NOT NULL DO NOTHING
+         RETURNING id`,
+        [
+          rawVisitId,
+          userId,
+          visit.user_name,
+          visit.department,
+          timestamp,
+          lat,
+          lng,
+          visit.location_name,
+          visit.address,
+          visit.customer_name,
+          source,
+          visit.approval_id ?? null,
+          visit.approval_status ?? null,
+          visit.sequence ?? 0,
+          visit.trip_type ?? null,
+          visit.vehicle ?? null,
+          visit.start_odometer ?? null,
+          visit.end_odometer ?? null,
+          visit.reported_distance_km ?? null,
+          visit.cumulative_mileage_km ?? null,
+          visit.visit_note ?? null,
+          visit.special_sign_reason ?? null,
+          Array.isArray(visit.photos) && visit.photos.length > 0
+            ? JSON.stringify(visit.photos)
+            : "[]",
+          geocodeStatus,
+          visit.source_detail ?? null,
+          businessDates[i],
+          excludeFromVisitCount,
+        ]
+      );
+
+      if (visitResult.rows.length === 0) {
+        // 唯一约束兜底命中：并发任务已插入同一条，回滚避免 raw_visits 孤儿行
+        await client.query("ROLLBACK");
+        skippedCount++;
+        continue;
+      }
+
+      await client.query("COMMIT");
+      insertedRaw.push(rawVisitId);
+      insertedNormalized.push(visitResult.rows[0].id);
+      affectedUserDates.add(
+        JSON.stringify({ user_id: userId, business_date: businessDates[i] })
+      );
+    } catch (err) {
+      await client.query("ROLLBACK").catch(() => {});
+      throw err;
+    } finally {
+      client.release();
+    }
   }
 
   // 循环结束后批量写入质量断言结果，失败时静默跳过，绝不影响导入返回

@@ -1267,7 +1267,23 @@ export interface SyncApprovalsResult extends ProcessResult {
   duplicateCount: number;
 }
 
+// 同步任务进程内互斥队列：定时任务、手动触发、启动 catchup 等入口可能并发触发，
+// 并发执行会绕过 visits「先查再插」的防重逻辑产生重复签到，因此串行化
+let syncApprovalsQueue: Promise<unknown> = Promise.resolve();
+
 export async function syncApprovals(
+  startTimeMs: number,
+  endTimeMs: number,
+  triggeredBy: "scheduler" | "manual" | "startup" = "manual"
+): Promise<SyncApprovalsResult> {
+  const run = syncApprovalsQueue
+    .catch(() => {})
+    .then(() => syncApprovalsInternal(startTimeMs, endTimeMs, triggeredBy));
+  syncApprovalsQueue = run;
+  return run;
+}
+
+async function syncApprovalsInternal(
   startTimeMs: number,
   endTimeMs: number,
   triggeredBy: "scheduler" | "manual" | "startup" = "manual"
@@ -1401,20 +1417,24 @@ export async function syncApprovals(
       });
     }
 
-    // 计算源端与落库端的审批单 ID 集合差异
-    const sourceApprovalIds = Array.from(new Set(ids));
-    const dbApprovalResult = await pool.query(
-      `SELECT DISTINCT approval_id
-       FROM visits
-       WHERE business_date BETWEEN $1 AND $2
-         AND source = 'dingtalk'`,
-      [startDate, endDate]
-    );
-    const dbApprovalIds = dbApprovalResult.rows
-      .map((r) => r.approval_id)
-      .filter((id): id is string => !!id);
-
-    const missingCount = Math.max(0, processedApprovalIds.size - dbApprovalIds.length);
+    // 对账：本次处理的审批单中哪些没有落库。
+    // 用真正的集合差（不再用计数差——计数差会被窗口内历史数据掩盖真实缺失）；
+    // 库端按 approval_id 直查而非 business_date 窗口——跨天审批单（创建于 D-1、
+    // 首次签到在 D）不会误报缺失；无缺失时两端 hash 相等，hash 校验恢复有效。
+    const processedIds = Array.from(processedApprovalIds);
+    let dbApprovalIds: string[] = [];
+    let missingCount = 0;
+    if (processedIds.length > 0) {
+      const dbApprovalResult = await pool.query(
+        `SELECT DISTINCT approval_id FROM visits WHERE approval_id = ANY($1)`,
+        [processedIds]
+      );
+      dbApprovalIds = dbApprovalResult.rows
+        .map((r) => r.approval_id)
+        .filter((id): id is string => !!id);
+      const dbSet = new Set(dbApprovalIds);
+      missingCount = processedIds.filter((id) => !dbSet.has(id)).length;
+    }
 
     // 计算重复审批单：同一 approval_id + user_id + sequence 出现多次
     const duplicateResult = await pool.query(
@@ -1445,7 +1465,7 @@ export async function syncApprovals(
         normalizedInserted: finalResult.normalizedInserted,
         skipped: finalResult.skipped,
         rawVisitCount: finalResult.rawInserted,
-        sourceApprovalIdsHash: computeApprovalIdsHash(sourceApprovalIds),
+        sourceApprovalIdsHash: computeApprovalIdsHash(processedIds),
         dbApprovalIdsHash: computeApprovalIdsHash(dbApprovalIds),
         missingCount,
         duplicateCount,
@@ -1454,7 +1474,7 @@ export async function syncApprovals(
 
     return {
       ...finalResult,
-      sourceApprovalIdsHash: computeApprovalIdsHash(sourceApprovalIds),
+      sourceApprovalIdsHash: computeApprovalIdsHash(processedIds),
       dbApprovalIdsHash: computeApprovalIdsHash(dbApprovalIds),
       missingCount,
       duplicateCount,
