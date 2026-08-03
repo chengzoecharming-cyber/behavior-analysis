@@ -198,6 +198,8 @@ router.post("/sync", requireRole("admin"), async (req: Request, res: Response) =
 
   try {
     const result = await syncApprovals(dateToStartMs(startStr), dateToEndMs(endStr));
+    // 手动同步也触发告警检查（后台执行，不阻塞响应）
+    checkAndSendAlerts().catch((err) => console.error("手动同步后告警检查失败:", err));
     res.json({
       success: true,
       startDate: startStr,
@@ -452,6 +454,8 @@ router.post("/sync-logs/:id/retry", requireRole("admin"), async (req: Request, r
       "manual"
     );
 
+    // 手动同步也触发告警检查（后台执行，不阻塞响应）
+    checkAndSendAlerts().catch((err) => console.error("手动同步后告警检查失败:", err));
     res.json({
       success: true,
       startDate: startDateStr,
@@ -528,6 +532,8 @@ router.post("/sync-force", requireRole("admin"), async (req: Request, res: Respo
       dateToEndMs(endDate),
       "manual"
     );
+    // 手动同步也触发告警检查（后台执行，不阻塞响应）
+    checkAndSendAlerts().catch((err) => console.error("手动同步后告警检查失败:", err));
     res.json({ success: true, startDate, endDate, ...result });
   } catch (err: any) {
     console.error("Failed to force sync:", err);

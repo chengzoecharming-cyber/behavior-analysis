@@ -193,9 +193,9 @@ map/
 
 后端启动时注册以下定时任务（`backend/src/services/scheduler.ts`），均按北京时间每天执行：
 
-1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`。
-2. **钉钉审批同步**：每 3 小时同步最近 3 天（不含今天）的钉钉审批实例到 `visits`（未配置钉钉则跳过）。`syncApprovals` 进程内串行执行（互斥队列），防止并发同步绕过「先查再插」防重产生重复签到。同步成功后后台异步重算衍生数据：routes（事务内先算后换，规划失败的段保留旧数据）、stops（`computeAndPersistStops`）、风险摘要缓存。
-3. **同步健康告警**：每次钉钉同步后（无论成败，finally 中）调用 `checkAndSendAlerts()` 检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；发送失败会抛错且不标记 `alert_sent`，下轮重发。每天早上 9:00 发送昨日同步健康摘要。
+1. **风险摘要缓存刷新**：每天凌晨 2:00 刷新「昨天」的 `risk_summary_cache`（写入已事务化）。历史日期读缓存时做新鲜度校验：缓存 `updated_at` 早于该日期最新 `visits.created_at`（补卡/迟到签到入库）即失效重算，避免不完整数据永久固化。
+2. **钉钉审批同步**：每 3 小时同步最近 3 天（不含今天）的钉钉审批实例到 `visits`（未配置钉钉则跳过）。`syncApprovals` 进程内串行执行（互斥队列），防止并发同步绕过「先查再插」防重产生重复签到；写入侧另有 `visits` 部分唯一索引 `(approval_id, user_id, sequence)` + `ON CONFLICT` + 批内去重兜底，raw_visits 与 visits 同事务写入。同步成功后后台异步重算衍生数据：routes（事务内先算后换，规划失败的段保留旧数据）、stops（`computeAndPersistStops`）、风险摘要缓存。
+3. **同步健康告警**：每次钉钉同步后（无论成败，finally 中）调用 `checkAndSendAlerts()` 检查数据完整性，发现异常通过 `DINGTALK_EXPORT_ROBOT_WEBHOOK` 发送机器人告警；发送失败会抛错且不标记 `alert_sent`，下轮重发。每天早上 9:00 发送昨日同步健康摘要：昨日零同步日志按异常告警（调度器可能整天未运行），正常日也发简短心跳（区分「正常」与「告警通道故障」）。手动同步接口同样触发告警检查。
 4. **用户对账**：每天凌晨 3:00 执行 `reconcileUsers()`（`userSyncService.ts`）：先同步钉钉通讯录，再把 visits 中出现的人 upsert 进 `users`（不覆盖 role；姓名优先取钉钉通讯录），并按通讯录快照标记/恢复 `is_resigned`（admin 永不自动改；未配置钉钉时降级为只做新增/更新，不标离职）。部门白名单：只纳入一级部门为「供应链管理部/销售部/产品部」的人，白名单外的非 admin 用户置 `is_invalid=true`（`/users` 接口不返回）；`is_invalid` 只置位、**不自动恢复**（恢复只能管理员手工改库，防止车辆误导入账号这类手工隐藏记录被每晚对账翻回来）。防误伤：近 30 天有签到记录的人即使不在通讯录快照也不自动标离职，记入结果的 `skippedRecentActive` 供人工复核。
 4. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，并通过 `company_addresses` 表排除公司地址签到（对全体员工生效），拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。
 

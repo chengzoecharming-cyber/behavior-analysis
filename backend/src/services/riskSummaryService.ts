@@ -288,15 +288,21 @@ export async function getRiskSummaryCache(dateStr: string): Promise<RiskSummaryR
 
 export async function persistRiskSummaryCache(
   dateStr: string,
-  options: RiskSummaryComputeOptions = {}
+  options: RiskSummaryComputeOptions = {},
+  precomputed?: RiskSummaryResult
 ): Promise<void> {
-  const result = await computeRiskSummaryForDate(dateStr, options);
+  const result = precomputed ?? (await computeRiskSummaryForDate(dateStr, options));
 
-  await pool.query(`DELETE FROM risk_summary_cache WHERE date = $1`, [dateStr]);
+  // DELETE + INSERT 收进同一事务：失败整体回滚，
+  // 避免读者在 DELETE 后的空窗期看到「缓存缺失」并触发全员实时重算
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(`DELETE FROM risk_summary_cache WHERE date = $1`, [dateStr]);
 
-  for (const emp of result.employees) {
-    await pool.query(
-      `INSERT INTO risk_summary_cache
+    for (const emp of result.employees) {
+      await client.query(
+        `INSERT INTO risk_summary_cache
        (user_id, user_name, department, date, risk_score, risk_level, anomaly_count, high_anomaly_count,
         medium_anomaly_count, low_anomaly_count, visit_count,
         total_distance_km, reasons)
@@ -314,22 +320,29 @@ export async function persistRiskSummaryCache(
          visit_count = EXCLUDED.visit_count,
          total_distance_km = EXCLUDED.total_distance_km,
          reasons = EXCLUDED.reasons`,
-      [
-        emp.user_id,
-        emp.user_name,
-        emp.department,
-        dateStr,
-        emp.risk_score,
-        emp.risk_level,
-        emp.anomaly_count,
-        emp.high_anomaly_count,
-        emp.medium_anomaly_count,
-        emp.low_anomaly_count,
-        emp.visit_count,
-        emp.total_distance_km,
-        JSON.stringify(emp.risk_reasons),
-      ]
-    );
+        [
+          emp.user_id,
+          emp.user_name,
+          emp.department,
+          dateStr,
+          emp.risk_score,
+          emp.risk_level,
+          emp.anomaly_count,
+          emp.high_anomaly_count,
+          emp.medium_anomaly_count,
+          emp.low_anomaly_count,
+          emp.visit_count,
+          emp.total_distance_km,
+          JSON.stringify(emp.risk_reasons),
+        ]
+      );
+    }
+    await client.query("COMMIT");
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
   }
 }
 
@@ -341,14 +354,30 @@ export async function getRiskSummary(dateStr: string): Promise<RiskSummaryResult
     return computeRiskSummaryForDate(dateStr);
   }
 
-  // 历史日期优先读缓存
+  // 历史日期优先读缓存，但缓存必须不旧于最新签到数据：
+  // 补卡/迟到签到入库后（visits.created_at 晚于缓存 updated_at）缓存即失效重算，
+  // 避免「凌晨 2 点基于不完整数据（昨天数据要早 8 点才同步进来）算出的缓存永久固化」。
   const cached = await getRiskSummaryCache(dateStr);
-  if (cached) return cached;
+  if (cached && (await isRiskCacheFresh(dateStr))) return cached;
 
-  // 缓存未命中则实时计算并写入缓存
+  // 缓存未命中或已过期：实时计算并写入缓存（复用本次计算结果，不重复算两遍）
   const result = await computeRiskSummaryForDate(dateStr);
-  await persistRiskSummaryCache(dateStr);
+  await persistRiskSummaryCache(dateStr, {}, result);
   return { ...result, from_cache: false };
+}
+
+/** 缓存是否新鲜：缓存最后更新时间不早于该日期最新 visits 的入库时间 */
+async function isRiskCacheFresh(dateStr: string): Promise<boolean> {
+  const result = await pool.query(
+    `SELECT
+       (SELECT MAX(updated_at) FROM risk_summary_cache WHERE date = $1::date) AS cache_ts,
+       (SELECT MAX(created_at) FROM visits WHERE business_date = $1::date) AS visits_ts`,
+    [dateStr]
+  );
+  const { cache_ts, visits_ts } = result.rows[0];
+  if (!cache_ts) return false;
+  if (!visits_ts) return true;
+  return new Date(cache_ts).getTime() >= new Date(visits_ts).getTime();
 }
 
 // 生成 [startStr, endStr] 之间（含）的所有北京日期字符串（YYYY-MM-DD）

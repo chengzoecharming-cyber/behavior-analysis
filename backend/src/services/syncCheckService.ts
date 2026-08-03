@@ -236,6 +236,27 @@ export async function sendSyncAlertToDingTalk(alert: SyncAlert): Promise<void> {
   }
 }
 
+/** 发送机器人 markdown 消息，失败抛错（调用方据此决定是否记录/重试） */
+async function sendRobotMarkdown(title: string, text: string): Promise<void> {
+  const { robotWebhook } = getExportConfig();
+  if (!robotWebhook) {
+    throw new Error("机器人 webhook 未配置，无法发送消息");
+  }
+  const url = buildRobotSignedUrl(robotWebhook, process.env.DINGTALK_EXPORT_ROBOT_SECRET);
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ msgtype: "markdown", markdown: { title, text } }),
+  });
+  if (!res.ok) {
+    throw new Error(`机器人消息发送失败: HTTP ${res.status} ${res.statusText}`);
+  }
+  const data: any = await res.json().catch(() => null);
+  if (data && data.errcode !== 0) {
+    throw new Error(`机器人消息发送失败: ${data.errmsg} (${data.errcode})`);
+  }
+}
+
 export async function sendDailySyncSummary(): Promise<void> {
   const { robotWebhook } = getExportConfig();
   if (!robotWebhook) {
@@ -246,7 +267,8 @@ export async function sendDailySyncSummary(): Promise<void> {
   const dateStr = getYesterdayBeijing();
 
   const result = await pool.query(
-    `SELECT COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
+    `SELECT COUNT(*) AS total_runs,
+            COUNT(*) FILTER (WHERE status = 'failed') AS failed_count,
             COUNT(*) FILTER (WHERE status = 'success') AS success_count,
             SUM(missing_count) AS total_missing,
             SUM(duplicate_count) AS total_duplicate,
@@ -256,6 +278,23 @@ export async function sendDailySyncSummary(): Promise<void> {
     [dateStr]
   );
   const row = result.rows[0];
+  const totalRuns = parseInt(row.total_runs, 10) || 0;
+
+  // 盲区修复：昨日一行同步日志都没有 = 调度器可能整天未运行（服务/数据库故障），
+  // 必须告警——此前被当作「无异常」静默跳过（8/3 事故时就是这样漏掉的）
+  if (totalRuns === 0) {
+    await sendRobotMarkdown(
+      "昨日同步健康摘要（异常）",
+      [
+        `## 🚨 昨日同步健康摘要（${dateStr}）`,
+        "",
+        "**昨日没有任何同步记录**——定时同步可能整天未运行。",
+        "请检查后端服务与数据库状态。",
+      ].join("\n")
+    );
+    console.warn(`[syncCheck] ${dateStr} 无任何同步日志，已发送异常摘要`);
+    return;
+  }
 
   const hasIssue =
     (row.failed_count || 0) > 0 ||
@@ -263,43 +302,34 @@ export async function sendDailySyncSummary(): Promise<void> {
     (row.total_duplicate || 0) > 0 ||
     (row.total_parse_failures || 0) > 0;
 
+  // 心跳：正常日也发一条简短摘要，让「一切正常」与「告警通道故障」可区分
   if (!hasIssue) {
-    console.log("[syncCheck] 昨日同步无异常，不发送摘要");
+    await sendRobotMarkdown(
+      "昨日同步健康摘要",
+      [
+        `## ✅ 昨日同步健康摘要（${dateStr}）`,
+        "",
+        `成功同步 ${row.success_count || 0} 次，无缺失、无重复、无解析失败。`,
+      ].join("\n")
+    );
+    console.log("[syncCheck] 昨日同步正常，已发送心跳摘要");
     return;
   }
 
-  const url = buildRobotSignedUrl(robotWebhook, process.env.DINGTALK_EXPORT_ROBOT_SECRET);
-
-  const text = [
-    `## 📊 昨日同步健康摘要（${dateStr}）`,
-    "",
-    `**成功同步**：${row.success_count || 0} 次`,
-    `**失败同步**：${row.failed_count || 0} 次`,
-    `**缺失记录**：${row.total_missing || 0}`,
-    `**重复记录**：${row.total_duplicate || 0}`,
-    `**解析失败**：${row.total_parse_failures || 0}`,
-    "",
-    "请进入「同步健康」页面查看详情。",
-  ].join("\n");
-
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      msgtype: "markdown",
-      markdown: { title: "昨日同步健康摘要", text },
-    }),
-  });
-
-  if (!res.ok) {
-    console.warn("[syncCheck] 每日摘要发送失败:", res.status, res.statusText);
-    return;
-  }
-
-  const data: any = await res.json().catch(() => null);
-  if (data && data.errcode !== 0) {
-    console.warn("[syncCheck] 每日摘要发送失败:", data.errmsg, `(${data.errcode})`);
-  }
+  await sendRobotMarkdown(
+    "昨日同步健康摘要",
+    [
+      `## 📊 昨日同步健康摘要（${dateStr}）`,
+      "",
+      `**成功同步**：${row.success_count || 0} 次`,
+      `**失败同步**：${row.failed_count || 0} 次`,
+      `**缺失记录**：${row.total_missing || 0}`,
+      `**重复记录**：${row.total_duplicate || 0}`,
+      `**解析失败**：${row.total_parse_failures || 0}`,
+      "",
+      "请进入「同步健康」页面查看详情。",
+    ].join("\n")
+  );
 }
 
 export async function checkAndSendAlerts(): Promise<SyncAlert[]> {
