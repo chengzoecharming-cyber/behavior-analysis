@@ -14,6 +14,7 @@ import {
   computeMileageByApprovalForUsers,
   aggregateMileageByDate,
 } from "./mileageAnalysis";
+import { ensureFreshRoutes } from "./routeService";
 import {
   getOperatorUnionId,
   getOrCreateWorkspace,
@@ -893,6 +894,15 @@ async function generateReportsForPeriod(
 
   // 公司维度
   const companyUserIds = getUserIdsForScope("company", null, tree);
+
+  // 报告里程直接读 routes 表，而 routes 由同步/风险任务异步维护，
+  // 迟到签到、跨天审批单收尾、同步失败等都会造成「报告读到旧 routes、线上后补算」的漂移。
+  // 生成前先把滞后的 user+date 路线补齐（增量，只算脏数据），保证报告与线上数字一致。
+  try {
+    await ensureFreshRoutes(companyUserIds, start, end);
+  } catch (err) {
+    console.warn("[Report Gen] 报告前路线补齐失败，继续生成:", err);
+  }
   if (await hasRecentData(companyUserIds)) {
     results.push(
       await exportScopeWithRetry({

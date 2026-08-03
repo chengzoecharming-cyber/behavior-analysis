@@ -52,10 +52,23 @@ app.get("/health", (_req, res) => {
 
 async function main() {
   await initDB();
-  startRiskSummaryCacheScheduler();
-  startDingTalkSyncScheduler();
-  startReportGenerationScheduler();
-  startUserReconcileScheduler();
+  // 定时任务开关：默认开启；本地开发建议 SCHEDULER_ENABLED=false，
+  // 避免与线上实例重复执行（如日报生成两份钉钉文档）
+  if (process.env.SCHEDULER_ENABLED !== "false") {
+    startRiskSummaryCacheScheduler();
+    const syncCatchup = startDingTalkSyncScheduler();
+    // 报告生成依赖同步落库的数据（里程读 routes 表）。
+    // 启动补跑必须排在同步补全之后，否则并发启动时报告会读到空/半成品数据
+    //（2026-08-03 事故：数据库恢复后两个 catchup 并发，日报里程全 0）。
+    if (syncCatchup) {
+      syncCatchup.finally(() => startReportGenerationScheduler());
+    } else {
+      startReportGenerationScheduler();
+    }
+    startUserReconcileScheduler();
+  } else {
+    console.log("[Scheduler] SCHEDULER_ENABLED=false，跳过所有定时任务");
+  }
   app.listen(PORT, () => {
     console.log(`Server running on http://localhost:${PORT}`);
   });

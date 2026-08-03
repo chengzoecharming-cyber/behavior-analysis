@@ -248,14 +248,20 @@ async function syncLastNDays(n: number): Promise<void> {
   }
 }
 
-export function startDingTalkSyncScheduler(): void {
+/**
+ * 启动钉钉同步定时任务。
+ * 返回启动补跑的 Promise（未配置钉钉时返回 undefined），
+ * 调用方可据此把「报告生成补跑」排在同步补全之后——
+ * 两者若并发启动，报告会读到尚未同步的数据（2026-08-03 事故：日报里程全 0）。
+ */
+export function startDingTalkSyncScheduler(): Promise<void> | undefined {
   if (!isDingTalkConfigured()) {
     console.log("[Scheduler] DingTalk sync skipped: not configured");
     return;
   }
 
-  // 启动时先补齐最近 7 天缺失的数据
-  catchUpDingTalkSync(7).catch((err) => {
+  // 启动时先补齐最近 7 天缺失的数据（返回 Promise 供调用方编排后续任务）
+  const catchup = catchUpDingTalkSync(7).catch((err) => {
     console.error("[Scheduler] Catch-up sync failed:", err);
   });
 
@@ -311,6 +317,8 @@ export function startDingTalkSyncScheduler(): void {
     }, ms);
   };
   scheduleDailySyncSummary();
+
+  return catchup;
 }
 
 function isReportGenerationConfigured(): boolean {

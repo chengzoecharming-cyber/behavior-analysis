@@ -1,7 +1,7 @@
 import { pool } from "../db";
 import { Visit, Route } from "../types";
 import { planRoute } from "./routePlanning";
-import { formatBeijingDate, parseDateTimeAsBeijing } from "../utils/timezone";
+import { formatBeijingDate, parseDateTimeAsBeijing, toBeijingDayStart, toBeijingDayEnd } from "../utils/timezone";
 
 function formatBusinessDate(value: string | Date | null | undefined): string {
   if (!value) return "";
@@ -27,6 +27,81 @@ function groupVisitsByApproval(visits: Visit[]): Map<string, Visit[]> {
     groups.get(key)!.push(visit);
   }
   return groups;
+}
+
+/**
+ * 找出 routes 可能滞后的 (user_id, business_date) 组合：
+ * 存在「同组 ≥2 条 visit」（可能产生路线段）且最新 visit 入库时间
+ * 晚于 routes 最后计算时间（或 routes 完全缺失）。
+ * 单签到审批单（每组仅 1 条，不可能产生路线段）不算脏，避免每次报告空跑。
+ * 用于报告生成前补齐路线——报告里程直接读 routes 表，
+ * 若 routes 由同步/风险任务异步维护而未更新，报告就会与线上数字漂移。
+ */
+export async function findStaleRoutePairs(
+  userIds: string[],
+  startDate: string,
+  endDate: string
+): Promise<{ user_id: string; business_date: string }[]> {
+  if (userIds.length === 0) return [];
+  const result = await pool.query(
+    `WITH per_group AS (
+       SELECT user_id, business_date,
+              COALESCE(approval_id, user_id || '_' || business_date::text) AS grp,
+              COUNT(*) AS cnt,
+              MAX(created_at) AS latest
+       FROM visits
+       WHERE user_id = ANY($1)
+         AND business_date >= $2::date
+         AND business_date <= $3::date
+       GROUP BY 1, 2, 3
+     ),
+     per_day AS (
+       SELECT user_id, business_date,
+              MAX(cnt) AS max_grp,
+              MAX(latest) AS latest_visit
+       FROM per_group
+       GROUP BY 1, 2
+     )
+     SELECT d.user_id, d.business_date::text AS business_date
+     FROM per_day d
+     WHERE d.max_grp >= 2
+       AND d.latest_visit > COALESCE((
+         SELECT MAX(r.created_at) FROM routes r
+         WHERE r.user_id = d.user_id AND r.business_date = d.business_date
+       ), '1970-01-01'::timestamptz)`,
+    [userIds, startDate, endDate]
+  );
+  return result.rows;
+}
+
+/**
+ * 只对 routes 滞后的 user+date 重算路线（其余组合不调高德，控制 API 开销）。
+ * 单个组合失败只告警，不阻断调用方。
+ */
+export async function ensureFreshRoutes(
+  userIds: string[],
+  startDate: string,
+  endDate: string
+): Promise<void> {
+  const stalePairs = await findStaleRoutePairs(userIds, startDate, endDate);
+  if (stalePairs.length === 0) return;
+  console.log(
+    `[RouteService] ${stalePairs.length} 个 user+date 的 routes 滞后，补算中...`
+  );
+  for (const { user_id, business_date } of stalePairs) {
+    try {
+      await computeAndPersistRoutes(
+        user_id,
+        toBeijingDayStart(business_date),
+        toBeijingDayEnd(business_date)
+      );
+    } catch (err) {
+      console.warn(
+        `[RouteService] 补算路线失败: ${user_id} @ ${business_date}`,
+        err
+      );
+    }
+  }
 }
 
 /**
