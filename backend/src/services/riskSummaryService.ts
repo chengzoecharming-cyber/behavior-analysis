@@ -1,6 +1,6 @@
 import { pool } from "../db";
 import { detectAnomalies } from "./anomalyDetection";
-import { detectStops } from "./stopDetection";
+import { computeAndPersistStops } from "./stopDetection";
 import { computeAndPersistRoutes } from "./routeService";
 import { calculateRiskScore, getRiskLevel, RiskReason } from "./riskScoring";
 import { computeMileageByApprovalForUsers } from "./mileageAnalysis";
@@ -27,7 +27,6 @@ export interface EmployeeRiskSummary {
   medium_anomaly_count: number;
   low_anomaly_count: number;
   visit_count: number;
-  total_stop_minutes: number;
   total_distance_km: number;
   risk_reasons: RiskReason[];
   summary_text: string;
@@ -54,14 +53,13 @@ function generateSummaryText(
   riskLevel: string,
   anomalyCount: number,
   highCount: number,
-  visitCount: number,
-  stopMinutes: number
+  visitCount: number
 ): string {
   if (riskLevel === "high") {
     return `${userName} 今日存在 ${highCount} 项高风险异常，共 ${anomalyCount} 个异常事件，建议立即关注。`;
   }
   if (riskLevel === "medium") {
-    return `${userName} 今日有 ${anomalyCount} 个异常事件，${stopMinutes > 120 ? "停留时间较长" : "路线存在偏差"}，需留意。`;
+    return `${userName} 今日有 ${anomalyCount} 个异常事件，需留意。`;
   }
   return `${userName} 今日完成 ${visitCount} 次拜访，行程正常，无显著风险。`;
 }
@@ -106,14 +104,9 @@ export async function computeEmployeeRiskSummary(
   );
   const previousWeekVisits: Visit[] = previousWeekResult.rows;
 
-  // 停留点
-  const stopsResult = await pool.query(
-    `SELECT * FROM stops
-     WHERE user_id = $1 AND business_date = $2::date
-     ORDER BY start_time ASC`,
-    [userId, dateStr]
-  );
-  const stops: Stop[] = stopsResult.rows;
+  // 停留点：现场计算并持久化，不再依赖「有人打开控制台单日视图」才生成，
+  // 否则自动链路的停留类异常会系统性漏检
+  const stops: Stop[] = await computeAndPersistStops(userId, dateStr);
 
   // 路径：按 approval_id 分组计算并持久化，避免跨审批串点
   const dayStart = toBeijingDayStart(dateStr);
@@ -185,7 +178,6 @@ export async function computeEmployeeRiskSummary(
   }
 
   // 按审批单首次签到日期聚合估算里程（仅驾车段），与控制台口径一致
-  const totalStopMinutes = stops.reduce((sum, s) => sum + s.duration_minutes, 0);
   const mileageResults = await computeMileageByApprovalForUsers(
     [userId],
     dateStr,
@@ -210,7 +202,6 @@ export async function computeEmployeeRiskSummary(
     medium_anomaly_count: mediumAnomalies.length,
     low_anomaly_count: lowAnomalies.length,
     visit_count: countableVisitCount,
-    total_stop_minutes: totalStopMinutes,
     total_distance_km: parseFloat(totalDistance.toFixed(2)),
     risk_reasons: reasons,
     summary_text: generateSummaryText(
@@ -218,8 +209,7 @@ export async function computeEmployeeRiskSummary(
       riskLevel,
       anomalies.length,
       highAnomalies.length,
-      countableVisitCount,
-      totalStopMinutes
+      countableVisitCount
     ),
   };
 }
@@ -280,7 +270,6 @@ export async function getRiskSummaryCache(dateStr: string): Promise<RiskSummaryR
     medium_anomaly_count: row.medium_anomaly_count,
     low_anomaly_count: row.low_anomaly_count,
     visit_count: row.visit_count,
-    total_stop_minutes: row.total_stop_minutes,
     total_distance_km: row.total_distance_km,
     risk_reasons: row.reasons || [],
     summary_text: "",
@@ -309,9 +298,9 @@ export async function persistRiskSummaryCache(
     await pool.query(
       `INSERT INTO risk_summary_cache
        (user_id, user_name, department, date, risk_score, risk_level, anomaly_count, high_anomaly_count,
-        medium_anomaly_count, low_anomaly_count, visit_count, total_stop_minutes,
+        medium_anomaly_count, low_anomaly_count, visit_count,
         total_distance_km, reasons)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
        ON CONFLICT (user_id, date)
        DO UPDATE SET
          user_name = EXCLUDED.user_name,
@@ -323,7 +312,6 @@ export async function persistRiskSummaryCache(
          medium_anomaly_count = EXCLUDED.medium_anomaly_count,
          low_anomaly_count = EXCLUDED.low_anomaly_count,
          visit_count = EXCLUDED.visit_count,
-         total_stop_minutes = EXCLUDED.total_stop_minutes,
          total_distance_km = EXCLUDED.total_distance_km,
          reasons = EXCLUDED.reasons`,
       [
@@ -338,7 +326,6 @@ export async function persistRiskSummaryCache(
         emp.medium_anomaly_count,
         emp.low_anomaly_count,
         emp.visit_count,
-        emp.total_stop_minutes,
         emp.total_distance_km,
         JSON.stringify(emp.risk_reasons),
       ]
@@ -444,7 +431,6 @@ export async function getRiskSummaryRange(
       existing.medium_anomaly_count += emp.medium_anomaly_count;
       existing.low_anomaly_count += emp.low_anomaly_count;
       existing.visit_count += emp.visit_count;
-      existing.total_stop_minutes += emp.total_stop_minutes;
       existing.total_distance_km = parseFloat(
         (existing.total_distance_km + emp.total_distance_km).toFixed(2)
       );
@@ -457,8 +443,7 @@ export async function getRiskSummaryRange(
         highestLevel,
         existing.anomaly_count,
         existing.high_anomaly_count,
-        existing.visit_count,
-        existing.total_stop_minutes
+        existing.visit_count
       );
     }
   }

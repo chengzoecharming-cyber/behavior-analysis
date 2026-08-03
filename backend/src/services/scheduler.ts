@@ -75,20 +75,19 @@ function getMillisecondsUntilWeekday(hour: number, minute: number, targetWeekday
   return target.getTime() - now.getTime();
 }
 
-/** 计算距离下一个指定日期（如每月 30 日）目标时刻的毫秒数；若本月已过则取下个月同日 */
+/** 计算距离下一个指定日期（如每月 1 日）目标时刻的毫秒数；若本月目标时刻已过（含当天已过点）则取下个月同日 */
 function getMillisecondsUntilDayOfMonth(hour: number, minute: number, targetDay: number): number {
   const now = new Date();
   const beijingNow = new Date(now.getTime() + 8 * 60 * 60 * 1000);
   let year = beijingNow.getUTCFullYear();
   let month = beijingNow.getUTCMonth() + 1;
-  let day = beijingNow.getUTCDate();
 
-  let candidate: Date;
-  if (day <= targetDay) {
-    candidate = new Date(
-      `${year}-${pad2(month)}-${pad2(targetDay)}T${pad2(hour)}:${pad2(minute)}:00+08:00`
-    );
-  } else {
+  let candidate = new Date(
+    `${year}-${pad2(month)}-${pad2(targetDay)}T${pad2(hour)}:${pad2(minute)}:00+08:00`
+  );
+  // 本月目标时刻已过则顺延到下个月，避免返回负数导致 setTimeout 立即执行
+  //（曾在每月 1 日 9:00 后重启服务时重复触发一次月报生成）
+  if (candidate.getTime() <= now.getTime()) {
     month += 1;
     if (month > 12) {
       month = 1;
@@ -120,11 +119,13 @@ function getLastNBeijingDates(n: number): string[] {
   return dates;
 }
 
-/** 检查某个北京日期是否已经被成功同步过 */
+/** 检查某个北京日期是否已经被成功同步过（有解析失败或对账缺失的不算成功，需要补） */
 async function hasSuccessfulSync(dateStr: string): Promise<boolean> {
   const result = await pool.query(
     `SELECT 1 FROM dingtalk_sync_logs
      WHERE status = 'success'
+       AND COALESCE(parse_failures, 0) = 0
+       AND COALESCE(missing_count, 0) = 0
        AND start_date <= $1
        AND end_date >= $1
      LIMIT 1`,
@@ -233,8 +234,11 @@ async function syncLastNDays(n: number): Promise<void> {
     console.log(
       `[Scheduler] DingTalk sync completed: ${result.totalInstances} instances, ${result.normalizedInserted} visits inserted, ${result.parseFailures} failures`
     );
-
-    // 同步完成后立即检查并发送告警
+  } catch (err) {
+    console.error(`[Scheduler] Failed to sync DingTalk approvals:`, err);
+  } finally {
+    // 无论同步成功还是失败都要检查告警——同步失败恰恰是最该告警的时刻，
+    // 放在 finally 里避免「持续失败 = 完全静默」（8/3 事故的教训）
     try {
       const alerts = await checkAndSendAlerts();
       if (alerts.length > 0) {
@@ -243,8 +247,6 @@ async function syncLastNDays(n: number): Promise<void> {
     } catch (alertErr) {
       console.error("[Scheduler] Failed to send sync alerts:", alertErr);
     }
-  } catch (err) {
-    console.error(`[Scheduler] Failed to sync DingTalk approvals:`, err);
   }
 }
 

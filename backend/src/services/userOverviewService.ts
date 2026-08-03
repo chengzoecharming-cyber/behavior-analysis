@@ -9,7 +9,6 @@ import {
 export interface DailyOverview {
   date: string;
   visit_count: number;
-  stop_minutes: number;
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
@@ -31,7 +30,6 @@ export interface UserOverviewResult {
   end: string;
   totals: {
     visit_count: number;
-    stop_minutes: number;
     reported_distance_km: number;
     estimated_distance_km: number;
     anomaly_count: number;
@@ -69,19 +67,7 @@ export async function computeUserOverview(
   );
   const byUserDate = aggregateMileageByUserDate(mileageResults);
 
-  // 4. 每日停留时长
-  const stopResult = await pool.query(
-    `SELECT business_date, COALESCE(SUM(duration_minutes), 0) AS stop_minutes
-     FROM stops
-     WHERE user_id = $1
-       AND business_date >= $2::date
-       AND business_date <= $3::date
-     GROUP BY business_date
-     ORDER BY business_date`,
-    [userId, startDate, endDate]
-  );
-
-  // 5. 每日异常数
+  // 3. 每日异常数
   const anomalyCountResult = await pool.query(
     `SELECT anomaly_date, COUNT(*) AS anomaly_count
      FROM anomalies
@@ -93,7 +79,7 @@ export async function computeUserOverview(
     [userId, startDate, endDate]
   );
 
-  // 6. 异常明细（时间线）
+  // 4. 异常明细（时间线）
   const anomalyDetailResult = await pool.query(
     `SELECT id, type, description, severity, anomaly_date, metadata
      FROM anomalies
@@ -120,7 +106,6 @@ export async function computeUserOverview(
       dateMap.set(date, {
         date,
         visit_count: 0,
-        stop_minutes: 0,
         reported_distance_km: 0,
         estimated_distance_km: 0,
         anomaly_count: 0,
@@ -138,10 +123,6 @@ export async function computeUserOverview(
     const d = ensureDay(date);
     d.reported_distance_km = vals.reportedKm;
     d.estimated_distance_km = vals.estimatedKm;
-  }
-  for (const row of stopResult.rows) {
-    const d = ensureDay(formatDate(row.business_date));
-    d.stop_minutes = parseInt(row.stop_minutes, 10) || 0;
   }
   for (const row of anomalyCountResult.rows) {
     const d = ensureDay(formatDate(row.anomaly_date));
@@ -162,7 +143,6 @@ export async function computeUserOverview(
   const totals = daily.reduce(
     (acc, cur) => ({
       visit_count: acc.visit_count + cur.visit_count,
-      stop_minutes: acc.stop_minutes + cur.stop_minutes,
       reported_distance_km: acc.reported_distance_km + cur.reported_distance_km,
       estimated_distance_km:
         acc.estimated_distance_km + cur.estimated_distance_km,
@@ -170,7 +150,6 @@ export async function computeUserOverview(
     }),
     {
       visit_count: 0,
-      stop_minutes: 0,
       reported_distance_km: 0,
       estimated_distance_km: 0,
       anomaly_count: 0,
@@ -183,7 +162,6 @@ export async function computeUserOverview(
     end: endDate,
     totals: {
       visit_count: totals.visit_count,
-      stop_minutes: totals.stop_minutes,
       reported_distance_km: parseFloat(
         totals.reported_distance_km.toFixed(2)
       ),

@@ -117,7 +117,25 @@ export async function initDB(): Promise<void> {
         ON visits(user_id, business_date);
       CREATE INDEX IF NOT EXISTS idx_visits_approval
         ON visits(approval_id, sequence);
+    `);
 
+    // 部分唯一索引：钉钉审批单维度防重复签到（Excel 数据 approval_id 为 NULL 不受限）。
+    // 单独 try/catch：若库内存在存量重复导致创建失败，只告警不阻断启动，
+    // 清理重复后下次启动自动补上。
+    try {
+      await pool.query(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_visits_unique_approval_user_seq
+          ON visits(approval_id, user_id, sequence)
+          WHERE approval_id IS NOT NULL;
+      `);
+    } catch (err) {
+      console.error(
+        "[db] 创建 visits 唯一索引失败（可能存在重复数据，需先清理）:",
+        err
+      );
+    }
+
+    await pool.query(`
       -- DERIVED 层：停留分析
       CREATE TABLE IF NOT EXISTS stops (
         id SERIAL PRIMARY KEY,
@@ -201,7 +219,6 @@ export async function initDB(): Promise<void> {
         medium_anomaly_count INTEGER NOT NULL DEFAULT 0,
         low_anomaly_count INTEGER NOT NULL DEFAULT 0,
         visit_count INTEGER NOT NULL DEFAULT 0,
-        total_stop_minutes INTEGER NOT NULL DEFAULT 0,
         total_distance_km DOUBLE PRECISION NOT NULL DEFAULT 0,
         reasons JSONB DEFAULT '[]',
         created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -211,6 +228,8 @@ export async function initDB(): Promise<void> {
 
       ALTER TABLE risk_summary_cache ADD COLUMN IF NOT EXISTS user_name VARCHAR(128);
       ALTER TABLE risk_summary_cache ADD COLUMN IF NOT EXISTS department VARCHAR(128);
+      -- 「停留时长」展示字段已废弃，清理存量列
+      ALTER TABLE risk_summary_cache DROP COLUMN IF EXISTS total_stop_minutes;
 
       CREATE INDEX IF NOT EXISTS idx_risk_summary_date
         ON risk_summary_cache(date);
@@ -332,7 +351,6 @@ export async function initDB(): Promise<void> {
         ('low_visit_count', '拜访量不足', 0.25, 15, true, 'judge', '过去5个工作日累计签到次数<15次'),
         ('duplicate_location', '重复签到', 0.20, 8, true, 'fact', '过去两周同一地点重复签到>=8次'),
         ('mileage_deviation', '里程异常', 0.30, 0.30, true, 'judge', '填报里程 vs 高德里程偏差>30%'),
-        ('long_stop', '停留过长', 0.15, 120, false, 'analyze', '停留>120分钟'),
         ('long_idle', '长时间未移动', 0.05, 180, false, 'analyze', '>180分钟无移动记录'),
         ('invalid_trip_type', '异常出行方式', 0.03, 5, false, 'fact', '公共交通/特殊签到但填报较长里程'),
         ('missing_special_reason', '特殊签到缺原因', 0.02, NULL, true, 'fact', '特殊签到未填写原因'),
@@ -347,8 +365,11 @@ export async function initDB(): Promise<void> {
         description = EXCLUDED.description,
         updated_at = NOW();
 
+      -- 「停留过长」规则已废弃，从配置表移除（历史异常数据保留）
+      DELETE FROM anomaly_weights WHERE rule_key = 'long_stop';
+
       -- 对已有历史数据做幂等迁移：确保层级和启停用状态与目标一致
-      UPDATE anomaly_weights SET enabled = false, layer = 'analyze' WHERE rule_key IN ('long_stop', 'long_idle', 'route_detour');
+      UPDATE anomaly_weights SET enabled = false, layer = 'analyze' WHERE rule_key IN ('long_idle', 'route_detour');
       UPDATE anomaly_weights SET enabled = false, layer = 'fact' WHERE rule_key = 'invalid_trip_type';
       UPDATE anomaly_weights SET layer = 'fact', threshold_value = 8 WHERE rule_key = 'duplicate_location';
       UPDATE anomaly_weights SET layer = 'fact' WHERE rule_key IN ('mileage_reading_invalid', 'missing_special_reason', 'cumulative_mileage_mismatch');

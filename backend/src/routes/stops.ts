@@ -1,7 +1,6 @@
 import { Router, Response } from "express";
 import { pool } from "../db";
-import { detectStops } from "../services/stopDetection";
-import { Visit, Stop } from "../types";
+import { computeAndPersistStops } from "../services/stopDetection";
 import {
   ensureBeijingTimestamp,
   toBeijingRange,
@@ -50,44 +49,7 @@ router.get("/", authMiddleware, async (req: AuthRequest, res: Response) => {
   }
 
   try {
-    const result = await pool.query(
-      `SELECT * FROM visits
-       WHERE user_id = $1 AND business_date = $2::date
-       ORDER BY timestamp ASC`,
-      [user, date]
-    );
-
-    const visits: Visit[] = result.rows;
-    const stops = detectStops(visits);
-
-    // 持久化到 DERIVED 层（先删除旧数据避免重复）
-    await pool.query(
-      `DELETE FROM stops WHERE user_id = $1 AND business_date = $2::date`,
-      [user, date]
-    );
-
-    const persisted: Stop[] = [];
-    for (const stop of stops) {
-      const r = await pool.query(
-        `INSERT INTO stops
-         (user_id, start_time, end_time, duration_minutes, lat, lng, location_name, visit_ids, business_date)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-         RETURNING *`,
-        [
-          stop.user_id,
-          stop.start_time,
-          stop.end_time,
-          stop.duration_minutes,
-          stop.lat,
-          stop.lng,
-          stop.location_name,
-          stop.visit_ids,
-          stop.business_date ?? date,
-        ]
-      );
-      persisted.push(r.rows[0]);
-    }
-
+    const persisted = await computeAndPersistStops(user as string, date as string);
     res.json(persisted);
   } catch (err) {
     console.error("Failed to fetch stops:", err);

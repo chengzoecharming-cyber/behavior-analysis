@@ -90,7 +90,6 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
       visit_count: d.visitCount,
       reported_distance_km: d.reportedKm,
       estimated_distance_km: Math.round(d.estimatedKm),
-      stop_minutes: d.stopMinutes,
       anomaly_count: d.anomalyCount,
     }));
   }, [data]);

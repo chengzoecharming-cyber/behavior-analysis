@@ -105,15 +105,16 @@ export async function ensureFreshRoutes(
 }
 
 /**
- * 为一组 visit 计算 route，组内按时序相邻点连线。
- * 不同 approval_id 之间不会生成 route。
+ * 为一组 visit 规划路线段，组内按时序相邻点连线，不同 approval_id 之间不串点。
+ * 返回成功规划的段与失败的段（高德失败/坐标无效），调用方据此决定如何保留旧数据。
  */
-export async function computeRoutesForVisits(
+async function planRoutesWithFailures(
   visits: Visit[],
   userId: string
-): Promise<Route[]> {
+): Promise<{ planned: Route[]; failedKeys: string[] }> {
   const groups = groupVisitsByApproval(visits);
-  const routes: Route[] = [];
+  const planned: Route[] = [];
+  const failedKeys: string[] = [];
 
   for (const groupVisits of groups.values()) {
     // 组内按时间排序
@@ -126,14 +127,57 @@ export async function computeRoutesForVisits(
       const prev = groupVisits[i - 1];
       const curr = groupVisits[i];
       const route = await planRoute(prev, curr, userId);
-      if (route) routes.push(route);
+      if (route) {
+        planned.push(route);
+      } else {
+        failedKeys.push(`${prev.id},${curr.id}`);
+      }
     }
   }
 
-  return routes;
+  return { planned, failedKeys };
 }
 
+/**
+ * 为一组 visit 计算 route，组内按时序相邻点连线。
+ * 不同 approval_id 之间不会生成 route。
+ */
+export async function computeRoutesForVisits(
+  visits: Visit[],
+  userId: string
+): Promise<Route[]> {
+  const { planned } = await planRoutesWithFailures(visits, userId);
+  return planned;
+}
+
+/**
+ * 同一 user+date 范围的重算互斥锁（进程内串行）。
+ * 并发来源很多：同步后异步重算、报告前 ensureFreshRoutes、决策页「今天」实时计算、
+ * 控制台多个 GET 接口。并发交错 DELETE/INSERT 会产生重复段或混杂数据。
+ */
+const routeRecomputeLocks = new Map<string, Promise<unknown>>();
+
 export async function computeAndPersistRoutes(
+  userId: string,
+  start: string,
+  end: string
+): Promise<Route[]> {
+  const key = `${userId}|${start.slice(0, 10)}|${end.slice(0, 10)}`;
+  const prev = routeRecomputeLocks.get(key) || Promise.resolve();
+  const run = prev
+    .catch(() => {})
+    .then(() => computeAndPersistRoutesInternal(userId, start, end));
+  routeRecomputeLocks.set(key, run);
+  try {
+    return await run;
+  } finally {
+    if (routeRecomputeLocks.get(key) === run) {
+      routeRecomputeLocks.delete(key);
+    }
+  }
+}
+
+async function computeAndPersistRoutesInternal(
   userId: string,
   start: string,
   end: string
@@ -172,15 +216,38 @@ export async function computeAndPersistRoutes(
   );
 
   const visits: Visit[] = visitsResult.rows;
-  const routePlans = await computeRoutesForVisits(visits, userId);
 
-  await pool.query(
-    `DELETE FROM routes
+  // 现有 routes：规划失败的段用旧数据兜底，避免「先删后算、高德失败即丢数据」
+  const existingResult = await pool.query(
+    `SELECT * FROM routes
      WHERE user_id = $1
        AND business_date >= $2::date
        AND business_date <= $3::date`,
     [userId, startDate, endDate]
   );
+  const existingByKey = new Map<string, Route>();
+  for (const row of existingResult.rows) {
+    existingByKey.set(`${row.from_visit_id},${row.to_visit_id}`, row as Route);
+  }
+
+  const { planned, failedKeys } = await planRoutesWithFailures(visits, userId);
+
+  // 规划失败的段保留旧 route（没有旧数据则该段缺失，等下次重算）
+  const plannedKeys = new Set(
+    planned.map((r) => `${r.from_visit_id},${r.to_visit_id}`)
+  );
+  const preserved: Route[] = [];
+  for (const key of failedKeys) {
+    if (plannedKeys.has(key)) continue;
+    const old = existingByKey.get(key);
+    if (old) preserved.push(old);
+  }
+  if (failedKeys.length > 0) {
+    console.warn(
+      `[RouteService] ${userId} ${startDate}~${endDate} 有 ${failedKeys.length} 段路线规划失败，` +
+        `保留旧数据 ${preserved.length} 段，缺失 ${failedKeys.length - preserved.length} 段`
+    );
+  }
 
   const visitToFirstStopDate = new Map<number, string>();
   const groups = groupVisitsByApproval(visits);
@@ -197,29 +264,49 @@ export async function computeAndPersistRoutes(
   }
 
   const visitMap = new Map(visits.map((v) => [v.id, v]));
-  const persisted: Route[] = [];
-  for (const route of routePlans) {
-    const fromVisit = visitMap.get(route.from_visit_id);
-    const businessDate =
-      visitToFirstStopDate.get(route.from_visit_id) ||
-      formatBusinessDate(fromVisit?.business_date);
-    const r = await pool.query(
-      `INSERT INTO routes
-       (user_id, from_visit_id, to_visit_id, distance_km, duration_min, polyline, business_date)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
-       RETURNING *`,
-      [
-        route.user_id,
-        route.from_visit_id,
-        route.to_visit_id,
-        route.distance_km,
-        route.duration_min,
-        route.polyline,
-        businessDate,
-      ]
-    );
-    persisted.push(r.rows[0]);
-  }
+  const finalRoutes = [...planned, ...preserved];
 
-  return persisted;
+  // DELETE + INSERT 放在同一事务：任何一步失败整体回滚，旧数据不丢
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await client.query(
+      `DELETE FROM routes
+       WHERE user_id = $1
+         AND business_date >= $2::date
+         AND business_date <= $3::date`,
+      [userId, startDate, endDate]
+    );
+
+    const persisted: Route[] = [];
+    for (const route of finalRoutes) {
+      const fromVisit = visitMap.get(route.from_visit_id);
+      const businessDate =
+        visitToFirstStopDate.get(route.from_visit_id) ||
+        formatBusinessDate(fromVisit?.business_date);
+      const r = await client.query(
+        `INSERT INTO routes
+         (user_id, from_visit_id, to_visit_id, distance_km, duration_min, polyline, business_date)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
+         RETURNING *`,
+        [
+          route.user_id,
+          route.from_visit_id,
+          route.to_visit_id,
+          route.distance_km,
+          route.duration_min,
+          route.polyline,
+          businessDate,
+        ]
+      );
+      persisted.push(r.rows[0]);
+    }
+    await client.query("COMMIT");
+    return persisted;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }

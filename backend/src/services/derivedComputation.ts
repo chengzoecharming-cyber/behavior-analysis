@@ -1,4 +1,5 @@
 import { computeAndPersistRoutes } from "./routeService";
+import { computeAndPersistStops } from "./stopDetection";
 import { persistRiskSummaryCache } from "./riskSummaryService";
 import { toBeijingDayStart, toBeijingDayEnd } from "../utils/timezone";
 
@@ -10,7 +11,9 @@ export interface AffectedUserDate {
 /**
  * 为新增/更新的拜访记录自动补算衍生数据：
  * 1. 按用户 + 业务日期重新计算路线（routes）
- * 2. 刷新受影响日期的风险摘要缓存（包含异常检测）
+ * 2. 按用户 + 业务日期重新计算停留点（stops）——此前缺失，
+ *    导致「停留过长」异常在自动链路里永远漏检、风险摘要停留时长恒为 0
+ * 3. 刷新受影响日期的风险摘要缓存（包含异常检测）
  *
  * 通常在 Excel 上传或钉钉同步成功后后台调用，避免用户手动跑脚本。
  */
@@ -33,6 +36,14 @@ export async function recomputeDerivedDataForVisits(
     } catch (err) {
       console.warn(
         `[recomputeDerivedDataForVisits] 路线计算失败: ${user_id} @ ${business_date}`,
+        err
+      );
+    }
+    try {
+      await computeAndPersistStops(user_id, business_date);
+    } catch (err) {
+      console.warn(
+        `[recomputeDerivedDataForVisits] 停留点计算失败: ${user_id} @ ${business_date}`,
         err
       );
     }

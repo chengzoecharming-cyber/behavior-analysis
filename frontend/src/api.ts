@@ -130,7 +130,6 @@ export async function fetchMileage(
 export interface DailyOverview {
   date: string;
   visit_count: number;
-  stop_minutes: number;
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
@@ -152,7 +151,6 @@ export interface UserOverviewResult {
   end: string;
   totals: {
     visit_count: number;
-    stop_minutes: number;
     reported_distance_km: number;
     estimated_distance_km: number;
     anomaly_count: number;
@@ -201,7 +199,6 @@ export interface EmployeeRiskSummary {
   medium_anomaly_count: number;
   low_anomaly_count: number;
   visit_count: number;
-  total_stop_minutes: number;
   total_distance_km: number;
   risk_reasons: RiskReason[];
   summary_text: string;
@@ -276,7 +273,6 @@ export interface OrgRankingItem {
   employeeCount: number;
   reportedKm: number;
   estimatedKm: number;
-  stopMinutes: number;
   anomalyCount: number;
   /** 该节点是否还有可展开的下一级 */
   hasChildren: boolean;
@@ -292,7 +288,6 @@ export interface OrgTrendItem {
   visitCount: number;
   reportedKm: number;
   estimatedKm: number;
-  stopMinutes: number;
   anomalyCount: number;
 }
 
@@ -350,7 +345,6 @@ export interface OrgOverviewResponse {
     totalCustomers: number;
     totalReportedKm: number;
     totalEstimatedKm: number;
-    totalStopMinutes: number;
     totalAnomalies: number;
   };
   ranking: OrgRankingItem[];

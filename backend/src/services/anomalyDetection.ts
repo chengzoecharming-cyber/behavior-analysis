@@ -42,7 +42,6 @@ function getRuleLayer(type: string): "fact" | "analyze" | "judge" | null {
     low_visit_count: "judge",
     duplicate_location: "judge",
     mileage_deviation: "judge",
-    long_stop: "analyze",
     long_idle: "analyze",
     route_detour: "analyze",
     invalid_trip_type: "fact",
@@ -277,31 +276,7 @@ export async function detectAnomalies(ctx: AnomalyDetectionContext): Promise<Ano
     }
   }
 
-  // 3. 停留时间过长（已禁用，但保留代码以便配置开启）
-  const longStopConfig = weights["long_stop"];
-  if (longStopConfig) {
-    const threshold = getThreshold(longStopConfig, 120);
-    for (const stop of stopsToday) {
-      if (stop.duration_minutes >= threshold) {
-        anomalies.push({
-          id: 0,
-          user_id: ctx.userId,
-          type: "long_stop",
-          description: `在「${stop.location_name}」停留 ${stop.duration_minutes} 分钟，超过 ${threshold} 分钟阈值`,
-          start_time: stop.start_time,
-          end_time: stop.end_time,
-          lat: stop.lat,
-          lng: stop.lng,
-          severity: stop.duration_minutes >= threshold * 2 ? "high" : "medium",
-          related_visit_ids: stop.visit_ids,
-          metadata: {},
-          created_at: new Date(),
-        });
-      }
-    }
-  }
-
-  // 4. 长时间未移动（已禁用）
+  // 3. 长时间未移动（已禁用）
   const longIdleConfig = weights["long_idle"];
   if (longIdleConfig) {
     const threshold = getThreshold(longIdleConfig, 180);

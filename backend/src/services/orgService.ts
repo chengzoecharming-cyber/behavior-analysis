@@ -57,7 +57,6 @@ export interface OrgOverviewStat {
   totalCustomers: number;
   totalReportedKm: number;
   totalEstimatedKm: number;
-  totalStopMinutes: number;
   totalAnomalies: number;
 }
 
@@ -69,7 +68,6 @@ export interface OrgRankingItem {
   employeeCount: number;
   reportedKm: number;
   estimatedKm: number;
-  stopMinutes: number;
   anomalyCount: number;
   /** 该节点是否还有可展开的下一级 */
   hasChildren: boolean;
@@ -85,7 +83,6 @@ export interface OrgTrendItem {
   visitCount: number;
   reportedKm: number;
   estimatedKm: number;
-  stopMinutes: number;
   anomalyCount: number;
 }
 
@@ -449,17 +446,7 @@ export async function computeOrgOverview(
     0
   );
 
-  // 3. 停留时长
-  const stopResult = await pool.query(
-    `SELECT COALESCE(SUM(duration_minutes), 0) AS total_stop_minutes
-     FROM stops
-     WHERE user_id = ANY($1)
-       AND business_date >= $2::date
-       AND business_date <= $3::date`,
-    [userIds, startDate, endDate]
-  );
-
-  // 4. 异常数
+  // 3. 异常数
   const anomalyResult = await pool.query(
     `SELECT COUNT(*) AS total_anomalies
      FROM anomalies
@@ -476,7 +463,6 @@ export async function computeOrgOverview(
     totalCustomers: parseInt(overviewResult.rows[0].total_customers, 10) || 0,
     totalReportedKm: parseFloat(totalReportedKm.toFixed(2)),
     totalEstimatedKm: parseFloat(totalEstimatedKm.toFixed(2)),
-    totalStopMinutes: parseInt(stopResult.rows[0].total_stop_minutes, 10) || 0,
     totalAnomalies: parseInt(anomalyResult.rows[0].total_anomalies, 10),
   };
 
@@ -696,7 +682,6 @@ async function getScopeStats(
 ): Promise<{
   reportedKm: number;
   estimatedKm: number;
-  stopMinutes: number;
   anomalyCount: number;
   hasLowVisitCount: boolean;
   hasDuplicateLocation: boolean;
@@ -707,7 +692,6 @@ async function getScopeStats(
     return {
       reportedKm: 0,
       estimatedKm: 0,
-      stopMinutes: 0,
       anomalyCount: 0,
       hasLowVisitCount: false,
       hasDuplicateLocation: false,
@@ -723,15 +707,7 @@ async function getScopeStats(
   );
   const byUser = aggregateMileageByUser(mileageResults);
 
-  const [stops, anomalies, riskCounts] = await Promise.all([
-    pool.query(
-      `SELECT COALESCE(SUM(duration_minutes), 0) AS total
-       FROM stops
-       WHERE user_id = ANY($1)
-         AND business_date >= $2::date
-         AND business_date <= $3::date`,
-      [userIds, startDate, endDate]
-    ),
+  const [anomalies, riskCounts] = await Promise.all([
     pool.query(
       `SELECT COUNT(*) AS total
        FROM anomalies
@@ -768,7 +744,6 @@ async function getScopeStats(
   return {
     reportedKm: parseFloat(reportedKm.toFixed(2)),
     estimatedKm: parseFloat(estimatedKm.toFixed(2)),
-    stopMinutes: parseInt(stops.rows[0].total, 10) || 0,
     anomalyCount: parseInt(anomalies.rows[0].total, 10) || 0,
     hasLowVisitCount: (parseInt(rc.low_visit_count_count, 10) || 0) > 0,
     hasDuplicateLocation: (parseInt(rc.duplicate_location_count, 10) || 0) > 0,
@@ -782,7 +757,7 @@ async function computeTrend(
   startDate: string,
   endDate: string
 ): Promise<OrgTrendItem[]> {
-  const [visits, mileageResults, stops, anomalies] = await Promise.all([
+  const [visits, mileageResults, anomalies] = await Promise.all([
     pool.query(
       `SELECT business_date, COUNT(*) AS visit_count
        FROM visits
@@ -795,16 +770,6 @@ async function computeTrend(
       [userIds, startDate, endDate]
     ),
     computeMileageByApprovalForUsers(userIds, startDate, endDate),
-    pool.query(
-      `SELECT business_date, COALESCE(SUM(duration_minutes), 0) AS stop_minutes
-       FROM stops
-       WHERE user_id = ANY($1)
-         AND business_date >= $2::date
-         AND business_date <= $3::date
-       GROUP BY business_date
-       ORDER BY business_date`,
-      [userIds, startDate, endDate]
-    ),
     pool.query(
       `SELECT anomaly_date, COUNT(*) AS anomaly_count
        FROM anomalies
@@ -827,7 +792,6 @@ async function computeTrend(
         visitCount: 0,
         reportedKm: 0,
         estimatedKm: 0,
-        stopMinutes: 0,
         anomalyCount: 0,
       });
     }
@@ -841,9 +805,6 @@ async function computeTrend(
     const day = ensureDay(date);
     day.reportedKm = vals.reportedKm;
     day.estimatedKm = vals.estimatedKm;
-  }
-  for (const row of stops.rows) {
-    ensureDay(formatBeijingDate(row.business_date)).stopMinutes = parseInt(row.stop_minutes, 10) || 0;
   }
   for (const row of anomalies.rows) {
     ensureDay(formatBeijingDate(row.anomaly_date)).anomalyCount = parseInt(row.anomaly_count, 10);

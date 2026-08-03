@@ -72,7 +72,7 @@ export interface Route {
 export interface Anomaly {
   id: number;
   user_id: string;
-  type: "long_stop" | "long_idle" | "route_detour" | string;
+  type: "long_idle" | "route_detour" | string;
   description: string;
   start_time: Date | null;
   end_time: Date | null;

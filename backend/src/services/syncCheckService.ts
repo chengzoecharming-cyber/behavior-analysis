@@ -66,8 +66,7 @@ function evaluateHealth(row: any): { status: SyncHealthStatus; issues: string[] 
     if (row.parse_failures > 0) {
       issues.push(`${row.parse_failures} 条审批单解析失败`);
     }
-    // 只有新的对账字段存在时，才提示 hash 不一致；
-    // hash 不一致但缺失数为 0 时，通常是因为源端 process_instance_id 与库中 approval_id 口径不同，不做错误提示
+    // 两端 hash 已统一为 approval_id 口径：无缺失时应相等，不等且 missing>0 时提示集合不一致
     if (
       hasReconciliationFields &&
       row.source_approval_ids_hash !== row.db_approval_ids_hash &&
@@ -192,8 +191,9 @@ export async function markAlertsSent(ids: number[]): Promise<void> {
 export async function sendSyncAlertToDingTalk(alert: SyncAlert): Promise<void> {
   const { robotWebhook } = getExportConfig();
   if (!robotWebhook) {
-    console.log("[syncCheck] 机器人 webhook 未配置，跳过告警发送");
-    return;
+    // 发送通道不可用时必须抛错：否则调用方会把告警标记为「已发送」，
+    // 实际从未送达且永不重发（8/3 事故的教训）
+    throw new Error("机器人 webhook 未配置，无法发送告警");
   }
 
   const url = buildRobotSignedUrl(robotWebhook, process.env.DINGTALK_EXPORT_ROBOT_SECRET);
@@ -227,13 +227,12 @@ export async function sendSyncAlertToDingTalk(alert: SyncAlert): Promise<void> {
   });
 
   if (!res.ok) {
-    console.warn("[syncCheck] 机器人告警发送失败:", res.status, res.statusText);
-    return;
+    throw new Error(`机器人告警发送失败: HTTP ${res.status} ${res.statusText}`);
   }
 
   const data: any = await res.json().catch(() => null);
   if (data && data.errcode !== 0) {
-    console.warn("[syncCheck] 机器人告警发送失败:", data.errmsg, `(${data.errcode})`);
+    throw new Error(`机器人告警发送失败: ${data.errmsg} (${data.errcode})`);
   }
 }
 

@@ -60,7 +60,6 @@ export async function resetAnomalyWeights(): Promise<void> {
       ('low_visit_count', '拜访量不足', 0.25, 10, true, 'judge', '当前完整业务周拜访量<10次，仅在周日展示'),
       ('duplicate_location', '重复签到', 0.15, 3, true, 'judge', '当前业务周同一地点重复签到>=3次'),
       ('mileage_deviation', '里程偏差', 0.20, 0.30, true, 'judge', '填报里程>估算里程30%'),
-      ('long_stop', '停留过长', 0.15, 120, false, 'analyze', '停留>120分钟'),
       ('route_detour', '路径绕行', 0.10, 2.0, false, 'analyze', '实际距离>直线距离*2'),
       ('long_idle', '长时间未移动', 0.05, 180, false, 'analyze', '>180分钟无移动记录'),
       ('invalid_trip_type', '异常出行方式', 0.03, 5, false, 'fact', '公共交通/特殊签到但填报较长里程'),

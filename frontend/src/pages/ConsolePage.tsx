@@ -363,7 +363,6 @@ function fillDailyRange(
       map.get(ds) ?? {
         date: ds,
         visit_count: 0,
-        stop_minutes: 0,
         reported_distance_km: 0,
         estimated_distance_km: 0,
         anomaly_count: 0,
