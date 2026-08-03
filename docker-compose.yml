@@ -2,6 +2,13 @@
 # 不要直接将真实 Key 提交到仓库。
 version: "3.8"
 
+# 所有服务统一日志轮转（json-file 默认无限增长，曾写满磁盘导致 Postgres PANIC）
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "3"
+
 services:
   postgres:
     image: postgres:16-alpine
@@ -19,6 +26,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging: *default-logging
 
   backend:
     build:
@@ -57,6 +65,7 @@ services:
     volumes:
       - backend_uploads:/app/uploads
     restart: unless-stopped
+    logging: *default-logging
 
   frontend:
     build:
@@ -70,6 +79,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres_data:

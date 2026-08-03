@@ -1,4 +1,10 @@
 # 使用 GitHub Container Registry 上预构建的镜像
+# 所有服务统一日志轮转（json-file 默认无限增长，曾写满磁盘导致 Postgres PANIC）
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "100m"
+    max-file: "3"
 # 用法：
 #   export GHCR_OWNER=<你的 GitHub 用户名>
 #   AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
@@ -24,6 +30,7 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    logging: *default-logging
 
   backend:
     image: ghcr.io/${GHCR_OWNER}/sales-map-backend:latest
@@ -59,6 +66,7 @@ services:
     volumes:
       - backend_uploads:/app/uploads
     restart: unless-stopped
+    logging: *default-logging
 
   frontend:
     image: ghcr.io/${GHCR_OWNER}/sales-map-frontend:latest
@@ -68,6 +76,7 @@ services:
     depends_on:
       - backend
     restart: unless-stopped
+    logging: *default-logging
 
 volumes:
   postgres_data:

@@ -14,6 +14,22 @@ function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
 
+/**
+ * Node 的 setTimeout 延迟上限是 2^31-1 ms（约 24.8 天），
+ * 超过会被截断为 1ms 立即执行（TimeoutOverflowWarning）。
+ * 月报间隔约 30 天会触发该溢出，形成「立即执行→重新调度→又溢出」的死循环刷爆日志，
+ * 曾因此写满服务器磁盘导致 Postgres PANIC。长延迟需分段调度。
+ */
+const MAX_TIMEOUT_MS = 2 ** 31 - 1;
+
+function safeSetTimeout(fn: () => void, ms: number): void {
+  if (ms > MAX_TIMEOUT_MS) {
+    setTimeout(() => safeSetTimeout(fn, ms - MAX_TIMEOUT_MS), MAX_TIMEOUT_MS);
+  } else {
+    setTimeout(fn, Math.max(1, ms));
+  }
+}
+
 function getMillisecondsUntil(hour: number, minute: number): number {
   const now = new Date();
   // 按北京时间计算目标时刻，避免服务器本地时区影响
@@ -403,7 +419,7 @@ export function startReportGenerationScheduler(): void {
   const scheduleDaily = () => {
     const ms = getMillisecondsUntil(9, 0);
     console.log(`[Scheduler] Daily report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
-    setTimeout(async () => {
+    safeSetTimeout(async () => {
       console.log("[Scheduler] Running daily report generation");
       try {
         await generateDailyReports();
@@ -418,7 +434,7 @@ export function startReportGenerationScheduler(): void {
   const scheduleWeekly = () => {
     const ms = getMillisecondsUntilWeekday(18, 0, 0);
     console.log(`[Scheduler] Weekly report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
-    setTimeout(async () => {
+    safeSetTimeout(async () => {
       console.log("[Scheduler] Running weekly report generation");
       try {
         await generateWeeklyReports();
@@ -429,11 +445,11 @@ export function startReportGenerationScheduler(): void {
     }, ms);
   };
 
-  // 月报：每月 1 日 9:00 生成上月整月的月报
+  // 月报：每月 1 日 9:00 生成上月整月的月报（间隔约 30 天，必须用 safeSetTimeout 防溢出）
   const scheduleMonthly = () => {
     const ms = getMillisecondsUntilDayOfMonth(9, 0, 1);
     console.log(`[Scheduler] Monthly report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
-    setTimeout(async () => {
+    safeSetTimeout(async () => {
       console.log("[Scheduler] Running monthly report generation");
       try {
         await generateMonthlyReports();
