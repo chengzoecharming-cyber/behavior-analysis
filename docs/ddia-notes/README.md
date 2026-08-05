@@ -14,6 +14,7 @@
 | [`data-quality-integration-guide.md`](data-quality-integration-guide.md) | `dataQuality/` 模块接入业务流程的代码示例 | 示例参考 |
 | [`2e-ch01-tradeoffs.md`](2e-ch01-tradeoffs.md) | **第二版**第 1 章：数据系统架构中的权衡（OLTP/OLAP、ETL、记录系统与派生数据） | 已完成 |
 | [`2e-ch02-nonfunctional-requirements.md`](2e-ch02-nonfunctional-requirements.md) | **第二版**第 2 章：定义非功能性需求（物化视图、性能、可靠性与容错） | 已完成 |
+| [`2e-ch08-transactions.md`](2e-ch08-transactions.md) | **第二版**第 8 章：事务（ACID、先查再插竞态、WAL；先项目后书风格） | 已完成 |
 | [`../data-pipeline-walkthrough.md`](../data-pipeline-walkthrough.md) | 数据链路图解：从钉钉同步到最终验证的 5 个阶段，每阶段对应 DDIA 概念 + 设计自查问题 + 真实事故案例 | 已完成 |
 | [`../incidents/2026-08-03-disk-full-postmortem.md`](../incidents/2026-08-03-disk-full-postmortem.md) | 2026-08-03 磁盘写满数据库崩溃事故复盘 | 已完成 |
 
