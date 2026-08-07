@@ -1169,7 +1169,7 @@ Dashboard 已承担「部门维度团队总览」的职责，因此控制台应�
 - [ ] **第一步：部署代码**（GHCR 镜像重新构建拉取即可），此时不加新 env，验证现有同步不受影响。
 - [ ] **第一步附（同批部署后执行一次）**：`docker exec sales-map-backend npm run backfill:customer-count` 回填 v1 存量多客户行的 customer_count（幂等，支持 --dry 预览；12 行量级）。
 - [ ] **第二步：开启 v2 同步**：服务器 `.env` 添加 `DINGTALK_PROCESS_CODE_V2=PROC-1BF061D3-38F0-4961-B41D-D41CDDDF9212`，然后 `docker compose -f docker-compose.ghcr.yml up -d --force-recreate backend`。
-- [ ] **清理测试单**：**2026-08-06 18:36 之前提交的 v2 单全部为测试数据**。首选由业务方在钉钉后台删除/作废（源端删除后 listids 不再返回，系统侧零操作）；若已同步入库，按已知 business_id 或创建时间从 `visits`/`raw_visits` 删除对应 approval_id，并重算受影响 user+date 的派生数据（routes/stops/风险缓存）。已知测试单 business_id：`202608051339000482892`、`202608051148000213179`（李杰 8/5）、`202608061539000381706`、`202608061542000384525`（程丽敏 8/6）。
+- [x] **清理测试单**：**2026-08-06 18:36 之前提交的 v2 单全部为测试数据**——业务方已于 2026-08-07 在钉钉后台全部删除，源端 listids 不再返回，系统侧零操作。
 - [ ] **旧表单 env 保留一周再清**：旧表单虽已停用，但停用前提交的在途 v1 单（RUNNING）仍可能审批完成，保留 `DINGTALK_PROCESS_CODE` 让同步窗口覆盖；约一周后（2026-08-14 起）无在途单再清空该 env。v1 解析代码永久保留用于历史重跑。
 - [ ] **观察首日**：查看 `dingtalk_sync_logs`（missing_count/duplicate_count 应为 0）、同步健康告警、数据血缘页抽查几张 v2 单的三步对照（原始表单 → 重新解析 → 已入库）。
 - [ ] **回滚预案**：清空 `DINGTALK_PROCESS_CODE_V2` 重启即退回只同步旧表单；已入库的 v2 数据不受影响（可按 approval_id 定向删除后重跑）。
