@@ -1167,7 +1167,7 @@ Dashboard 已承担「部门维度团队总览」的职责，因此控制台应�
 - **AI 总结延迟问题**：钉钉 AI总结在审批单结束后才生成，而 processParsedVisits 是「存在即跳过」——RUNNING 期入库的兜底文本不会被后续同步覆盖。解决：`processParsedVisits` 对 v2 重复行开放 **visit_note / visit_detail 刷新通道**（`IS DISTINCT FROM` 才写，其他字段维持存在即跳过），定时/手动/RUNNING 刷新三条同步路径自动覆盖。
 - **新增列**：`visits.form_version`（'v2' 标记，供前端版本化展示）、`visits.visit_detail` JSONB（`{comm: 沟通内容详情, issues: 存在问题点, ai: 该块AI总结}`，弹窗按 v2 表单字段名原样展示）。`visit_note` 维持「AI 优先/兜底拼接」合并文本供时间线使用。
 - **前端**：时间线「本次拜访情况」改标签「拜访情况：」，默认最多 3 行（-webkit-line-clamp），hover Popover 全文且卡片 maxWidth 400；地图弹窗 v2 行标签版本化（拜访客户/沟通内容详情/存在问题点/AI总结/现场交流照片），v1 行不变。
-- **部署后一次性 SQL**（若开启同步到本次部署之间已有 v2 行入库，为其补 form_version；当前生产无 v2 行，可跳过）：
+- **部署后一次性 SQL**（✅ 2026-08-07 已执行，28 行）：首批 v2 行在部署新后端前同步入库、form_version 为 NULL，已用下述 SQL 补标：
   `UPDATE visits v SET form_version='v2' FROM raw_approvals r WHERE v.approval_id=r.approval_id AND r.process_code='PROC-1BF061D3-38F0-4961-B41D-D41CDDDF9212' AND v.form_version IS NULL;`
 
 #### 上线步骤（2026-08-07 旧表单已停用、新表单启用）
