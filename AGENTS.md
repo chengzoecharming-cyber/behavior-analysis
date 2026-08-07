@@ -148,6 +148,22 @@ map/
 
 **注意**：`backend/schema.sql` 是早期 P1 文档，只包含基础表。真实建表逻辑在 `backend/src/db.ts` 中，通过 `CREATE TABLE IF NOT EXISTS` 和 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 做幂等初始化。项目中没有独立的迁移框架。
 
+### 派生数据重算原则（规则变更的必备配套）
+
+`anomalies`、`risk_summary_cache`、`routes`、`stops`、`visits.exclude_from_visit_count`、`visits.customer_count` 等都是**落库的派生数据**：改检测/统计口径的代码后，**线上已有记录不会自动更新**——只部署新代码会看到旧结果（2026-08-07 案例：v2 里程读数异常逻辑修复后，12 条旧误报残留在 anomalies 表，需手动 DELETE 清除）。
+
+因此任何口径/规则变更必须配套：
+
+1. **评估影响面**：新口径对哪些历史 user+date 的结果不同；
+2. **清理或重算存量**，可用入口：
+   - 单 user+date 的异常+风险摘要：`computeRiskSummary`（先删后插），经 `POST /analytics/risk-summary/refresh?date=`（admin）或下一次同步自动触发；
+   - 全量异常重算：`npm run recompute:anomalies`（重，全表删除重建，慎用）；
+   - 拜访排除标记：`npm run backfill:visit-exclusion`（幂等）；多客户计数：`npm run backfill:customer-count`；
+   - routes/里程：`npm run recompute:routes`；
+3. **把重算/清理命令写进部署步骤**（PLAN.md 对应条目），部署代码和重算数据是同一次变更的两半。
+
+反过来说：只改代码里的口径常量/权重（`anomaly_weights` 表配置类）且确认无存量误报时，可只清理受影响日期的 anomalies 让读路径自然重建，不必全量重算。
+
 ### 认证方式
 
 以**钉钉扫码登录 + session token** 为主：
