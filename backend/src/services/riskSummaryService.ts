@@ -188,8 +188,11 @@ export async function computeEmployeeRiskSummary(
     0
   );
 
-  // 拜访次数统计排除命中住址/公司地址白名单的签到（visitsToday 全量仍供异常检测使用）
-  const countableVisitCount = visitsToday.filter((v) => !v.exclude_from_visit_count).length;
+  // 拜访次数统计排除命中住址/公司地址白名单的签到（visitsToday 全量仍供异常检测使用）；
+  // 一个打卡点多家客户按客户数计（customer_count，v1/Excel 恒为 1）
+  const countableVisitCount = visitsToday
+    .filter((v) => !v.exclude_from_visit_count)
+    .reduce((sum, v) => sum + (v.customer_count ?? 1), 0);
 
   return {
     user_id: userId,

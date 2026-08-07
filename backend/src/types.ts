@@ -41,6 +41,7 @@ export interface Visit {
   source_detail?: string;
   business_date?: string;
   exclude_from_visit_count?: boolean;
+  customer_count?: number;
 }
 
 export interface Stop {
@@ -120,6 +121,11 @@ export interface ParsedVisit {
   sign_count?: number;
   continues_to_next?: boolean;
   source_detail?: string;
+  // 表单版本标记：钉钉新表单（v2，按 process_code 区分）解析时置 "v2"，
+  // 用于 normalization 的拜访计数排除口径分流（v2 按客户名称判定，不走地址白名单）
+  form_version?: "v2";
+  // 该打卡点的客户数（v2 一个打卡点可填多家客户）；缺省按 1 处理
+  customer_count?: number;
 }
 
 export interface User {

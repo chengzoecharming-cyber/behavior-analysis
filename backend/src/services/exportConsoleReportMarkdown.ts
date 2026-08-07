@@ -1,5 +1,6 @@
 import { UserOverviewResult } from "./userOverviewService";
 import { Visit, Route, Stop } from "../types";
+import { splitCustomerNames } from "./normalization";
 import { ReportType } from "./dingtalkDoc";
 
 export interface MarkdownReportInput {
@@ -42,30 +43,23 @@ function buildSystemLink(input: MarkdownReportInput): string {
   return `/decision?start=${input.start}&end=${input.end}&mode=custom`;
 }
 
-function resolveCustomerDisplayName(v: Visit): string {
-  // 1. 优先使用真实客户名
-  let customer = (v.customer_name || "").trim();
-  // 去掉钉钉表单常见前缀
-  customer = customer.replace(/^客户名称[:：]\s*/, "");
-
-  // 过滤占位/无效客户名（包含「虚拟客户」「签到用」或清空前缀后为空）
-  if (customer && !customer.includes("虚拟客户") && !customer.includes("签到用")) {
-    return customer;
-  }
+function resolveCustomerDisplayNames(v: Visit): string[] {
+  // 1. 优先使用真实客户名；一个打卡点可有多家客户（[,，、] 连接），逐个拆分过滤
+  const parts = splitCustomerNames(v.customer_name)
+    .map((c) => c.replace(/^客户名称[:：]\s*/, ""))
+    // 过滤占位/无效客户名（包含「虚拟客户」「签到用」或清空前缀后为空）
+    .filter((c) => c && !c.includes("虚拟客户") && !c.includes("签到用"));
+  if (parts.length > 0) return parts;
 
   // 2. 没有真实客户名时用地址
   const address = (v.address || "").trim();
-  if (address) {
-    return address;
-  }
+  if (address) return [address];
 
   // 3. 兜底用 location_name
   const location = (v.location_name || "").trim();
-  if (location) {
-    return location;
-  }
+  if (location) return [location];
 
-  return "未命名客户";
+  return ["未命名客户"];
 }
 
 function computeCustomerFrequency(
@@ -73,8 +67,10 @@ function computeCustomerFrequency(
 ): { customerName: string; count: number }[] {
   const map = new Map<string, number>();
   for (const v of visits) {
-    const name = resolveCustomerDisplayName(v);
-    map.set(name, (map.get(name) || 0) + 1);
+    // 一个打卡点多家客户：每家各计一次拜访
+    for (const name of resolveCustomerDisplayNames(v)) {
+      map.set(name, (map.get(name) || 0) + 1);
+    }
   }
   return Array.from(map.entries())
     .map(([customerName, count]) => ({ customerName, count }))
@@ -94,12 +90,9 @@ function renderCoreSummary(
   homeVisitIds?: Set<number>
 ) {
   const customerVisits = excludeHomeVisits(visits, homeVisitIds);
+  // 拜访客户数：一个打卡点多家客户拆开去重（与客户拜访列表同口径）
   const customerCount = customerVisits
-    ? new Set(
-        customerVisits.map(
-          (v) => v.customer_name || v.location_name || "未命名客户"
-        )
-      ).size
+    ? new Set(customerVisits.flatMap((v) => resolveCustomerDisplayNames(v))).size
     : 0;
 
   lines.push("## 核心指标");
@@ -140,11 +133,7 @@ function renderCustomerList(
       const owners = [
         ...new Set(
           visits
-            .filter(
-              (v) =>
-                (v.customer_name || v.location_name || "未命名客户") ===
-                c.customerName
-            )
+            .filter((v) => resolveCustomerDisplayNames(v).includes(c.customerName))
             .map((v) => v.user_name || "—")
         ),
       ].join("、");

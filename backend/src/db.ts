@@ -92,6 +92,9 @@ export async function initDB(): Promise<void> {
       -- 拜访次数统计排除标记：命中员工本人住址或公司地址白名单的签到不计入「拜访次数」类统计
       -- （不影响轨迹/停留/里程/异常检测），写入时打标，存量由 scripts/backfillVisitExclusion.ts 回填
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS exclude_from_visit_count BOOLEAN NOT NULL DEFAULT false;
+      -- 该打卡点对应的客户数：v2 新表单一个打卡点可填多家客户，拜访次数统计按客户数计
+      -- （SUM(customer_count) 而非 COUNT(*)）；v1/Excel 恒为 1，存量默认 1 无需回填
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS customer_count INTEGER NOT NULL DEFAULT 1;
 
       -- 坐标失败后允许为 NULL，不再写入 0,0
       ALTER TABLE visits ALTER COLUMN lat DROP NOT NULL;

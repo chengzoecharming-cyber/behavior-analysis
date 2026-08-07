@@ -46,6 +46,28 @@ export function normalizeUserId(name: string): string {
   return name.trim().toLowerCase().replace(/\s+/g, "_");
 }
 
+// 拆分多客户名：v1 的「客户名称」关联字段和 v2 的 TableField 都可能在一个打卡点
+// 填多家客户，存储时用 [,，、] 连接。统计客户数/拜访次数时按分隔符拆开计。
+export function splitCustomerNames(name?: string | null): string[] {
+  if (!name) return [];
+  return name
+    .split(/[,，、]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+// v2 占位客户名（不算真实拜访）：「虚拟客户」家族 + CRM 遗留占位选项「XX（签到用）」
+// （虚拟客户/住址/公司（签到用））。业务约定：住址、公司、酒店类未真实拜访的打卡，
+// 源头统一在客户字段写「虚拟客户」；「签到用」不会出现在真实客户名中，零误伤。
+const PLACEHOLDER_CUSTOMER_PATTERN = /虚拟|签到用/;
+
+// v2 拜访计数口径：逐个客户名判定，返回非占位的真实客户名列表。
+// 情况B（不计拜访）= 真实客户名数为 0（空、全占位）；混合填写「真实客户A、虚拟客户」
+// 时真实客户仍计入拜访（realCount = 1，不排除）。
+export function splitRealCustomerNames(name?: string | null): string[] {
+  return splitCustomerNames(name).filter((n) => !PLACEHOLDER_CUSTOMER_PATTERN.test(n));
+}
+
 interface XlsxDateParts {
   y: number;
   m: number;
@@ -277,17 +299,31 @@ export async function processParsedVisits(
       insertedKeys.add(key);
     }
 
-    // 拜访次数统计排除：命中员工本人住址或公司地址白名单（不影响轨迹/停留/里程/异常）
-    const homeAddress = await getHomeAddress(userId);
-    const visitLocation = {
-      address: visit.address,
-      location_name: visit.location_name,
-      lat,
-      lng,
-    };
-    const excludeFromVisitCount =
-      (homeAddress ? await isHomeAddress(visitLocation, homeAddress) : false) ||
-      isCompanyAddress(visitLocation, companyAddresses);
+    // 拜访次数统计排除（不影响轨迹/停留/里程/异常）：
+    // - v2 新表单：按「出行方式 × 客户名称」口径——逐个客户名判定，非占位
+    //   （虚拟客户/签到用）客户名数为 0 即情况B排除，不看地址；混合填写时真实客户照计
+    // - v1 旧表单 / Excel：命中员工本人住址或公司地址白名单即排除
+    let excludeFromVisitCount: boolean;
+    let customerCount: number;
+    if (visit.form_version === "v2") {
+      const realNames = splitRealCustomerNames(visit.customer_name);
+      excludeFromVisitCount = realNames.length === 0;
+      customerCount = realNames.length;
+    } else {
+      const homeAddress = await getHomeAddress(userId);
+      const visitLocation = {
+        address: visit.address,
+        location_name: visit.location_name,
+        lat,
+        lng,
+      };
+      excludeFromVisitCount =
+        (homeAddress ? await isHomeAddress(visitLocation, homeAddress) : false) ||
+        isCompanyAddress(visitLocation, companyAddresses);
+      // v1/Excel 未显式给出时按 customer_name 分隔符拆分计（v1 虚拟客户是真实拜访，
+      // 一并计入），空名单值按 1（v1 地址制：无客户名的有效签到点仍计 1 次）
+      customerCount = visit.customer_count ?? Math.max(splitCustomerNames(visit.customer_name).length, 1);
+    }
 
     // raw_visits + visits 在同一事务写入；visits 靠部分唯一索引
     // (approval_id, user_id, sequence) 兜底防并发重复——
@@ -320,9 +356,9 @@ export async function processParsedVisits(
           location_name, address, customer_name, source,
           approval_id, approval_status, sequence, trip_type, vehicle, start_odometer, end_odometer,
           reported_distance_km, cumulative_mileage_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
-          business_date, exclude_from_visit_count)
+          business_date, exclude_from_visit_count, customer_count)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
          ON CONFLICT (approval_id, user_id, sequence) WHERE approval_id IS NOT NULL DO NOTHING
          RETURNING id`,
         [
@@ -355,6 +391,7 @@ export async function processParsedVisits(
           visit.source_detail ?? null,
           businessDates[i],
           excludeFromVisitCount,
+          customerCount,
         ]
       );
 

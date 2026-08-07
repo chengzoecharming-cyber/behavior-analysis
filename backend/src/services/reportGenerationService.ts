@@ -10,6 +10,7 @@ import {
 } from "./addressWhitelistService";
 import { computeUserOverview } from "./userOverviewService";
 import { renderConsoleReportMarkdown } from "./exportConsoleReportMarkdown";
+import { splitCustomerNames } from "./normalization";
 import {
   computeMileageByApprovalForUsers,
   aggregateMileageByDate,
@@ -133,10 +134,9 @@ async function computeScopeOverview(
 ): Promise<{ overview: ScopeData["overview"]; hasData: boolean; visits: Visit[]; routes: Route[] }> {
   const userIds = getUserIdsForScope(scope, node, tree);
 
-  // 1. 总拜访次数/客户数
+  // 1. 总拜访次数
   const visitResult = await pool.query(
-    `SELECT COUNT(*) AS visit_count,
-            COUNT(DISTINCT COALESCE(customer_name, location_name)) AS customer_count
+    `SELECT COALESCE(SUM(customer_count), 0) AS visit_count
      FROM visits
      WHERE user_id = ANY($1::text[])
        AND business_date >= $2::date
@@ -148,8 +148,7 @@ async function computeScopeOverview(
   // 2. 每日聚合
   const dailyResult = await pool.query(
     `SELECT business_date,
-            COUNT(*) AS visit_count,
-            COUNT(DISTINCT COALESCE(customer_name, location_name)) AS customer_count
+            COALESCE(SUM(customer_count), 0) AS visit_count
      FROM visits
      WHERE user_id = ANY($1::text[])
        AND business_date >= $2::date
@@ -159,6 +158,47 @@ async function computeScopeOverview(
      ORDER BY business_date`,
     [userIds, start, end]
   );
+
+  // 2b. 客户数（每日/全局去重）：一个打卡点可有多家客户（[,，、] 连接），拆开去重。
+  // JS 拆分，避免 LATERAL 展开影响聚合行数；每日口径带 exclude 过滤，全局口径保持原有行为（不过滤）
+  const customerNamesResult = await pool.query(
+    `SELECT DISTINCT business_date, customer_name, location_name
+     FROM visits
+     WHERE user_id = ANY($1::text[])
+       AND business_date >= $2::date
+       AND business_date <= $3::date`,
+    [userIds, start, end]
+  );
+  const customerNamesFilteredResult = await pool.query(
+    `SELECT DISTINCT business_date, customer_name, location_name
+     FROM visits
+     WHERE user_id = ANY($1::text[])
+       AND business_date >= $2::date
+       AND business_date <= $3::date
+       AND NOT exclude_from_visit_count`,
+    [userIds, start, end]
+  );
+  const collectCustomerNames = (
+    rows: { business_date: Date | string; customer_name: string | null; location_name: string | null }[],
+    perDay: Map<string, Set<string>> | null,
+    globalSet: Set<string>
+  ) => {
+    for (const row of rows) {
+      const names = splitCustomerNames(row.customer_name);
+      if (names.length === 0 && row.location_name) names.push(row.location_name);
+      for (const n of names) {
+        globalSet.add(n);
+        perDay?.get(formatDate(row.business_date))?.add(n);
+      }
+    }
+  };
+  const dailyCustomerSets = new Map<string, Set<string>>();
+  for (const row of dailyResult.rows) {
+    dailyCustomerSets.set(formatDate(row.business_date), new Set<string>());
+  }
+  collectCustomerNames(customerNamesFilteredResult.rows, dailyCustomerSets, new Set<string>());
+  const globalCustomerSet = new Set<string>();
+  collectCustomerNames(customerNamesResult.rows, null, globalCustomerSet);
 
   // 3. 每日估算里程（routes）与填报里程（按审批单聚合）
   const mileageResults = await computeMileageByApprovalForUsers(userIds, start, end);
@@ -237,7 +277,7 @@ async function computeScopeOverview(
   for (const row of dailyResult.rows) {
     const d = ensureDay(formatDate(row.business_date));
     d.visit_count = parseInt(row.visit_count, 10);
-    d.customer_count = parseInt(row.customer_count, 10);
+    d.customer_count = dailyCustomerSets.get(formatDate(row.business_date))?.size || 0;
   }
   for (const [date, vals] of byDate) {
     const d = ensureDay(date);
@@ -272,16 +312,8 @@ async function computeScopeOverview(
   );
 
   // customer_count 跨天去重应该用全局，这里简单用每日最大不太准确，重新计算全局去重
-  const globalCustomerResult = await pool.query(
-    `SELECT COUNT(DISTINCT COALESCE(customer_name, location_name)) AS customer_count
-     FROM visits
-     WHERE user_id = ANY($1::text[])
-       AND business_date >= $2::date
-       AND business_date <= $3::date`,
-    [userIds, start, end]
-  );
-  totals.customer_count =
-    parseInt(globalCustomerResult.rows[0]?.customer_count, 10) || 0;
+  // （多客户名已在上面的 globalCustomerSet 拆分去重；口径保持原有行为：不加 exclude 过滤）
+  totals.customer_count = globalCustomerSet.size;
 
   return {
     overview: {

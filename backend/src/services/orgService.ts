@@ -1,6 +1,7 @@
 import { pool } from "../db";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { formatBeijingDate } from "../utils/timezone";
+import { splitCustomerNames } from "./normalization";
 import {
   computeMileageByApprovalForUsers,
   aggregateMileageByUser,
@@ -418,10 +419,9 @@ export async function computeOrgOverview(
   // 1. 基础统计：拜访数、员工数、地点数、客户数
   const overviewResult = await pool.query(
     `SELECT
-       COUNT(*) AS total_visits,
+       COALESCE(SUM(customer_count), 0) AS total_visits,
        COUNT(DISTINCT user_id) AS total_employees,
-       COUNT(DISTINCT CONCAT(ROUND(lat::numeric, 5), ',', ROUND(lng::numeric, 5))) AS total_locations,
-       COUNT(DISTINCT customer_name) AS total_customers
+       COUNT(DISTINCT CONCAT(ROUND(lat::numeric, 5), ',', ROUND(lng::numeric, 5))) AS total_locations
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND lat IS NOT NULL AND lng IS NOT NULL
@@ -430,6 +430,24 @@ export async function computeOrgOverview(
        AND user_id = ANY($3::text[])`,
     [startDate, endDate, userIds]
   );
+
+  // 客户数：一个打卡点可有多家客户（[,，、] 连接），拆开去重计数。
+  // 单独查询 + JS 拆分，避免 LATERAL 展开导致上面聚合行数翻倍
+  const customerNamesResult = await pool.query(
+    `SELECT DISTINCT customer_name
+     FROM visits
+     WHERE business_date >= $1::date AND business_date <= $2::date
+       AND lat IS NOT NULL AND lng IS NOT NULL
+       AND (lat <> 0 OR lng <> 0)
+       AND NOT exclude_from_visit_count
+       AND user_id = ANY($3::text[])
+       AND customer_name IS NOT NULL AND customer_name <> ''`,
+    [startDate, endDate, userIds]
+  );
+  const distinctCustomers = new Set<string>();
+  for (const row of customerNamesResult.rows) {
+    for (const n of splitCustomerNames(row.customer_name)) distinctCustomers.add(n);
+  }
 
   // 2. 填报里程与估算里程：统一按审批单首次签到日期聚合
   const mileageResults = await computeMileageByApprovalForUsers(
@@ -460,7 +478,7 @@ export async function computeOrgOverview(
     totalVisits: parseInt(overviewResult.rows[0].total_visits, 10),
     totalEmployees: parseInt(overviewResult.rows[0].total_employees, 10),
     totalLocations: parseInt(overviewResult.rows[0].total_locations, 10),
-    totalCustomers: parseInt(overviewResult.rows[0].total_customers, 10) || 0,
+    totalCustomers: distinctCustomers.size,
     totalReportedKm: parseFloat(totalReportedKm.toFixed(2)),
     totalEstimatedKm: parseFloat(totalEstimatedKm.toFixed(2)),
     totalAnomalies: parseInt(anomalyResult.rows[0].total_anomalies, 10),
@@ -503,7 +521,7 @@ async function computeRanking(
     const result = await pool.query(
       `SELECT
          SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) AS dept_name,
-         COUNT(*) AS visit_count,
+         COALESCE(SUM(customer_count), 0) AS visit_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
        WHERE business_date >= $1::date AND business_date <= $2::date
@@ -568,7 +586,7 @@ async function computeRanking(
       const result = await pool.query(
         `SELECT
            SPLIT_PART(department, ',', 1) AS sub_dept_name,
-           COUNT(*) AS visit_count,
+           COALESCE(SUM(customer_count), 0) AS visit_count,
            COUNT(DISTINCT user_id) AS employee_count
          FROM visits
          WHERE business_date >= $1::date AND business_date <= $2::date
@@ -614,7 +632,7 @@ async function computeRanking(
     const result = await pool.query(
       `SELECT
          SPLIT_PART(department, ',', 1) AS sub_dept_name,
-         COUNT(*) AS visit_count,
+         COALESCE(SUM(customer_count), 0) AS visit_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
        WHERE business_date >= $1::date AND business_date <= $2::date
@@ -649,7 +667,7 @@ async function computeRanking(
     `SELECT
        user_id,
        MAX(user_name) AS user_name,
-       COUNT(*) AS visit_count
+       COALESCE(SUM(customer_count), 0) AS visit_count
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND user_id = ANY($3)
@@ -759,7 +777,7 @@ async function computeTrend(
 ): Promise<OrgTrendItem[]> {
   const [visits, mileageResults, anomalies] = await Promise.all([
     pool.query(
-      `SELECT business_date, COUNT(*) AS visit_count
+      `SELECT business_date, COALESCE(SUM(customer_count), 0) AS visit_count
        FROM visits
        WHERE user_id = ANY($1)
          AND business_date >= $2::date

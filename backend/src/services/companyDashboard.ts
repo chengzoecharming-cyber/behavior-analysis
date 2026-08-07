@@ -1,5 +1,6 @@
 import { pool } from "../db";
 import { MAX_MILEAGE_KM } from "./mileageConfig";
+import { splitCustomerNames } from "./normalization";
 import {
   formatBeijingDate,
   parseDateTimeAsBeijing,
@@ -133,9 +134,8 @@ export async function computeCompanyDashboard(
   // 1. 汇总指标
   const summaryResult = await pool.query(
     `SELECT
-       COUNT(*) AS total_visits,
-       COUNT(DISTINCT user_id) AS active_employees,
-       COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
+       COALESCE(SUM(customer_count), 0) AS total_visits,
+       COUNT(DISTINCT user_id) AS active_employees
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
@@ -143,9 +143,24 @@ export async function computeCompanyDashboard(
     params
   );
 
+  // 客户覆盖数：一个打卡点可有多家客户（[,，、] 连接），拆开去重计数
+  const customerNamesResult = await pool.query(
+    `SELECT DISTINCT customer_name
+     FROM visits
+     WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
+       AND customer_name IS NOT NULL AND customer_name <> ''
+       ${userFilter}`,
+    params
+  );
+  const distinctCustomers = new Set<string>();
+  for (const row of customerNamesResult.rows) {
+    for (const n of splitCustomerNames(row.customer_name)) distinctCustomers.add(n);
+  }
+
   const totalVisits = parseInt(summaryResult.rows[0].total_visits, 10) || 0;
   const activeEmployees = parseInt(summaryResult.rows[0].active_employees, 10) || 0;
-  const customerCoverage = parseInt(summaryResult.rows[0].customer_coverage, 10) || 0;
+  const customerCoverage = distinctCustomers.size;
 
   // 2. 周趋势：先按天聚合，再归到业务周
   const dates = eachDate(startDate, endDate);
@@ -171,7 +186,7 @@ export async function computeCompanyDashboard(
 
   // 每天拜访数与活跃员工
   const dailyVisitsResult = await pool.query(
-    `SELECT business_date, COUNT(*) AS visit_count, COUNT(DISTINCT user_id) AS active_employees
+    `SELECT business_date, COALESCE(SUM(customer_count), 0) AS visit_count, COUNT(DISTINCT user_id) AS active_employees
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
@@ -304,7 +319,7 @@ export async function computeCompanyDashboard(
        user_id,
        MAX(user_name) AS user_name,
        MAX(SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1)) AS department,
-       COUNT(*) AS visit_count
+       COALESCE(SUM(customer_count), 0) AS visit_count
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
@@ -353,9 +368,8 @@ export async function computeCompanyDashboard(
   const departmentResult = await pool.query(
     `SELECT
        SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) AS dept_name,
-       COUNT(*) AS visit_count,
-       COUNT(DISTINCT user_id) AS employee_count,
-       COUNT(DISTINCT NULLIF(customer_name, '')) AS customer_coverage
+       COALESCE(SUM(customer_count), 0) AS visit_count,
+       COUNT(DISTINCT user_id) AS employee_count
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
@@ -366,6 +380,30 @@ export async function computeCompanyDashboard(
      ORDER BY visit_count DESC`,
     radarParams
   );
+
+  // 各部门客户覆盖数：多客户名拆开去重（单独查询避免 LATERAL 展开影响聚合行数）
+  const deptCustomerResult = await pool.query(
+    `SELECT DISTINCT
+       SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) AS dept_name,
+       customer_name
+     FROM visits
+     WHERE business_date >= $1::date AND business_date <= $2::date
+       AND NOT exclude_from_visit_count
+       AND customer_name IS NOT NULL AND customer_name <> ''
+       ${userFilter}
+       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) = $${parentIdx}
+       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) = ANY($${subIdx}::text[])`,
+    radarParams
+  );
+  const deptCustomerMap = new Map<string, Set<string>>();
+  for (const row of deptCustomerResult.rows) {
+    let set = deptCustomerMap.get(row.dept_name);
+    if (!set) {
+      set = new Set<string>();
+      deptCustomerMap.set(row.dept_name, set);
+    }
+    for (const n of splitCustomerNames(row.customer_name)) set.add(n);
+  }
 
   // 各部门估算里程（按 route 去重，避免 join visits 后重复计算）
   const deptMileageResult = await pool.query(
@@ -394,7 +432,7 @@ export async function computeCompanyDashboard(
   const departmentRadar: DepartmentRadarItem[] = departmentResult.rows.map((row) => {
     const employeeCount = parseInt(row.employee_count, 10) || 0;
     const visitCount = parseInt(row.visit_count, 10) || 0;
-    const customerCoverage = parseInt(row.customer_coverage, 10) || 0;
+    const customerCoverage = deptCustomerMap.get(row.dept_name)?.size || 0;
     const estimatedKm = deptEstimatedKmMap.get(row.dept_name) || 0;
     return {
       department: row.dept_name,

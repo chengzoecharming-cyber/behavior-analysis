@@ -212,6 +212,17 @@ map/
 
 校验逻辑集中在 `backend/src/services/syncCheckService.ts`。新增或维护钉钉同步相关代码时，应确保同步完成后调用 `checkAndSendAlerts()` 并正确更新 `dingtalk_sync_logs` 的对账字段。
 
+### 钉钉双表单（v1/v2，2026-08-07 起）
+
+新旧两套审批表单并存，**严格按 process_code 分流，不按表单中文名、不按日期**：
+
+- v1 旧表单「用车里程登记&客户签到」：`DINGTALK_PROCESS_CODE`；v2 新表单「用车里程登记&拜访客户签到」：`DINGTALK_PROCESS_CODE_V2`（为空则只同步 v1）。同步时两个 code 分别 listids 轮询，`raw_approvals.process_code` 落库作为版本依据。
+- 解析分发在 `parseApprovalInstance(instance, processCode)`：v2 走 `parseApprovalInstanceV2`（dingtalk.ts），v1 逻辑一行未改。两套映射输出相同的 `ParsedVisit` 字段、落同一张 `visits` 表，下游（控制台/报告/风险）无感知。
+- v2 关键差异：客户名「拜访客户N」在打卡点**之后**（向后找，v1 是向前找）；拜访客户2~5 嵌在 TableField（取 `rowValue` 内 OpenDataField 的 `value`）；未填写字段是 schema 回显 JSON 而非 null，必须显式判空；无逐段里程，填报总里程 = 终点读数 − 出发前读数（= 表单「今日出行总里程」）。`visit_note` 优先取表单 DDAIField「AI总结」按「总结内容N」拆块的内容（2026-08-06 表单新增），无值时兜底拼接 `沟通内容详情N`/`存在问题点N`。
+- **拜访计数口径分流**（`ParsedVisit.form_version='v2'`）：v2 按「出行方式 × 客户名称」逐个判定——真实客户名数为 0（空或全部为占位名，占位 = `/虚拟|签到用/`）→ `exclude_from_visit_count=true`，不看地址；有真实客户名即使在住址/公司/酒店也算拜访；混合填写真实客户照计。v1/Excel 仍走住址+公司地址白名单（纯地址制，不看客户名）。`backfillVisitExclusion` 脚本同样按此分流。
+- **一个打卡点 N 家客户 = N 次拜访**：`visits.customer_count`（v2 按客户数写；v1/Excel 按 customer_name 分隔符 `[,，、]` 拆分计，空名单值按 1；存量用 `npm run backfill:customer-count` 回填）。「拜访次数」类统计一律 `SUM(customer_count)`，不要用 `COUNT(*)`；「客户数」类统计用 `splitCustomerNames`（normalization.ts）拆分去重，不要在 SQL 里 LATERAL 展开（会让同行其他聚合翻倍）。
+- 旧表单停用时清空 `DINGTALK_PROCESS_CODE` 即可，v1 解析代码保留用于历史重跑。详见 PLAN.md Step 3.6。
+
 ### 地理编码策略
 
 - 优先调用高德地理编码 API（需要 `AMAP_KEY`，且必须是「Web 服务」Key）。
@@ -242,6 +253,8 @@ AMAP_KEY=YOUR_AMAP_KEY
 DINGTALK_APP_KEY=YOUR_DINGTALK_APP_KEY
 DINGTALK_APP_SECRET=YOUR_DINGTALK_APP_SECRET
 DINGTALK_PROCESS_CODE=YOUR_DINGTALK_PROCESS_CODE
+# 新审批表单（v2「用车里程登记&拜访客户签到」）process_code；为空则只同步旧表单
+DINGTALK_PROCESS_CODE_V2=
 
 # 钉钉扫码登录允许的前端回调 origin（逗号分隔），回调地址为 <origin>/login/callback
 DINGTALK_LOGIN_ALLOWED_ORIGINS=http://localhost:5173,http://8.219.97.3:5173

@@ -70,7 +70,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
     // 1. 总拜访数、员工数、不重复地点数
     const overviewResult = await pool.query(
       `SELECT
-         COUNT(*) AS total_visits,
+         COALESCE(SUM(customer_count), 0) AS total_visits,
          COUNT(DISTINCT user_id) AS total_employees,
          COUNT(DISTINCT CONCAT(ROUND(lat::numeric, 5), ',', ROUND(lng::numeric, 5))) AS total_locations
        FROM visits
@@ -86,7 +86,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
     const deptResult = await pool.query(
       `SELECT
          department AS raw_department,
-         COUNT(*) AS visit_count,
+         COALESCE(SUM(customer_count), 0) AS visit_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
        WHERE business_date >= $1::date AND business_date <= $2::date
@@ -104,7 +104,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
       `SELECT
          lat,
          lng,
-         COUNT(*) AS count,
+         COALESCE(SUM(customer_count), 0) AS count,
          STRING_AGG(DISTINCT user_name, ', ' ORDER BY user_name) AS user_names,
          STRING_AGG(DISTINCT location_name, '; ' ORDER BY location_name) AS location_names,
          STRING_AGG(DISTINCT address, '; ' ORDER BY address) AS addresses,

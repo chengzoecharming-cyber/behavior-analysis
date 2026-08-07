@@ -20,18 +20,33 @@ export interface DingTalkConfig {
   appKey: string;
   appSecret: string;
   processCode: string;
+  // 新审批表单（v2）process_code；空表示未启用，仅同步旧表单
+  processCodeV2: string;
 }
 
 export function getDingTalkConfig(): DingTalkConfig {
   const appKey = process.env.DINGTALK_APP_KEY || "";
   const appSecret = process.env.DINGTALK_APP_SECRET || "";
   const processCode = process.env.DINGTALK_PROCESS_CODE || "";
-  return { appKey, appSecret, processCode };
+  const processCodeV2 = process.env.DINGTALK_PROCESS_CODE_V2 || "";
+  return { appKey, appSecret, processCode, processCodeV2 };
+}
+
+// 所有已配置、需要同步的 process_code 列表（旧表单 v1 + 新表单 v2）
+export function getAllProcessCodes(): string[] {
+  const cfg = getDingTalkConfig();
+  return [cfg.processCode, cfg.processCodeV2].filter((c) => !!c);
 }
 
 export function isDingTalkConfigured(): boolean {
   const cfg = getDingTalkConfig();
   return !!cfg.appKey && !!cfg.appSecret && !!cfg.processCode;
+}
+
+// 判断 process_code 是否为 v2 新表单（解析分发依据，不按表单中文名判断）
+export function isV2ProcessCode(processCode?: string | null): boolean {
+  const v2 = getDingTalkConfig().processCodeV2;
+  return !!v2 && !!processCode && processCode === v2;
 }
 
 const MAX_RETRIES = 3;
@@ -735,16 +750,18 @@ export async function getApprovalInstances(
   startTimeMs: number,
   endTimeMs: number,
   cursor = 0,
-  size = 20
+  size = 20,
+  processCode?: string
 ): Promise<{ list: string[]; nextCursor?: number }> {
   const cfg = getDingTalkConfig();
+  const code = processCode || cfg.processCode;
   const accessToken = await getAccessToken();
 
   const data = await httpPost(
     "/topapi/processinstance/listids",
     { access_token: accessToken },
     {
-      process_code: cfg.processCode,
+      process_code: code,
       start_time: startTimeMs,
       end_time: endTimeMs,
       size,
@@ -757,7 +774,7 @@ export async function getApprovalInstances(
   }
 
   const result = data.result || {};
-  console.log(`[DingTalk listids] process_code=${cfg.processCode}, range=${startTimeMs}-${endTimeMs}, raw_result=`, JSON.stringify(result));
+  console.log(`[DingTalk listids] process_code=${code}, range=${startTimeMs}-${endTimeMs}, raw_result=`, JSON.stringify(result));
   return {
     list: result.list || [],
     nextCursor: result.next_cursor,
@@ -963,7 +980,13 @@ function extractReadableName(value: string): string {
 }
 
 // 解析一个审批实例，返回一条或多条 ParsedVisit
-export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[]> {
+// processCode 用于新旧表单（v1/v2）解析分发：同步路径显式传入，
+// 其他调用方（数据血缘重新解析）经 raw_approvals.process_code 传入
+export async function parseApprovalInstance(instance: any, processCode?: string): Promise<ParsedVisit[]> {
+  const code = processCode || instance.process_code || instance.processCode || "";
+  if (isV2ProcessCode(code)) {
+    return parseApprovalInstanceV2(instance);
+  }
   const formComponents: FormComponent[] = instance.form_component_values || [];
 
   // 通用单表单独回退
@@ -1177,8 +1200,283 @@ export async function parseApprovalInstance(instance: any): Promise<ParsedVisit[
   return visits;
 }
 
+// ==================== v2 新表单解析（用车里程登记&拜访客户签到） ====================
+// 与 v1 的差异（PLAN.md Step 3.6）：
+// - 客户名「拜访客户N」在打卡点之后，属于当前打卡点（向后找）；v1 是向前找
+// - 无逐段里程读数：全程只有出发前/终点读数 + 今日出行总里程（= 终点−出发前，表单自动算）
+// - 无特殊签到字段；拜访情况 = 交流对象/沟通内容详情/存在问题点 三段
+// - 无起终点概念：判断逻辑只有「出行方式 × 客户名称」（情况A/B），
+//   拜访计数排除由 normalization 按 customer_name 判定（form_version='v2'），不走地址白名单
+
+// 判断组件值是否为「schema 回显」：v2 表单未填写的 OpenDataField/TableField，
+// 钉钉返回的不是 null 而是组件定义 JSON（含 children/props，无 rowValue/extendValue）
+function isSchemaEchoValue(value: string): boolean {
+  try {
+    const parsed = JSON.parse(value);
+    const items = Array.isArray(parsed) ? parsed : [parsed];
+    if (items.some((it) => it?.rowValue || it?.extendValue)) return false; // 有真实数据
+    return items.some((it) => it?.props || it?.children || it?.componentName || it?.componentType);
+  } catch {
+    return false; // 非 JSON，是普通文本值
+  }
+}
+
+// 提取 v2「拜访客户N」的客户名与客户数：
+// - OpenDataField（拜访客户1）：value 直接是文本（手动输入）或 "客户名称:X"（CRM 关联），单值
+// - TableField（拜访客户2~5 嵌在其中）：value 为 JSON 数组，每行 rowValue 里
+//   OpenDataField 项的 value 是一个客户；**一个打卡点可填多家客户**（多行 rowValue，
+//   实测 2026-08-06），全部收集去重后用「、」连接，count 为去重后的客户数
+//   （拜访次数统计按客户数计，见 visits.customer_count）
+// 未填写（schema 回显）返回 { name: "", count: 0 }
+function extractCustomerNameV2(c: FormComponent): { name: string; count: number } {
+  const value = (c.value || "").trim();
+  if (!value || value === "null") return { name: "", count: 0 };
+
+  if (c.component_type === "TableField") {
+    const names: string[] = [];
+    try {
+      const rows = JSON.parse(value);
+      if (Array.isArray(rows)) {
+        for (const row of rows) {
+          const rv = row?.rowValue;
+          if (!Array.isArray(rv)) continue;
+          for (const item of rv) {
+            if (item?.componentType !== "OpenDataField") continue;
+            const v = typeof item.value === "string" ? item.value.trim() : "";
+            let name = v ? extractReadableName(v) : "";
+            if (!name) {
+              const title = item?.extendValue?.data?.find(
+                (d: any) => d?.key === "titleKeyFieldId"
+              )?.value;
+              if (title) name = extractReadableName(String(title));
+            }
+            if (name && !names.includes(name)) names.push(name);
+          }
+        }
+      }
+    } catch {
+      // 忽略 JSON 解析失败，按无客户处理
+    }
+    return { name: names.join("、"), count: names.length };
+  }
+
+  if (isSchemaEchoValue(value)) return { name: "", count: 0 };
+  const name = extractReadableName(value);
+  return { name, count: name ? 1 : 0 };
+}
+
+// 解析钉钉 AI 字段（DDAIField「AI总结」）的按块输出，格式为：
+// "总结内容1: ...\n总结内容2: ..."（块内容可能跨行），返回 { 块序号 → 文本 }
+function parseAiSummaryBlocks(raw?: string): Map<number, string> {
+  const map = new Map<number, string>();
+  if (!raw) return map;
+  const re = /总结内容(\d+)\s*[:：]/g;
+  const matches = [...raw.matchAll(re)];
+  for (let i = 0; i < matches.length; i++) {
+    const n = parseInt(matches[i][1], 10);
+    const start = (matches[i].index ?? 0) + matches[i][0].length;
+    const end = i + 1 < matches.length ? (matches[i + 1].index ?? raw.length) : raw.length;
+    const text = raw.slice(start, end).trim();
+    if (text) map.set(n, text);
+  }
+  return map;
+}
+
+async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
+  const formComponents: FormComponent[] = instance.form_component_values || [];
+
+  const originatorUserId = instance.originator_userid || instance.originatorUserId || "";
+  const originatorUserName = instance.originator_user_name || instance.originatorUserName || "";
+  const department = instance.originator_dept_name || instance.originatorDeptName || "销售部";
+  const approvalId = instance.business_id || instance.businessId || instance.process_instance_id || instance.processInstanceId || "";
+  const approvalStatus = instance.status || instance.result || "";
+
+  const findValue = (pattern: RegExp): string | undefined => {
+    for (const c of formComponents) {
+      const name = (c.name || "").trim();
+      const value = (c.value || "").trim();
+      if (pattern.test(name) && value && value !== "null") return value;
+    }
+    return undefined;
+  };
+
+  const tripType = findValue(/^出行方式$/) || findValue(/出行方式/);
+  const isDriving = /^开车/.test(tripType || "");
+
+  // 里程字段按字段名直取（「其他」单这些字段整体为空，天然跳过）
+  const vehicleRaw = findValue(/^选择出行车辆$/);
+  const vehicleInfo = vehicleRaw ? parseVehicle(vehicleRaw) : undefined;
+  const startOdometer = parseFloat(findValue(/^出发前里程读数$/) || "NaN");
+  const endOdometerRaw = findValue(/^终点里程读数$/);
+  const endOdometer = endOdometerRaw ? parseFloat(endOdometerRaw) : NaN;
+  const totalMileageRaw = findValue(/^今日出行总里程$/);
+  const totalMileage = totalMileageRaw ? parseFloat(totalMileageRaw) : NaN;
+
+  // 用户名 fallback 链与 v1 相同：originator_user_name → 通讯录 API → originator_userid
+  // （v2 详情接口实测不返回 originator_user_name；不要用车辆字段中的人名兜底）
+  let userName = originatorUserName;
+  if (!userName && originatorUserId) {
+    const contactName = await getUserNameById(originatorUserId);
+    if (contactName) userName = contactName;
+  }
+  if (!userName) userName = originatorUserId;
+
+  // 收集所有非空的 TimeAndLocationField，按表单顺序
+  const stops: { index: number; parsed: ReturnType<typeof parseTimeLocationValue> }[] = [];
+  for (let i = 0; i < formComponents.length; i++) {
+    const c = formComponents[i];
+    if (c.component_type !== "TimeAndLocationField") continue;
+    const value = (c.value || "").trim();
+    if (!value || value === "null") continue;
+    const parsed = parseTimeLocationValue(value);
+    if (!parsed) continue;
+    stops.push({ index: i, parsed });
+  }
+
+  if (stops.length === 0) return [];
+
+  // 在当前 stop 后面、下一个定位字段之前找匹配字段的值
+  const findNearby = (stopIndex: number, pattern: RegExp): string | undefined => {
+    for (let i = stopIndex + 1; i < formComponents.length; i++) {
+      const c = formComponents[i];
+      if (c.component_type === "TimeAndLocationField") break;
+      const name = (c.name || "").trim();
+      const value = (c.value || "").trim();
+      if (pattern.test(name) && value && value !== "null") return value;
+    }
+    return undefined;
+  };
+
+  // 在当前 stop 后面、下一个定位字段之前找「拜访客户N」组件
+  // （拜访客户1 是 OpenDataField；拜访客户2~5 嵌在 TableField 里）
+  const findNearbyCustomerComponent = (stopIndex: number): FormComponent | undefined => {
+    for (let i = stopIndex + 1; i < formComponents.length; i++) {
+      const c = formComponents[i];
+      if (c.component_type === "TimeAndLocationField") break;
+      if (c.component_type === "OpenDataField" && /^拜访客户\d*$/.test((c.name || "").trim())) {
+        return c;
+      }
+      if (c.component_type === "TableField") {
+        return c;
+      }
+    }
+    return undefined;
+  };
+
+  // 钉钉 AI 字段「AI总结」：整单一个 DDAIField，按块输出「总结内容N: ...」，
+  // 优先作为各拜访块的 visit_note；无值或缺块时回退到原始字段拼接（兜底）
+  const aiRaw =
+    findValue(/^AI总结$/) ||
+    (() => {
+      const c = formComponents.find((c) => c.component_type === "DDAIField");
+      const v = (c?.value || "").trim();
+      return v && v !== "null" ? v : undefined;
+    })();
+  const aiSummaryByBlock = parseAiSummaryBlocks(aiRaw);
+
+  const visits: ParsedVisit[] = [];
+  let customerBlockNo = 0; // 拜访块序号：与「拜访客户N」「总结内容N」的 N 对齐
+
+  for (let i = 0; i < stops.length; i++) {
+    const stop = stops[i];
+    const sequence = i + 1;
+    const isFirst = i === 0;
+    const isLast = i === stops.length - 1;
+
+    // 客户名在打卡点之后，属于当前打卡点（与 v1 的「向前找」相反）
+    // 一个打卡点可有多家客户：customer_count 为客户数，拜访次数统计按客户数计
+    const customerComponent = findNearbyCustomerComponent(stop.index);
+    if (customerComponent) customerBlockNo++;
+    const { name: customerName, count: customerCount } = customerComponent
+      ? extractCustomerNameV2(customerComponent)
+      : { name: "", count: 0 };
+
+    // visit_note：优先取 AI 总结的对应块；兜底拼接原始字段
+    // （2026-08-06 表单改版后字段名带编号「沟通内容详情1」，正则用 \d* 兼容新旧快照）
+    let visitNoteText = customerComponent ? aiSummaryByBlock.get(customerBlockNo) || "" : "";
+    if (!visitNoteText) {
+      const contact = findNearby(stop.index, /^交流对象\d*$/); // 旧快照字段，已从新表单删除
+      const commDetail = findNearby(stop.index, /^沟通内容详情\d*$/);
+      const issues = findNearby(stop.index, /^存在问题点\d*$/);
+      const noteParts: string[] = [];
+      if (contact) noteParts.push(`交流对象：${contact}`);
+      if (commDetail) noteParts.push(`沟通内容：${commDetail}`);
+      if (issues) noteParts.push(`存在问题：${issues}`);
+      visitNoteText = noteParts.join("；");
+    }
+
+    const photosRaw = findNearby(stop.index, /^现场交流照片\d*$/);
+    const photos = photosRaw ? parsePhotoUrls(photosRaw) : [];
+
+    // 里程：开车单第一个点挂出发读数，最后一个点挂终点读数与填报总里程。
+    // RUNNING 中的审批单终点打卡/读数可能尚未填写，「缺少读数」备注只在 COMPLETED 后追加，
+    // 避免行程中途的最后一个已填打卡点被误标终点/误报缺读数
+    const isCompleted = (instance.status || "") === "COMPLETED";
+    let mileageNote = "";
+    let reportedDistanceKm: number | null = null;
+    if (isDriving) {
+      if (isFirst && isNaN(startOdometer) && isCompleted) {
+        mileageNote = " [缺少出发前里程读数]";
+      }
+      if (isLast) {
+        if (isNaN(endOdometer)) {
+          if (isCompleted) mileageNote += " [缺少终点里程读数]";
+        } else if (!isNaN(startOdometer)) {
+          const diff = endOdometer - startOdometer;
+          if (diff >= 0 && diff <= MAX_MILEAGE_KM) {
+            reportedDistanceKm = diff;
+          } else if (diff < 0) {
+            mileageNote += ` [里程读数异常：终点${endOdometer} < 出发${startOdometer}]`;
+          } else {
+            mileageNote += ` [里程读数异常：差值${diff}km 超上限]`;
+          }
+        } else if (isCompleted) {
+          mileageNote += " [缺少出发前里程读数，无法计算填报里程]";
+        }
+      }
+    }
+
+    // 「终点」标签只在终点读数已填时打（即真正的终点打卡），否则按普通签到点
+    const isRealEnd = isDriving && isLast && !isNaN(endOdometer);
+    const locationName =
+      isDriving && isFirst ? "出发点" : isRealEnd ? "终点" : `签到点${sequence}`;
+
+    visits.push({
+      user_id: originatorUserId,
+      user_name: userName,
+      department,
+      time: stop.parsed!.time,
+      location_name: locationName,
+      address: stop.parsed!.address,
+      customer_name: customerName,
+      lat: stop.parsed!.lat,
+      lng: stop.parsed!.lng,
+      approval_id: approvalId,
+      approval_status: approvalStatus,
+      sequence,
+      trip_type: tripType,
+      vehicle: vehicleInfo?.vehicle,
+      start_odometer: isDriving && isFirst && !isNaN(startOdometer) ? startOdometer : undefined,
+      end_odometer: isDriving && isLast && !isNaN(endOdometer) ? endOdometer : undefined,
+      reported_distance_km: reportedDistanceKm ?? undefined,
+      cumulative_mileage_km:
+        isDriving && isLast && !isNaN(totalMileage) && totalMileage >= 0 ? totalMileage : undefined,
+      visit_note: visitNoteText + mileageNote,
+      special_sign_reason: "",
+      photos,
+      source_detail: isDriving && isFirst ? "trip_start" : undefined,
+      form_version: "v2",
+      customer_count: customerCount,
+    });
+  }
+
+  return visits;
+}
+
 // 保存钉钉审批实例原始数据
-export async function saveRawApproval(instance: any, processInstanceId?: string): Promise<void> {
+// knownProcessCode：同步路径已知的 process_code（详情接口不一定返回 process_code，
+// 但 raw_approvals.process_code 是 v1/v2 解析分发的依据，必须可靠落库）
+export async function saveRawApproval(instance: any, processInstanceId?: string, knownProcessCode?: string): Promise<void> {
   const approvalId = instance.business_id || instance.businessId || instance.process_instance_id || instance.processInstanceId || "";
   if (!approvalId) return;
 
@@ -1198,6 +1496,7 @@ export async function saveRawApproval(instance: any, processInstanceId?: string)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, 'dingtalk')
        ON CONFLICT (approval_id) DO UPDATE SET
          process_instance_id = EXCLUDED.process_instance_id,
+         process_code = COALESCE(raw_approvals.process_code, EXCLUDED.process_code),
          title = EXCLUDED.title,
          originator_user_name = EXCLUDED.originator_user_name,
          originator_dept_name = EXCLUDED.originator_dept_name,
@@ -1208,7 +1507,7 @@ export async function saveRawApproval(instance: any, processInstanceId?: string)
       [
         approvalId,
         realProcessInstanceId,
-        instance.process_code || instance.processCode || null,
+        instance.process_code || instance.processCode || knownProcessCode || null,
         instance.title || null,
         originatorUserId,
         originatorUserName,
@@ -1241,20 +1540,26 @@ async function refreshVisitApprovalStatus(): Promise<number> {
   return result.rowCount ?? 0;
 }
 
+// 拉取指定 process_code 在时间段内的全部审批单 ID；不传则拉全部已配置 code
+// 返回 { id, processCode }，processCode 用于后续解析分发（v1/v2 两套映射按此分流）
 export async function fetchAllApprovalIds(
   startTimeMs: number,
-  endTimeMs: number
-): Promise<string[]> {
-  const ids: string[] = [];
-  let cursor: number | undefined = 0;
+  endTimeMs: number,
+  processCode?: string
+): Promise<{ id: string; processCode: string }[]> {
+  const codes = processCode ? [processCode] : getAllProcessCodes();
+  const out: { id: string; processCode: string }[] = [];
 
-  while (cursor !== undefined) {
-    const result = await getApprovalInstances(startTimeMs, endTimeMs, cursor);
-    ids.push(...result.list);
-    cursor = result.nextCursor;
+  for (const code of codes) {
+    let cursor: number | undefined = 0;
+    while (cursor !== undefined) {
+      const result = await getApprovalInstances(startTimeMs, endTimeMs, cursor, 20, code);
+      for (const id of result.list) out.push({ id, processCode: code });
+      cursor = result.nextCursor;
+    }
   }
 
-  return ids;
+  return out;
 }
 
 export interface SyncApprovalsResult extends ProcessResult {
@@ -1373,19 +1678,21 @@ async function syncApprovalsInternal(
   }
 
   try {
-    const ids = await fetchAllApprovalIds(startTimeMs, endTimeMs);
+    const refs = await fetchAllApprovalIds(startTimeMs, endTimeMs);
     const parsedVisits: ParsedVisit[] = [];
     const processedApprovalIds = new Set<string>();
     let parseFailures = 0;
 
-    for (const id of ids) {
+    for (const ref of refs) {
       try {
-        const instance = await getApprovalDetail(id);
+        const instance = await getApprovalDetail(ref.id);
 
         // 先保存原始审批数据，同时记录真正的 process_instance_id（来自 listids）
-        await saveRawApproval(instance, id);
+        // 和已知的 process_code（v1/v2 解析分发依据）
+        await saveRawApproval(instance, ref.id, ref.processCode);
 
-        const visits = await parseApprovalInstance(instance);
+        // 按 process_code 分发到 v1/v2 两套解析映射
+        const visits = await parseApprovalInstance(instance, ref.processCode);
 
         if (visits.length === 0) {
           parseFailures++;
@@ -1397,7 +1704,7 @@ async function syncApprovalsInternal(
         }
         parsedVisits.push(...visits);
       } catch (err) {
-        console.error(`Failed to parse DingTalk instance ${id}:`, err);
+        console.error(`Failed to parse DingTalk instance ${ref.id}:`, err);
         parseFailures++;
       }
     }
@@ -1451,7 +1758,7 @@ async function syncApprovalsInternal(
 
     const finalResult = {
       ...result,
-      totalInstances: ids.length,
+      totalInstances: refs.length,
       parsedVisits: parsedVisits.length,
       parseFailures,
     };
@@ -1496,7 +1803,7 @@ export async function syncRunningApprovals(): Promise<{
   }
 
   const result = await pool.query(
-    `SELECT approval_id, process_instance_id, create_time
+    `SELECT approval_id, process_instance_id, create_time, process_code
      FROM raw_approvals
      WHERE status = 'RUNNING'`
   );
@@ -1514,7 +1821,8 @@ export async function syncRunningApprovals(): Promise<{
         const instance = await getApprovalDetail(row.process_instance_id);
         await saveRawApproval(instance, row.process_instance_id);
 
-        const visits = await parseApprovalInstance(instance);
+        // 按 raw_approvals.process_code 分发 v1/v2 解析映射
+        const visits = await parseApprovalInstance(instance, row.process_code);
         if (visits.length > 0) {
           const processResult = await processParsedVisits(visits, "dingtalk");
           if (processResult.affectedUserDates.length > 0) {

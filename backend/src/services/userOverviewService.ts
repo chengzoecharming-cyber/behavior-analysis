@@ -48,7 +48,7 @@ export async function computeUserOverview(
 ): Promise<UserOverviewResult> {
   // 1. 每日拜访次数
   const visitResult = await pool.query(
-    `SELECT business_date, COUNT(*) as visit_count
+    `SELECT business_date, COALESCE(SUM(customer_count), 0) as visit_count
      FROM visits
      WHERE user_id = $1
        AND business_date >= $2::date

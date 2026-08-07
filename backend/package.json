@@ -22,7 +22,8 @@
     "f9:merge-sales-channel": "ts-node scripts/f9MergeSalesChannelVisits.ts",
     "f9:init-leader-roles": "ts-node scripts/f9InitLeaderRoles.ts",
     "fill:routes": "ts-node scripts/fillMissingRoutes.ts",
-    "backfill:visit-exclusion": "ts-node scripts/backfillVisitExclusion.ts"
+    "backfill:visit-exclusion": "ts-node scripts/backfillVisitExclusion.ts",
+    "backfill:customer-count": "ts-node scripts/backfillCustomerCount.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

@@ -243,7 +243,7 @@ export async function listApprovals(options: {
 
 export async function getApprovalLineage(approvalId: string): Promise<ApprovalLineageDetail | null> {
   const approvalResult = await pool.query(
-    `SELECT approval_id, process_instance_id, title, originator_userid, originator_user_name,
+    `SELECT approval_id, process_instance_id, process_code, title, originator_userid, originator_user_name,
             originator_dept_name, create_time, finish_time, form_json, result, status
      FROM raw_approvals
      WHERE approval_id = $1
@@ -286,7 +286,7 @@ export async function getApprovalLineage(approvalId: string): Promise<ApprovalLi
       status: ra.status,
       result: ra.result,
     };
-    parsedVisits = await parseApprovalInstance(instance);
+    parsedVisits = await parseApprovalInstance(instance, ra.process_code);
     parseOk = parsedVisits.length > 0;
     if (!parseOk) parseError = "解析未产出任何签到点（可能所有定位字段为空）";
   } catch (err) {
