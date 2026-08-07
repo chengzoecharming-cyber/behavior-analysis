@@ -27,6 +27,7 @@ export interface Visit {
   created_at: Date;
   // 扩展字段
   approval_id?: string;
+  approval_status?: string;
   sequence?: number;
   trip_type?: string;
   vehicle?: string;

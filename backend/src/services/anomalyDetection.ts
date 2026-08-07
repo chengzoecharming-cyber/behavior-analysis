@@ -507,20 +507,29 @@ export function detectMileageReadingInvalid(visits: Visit[]): Anomaly[] {
       });
     }
 
-    for (let i = 1; i < sorted.length; i++) {
-      const visit = sorted[i];
+    // v2 表单只在起点/终点采集里程读数，途经点无读数是正常形态，不参与判定；
+    // 行程未结束（RUNNING）时终点读数未填同样属正常，等审批完成后再判
+    const isV2 = sorted.some((v) => v.form_version === "v2");
+    const isRunning = sorted.some((v) => v.approval_status === "RUNNING");
+    const visitsToCheck = isV2 ? sorted.slice(-1) : sorted.slice(1);
+
+    for (const visit of visitsToCheck) {
+      if (visit === firstVisit) continue; // 只有出发点一个点时无端点可判
       const endOdometer = visit.end_odometer;
-      const seq = visit.sequence || i + 1;
+      const seq = visit.sequence || 1;
       const locationName = visit.location_name || `签到点${seq}`;
 
       if (endOdometer == null || !Number.isFinite(endOdometer)) {
+        if (isV2 && isRunning) continue;
         issues.push({
           sequence: seq,
           location_name: locationName,
           issue_type: "missing_end",
           start_odometer: startOdometer ?? null,
           end_odometer: endOdometer ?? null,
-          description: `第 ${seq} 个签到点缺少终点里程读数`,
+          description: isV2
+            ? `缺少终点里程读数`
+            : `第 ${seq} 个签到点缺少终点里程读数`,
         });
         continue;
       }

@@ -1162,6 +1162,8 @@ Dashboard 已承担「部门维度团队总览」的职责，因此控制台应�
 - [x] ~~（P2）AI 摘要~~：**2026-08-06 改由钉钉表单 AI 字段承担**（DDAIField「AI总结」，提交时生成「总结内容N」），解析器直接取 AI 内容进 `visit_note`，原始字段拼接作兜底
 - [ ] （后续 P2）**自建 LLM 摘要兜底**：钉钉 AI 字段额度不明，若额度耗尽/生成失败导致「AI总结」为空，用我们自己的 LLM（OpenAI 兼容协议，env 配置，DeepSeek/百炼）按 `沟通内容详情N`/`存在问题点N` 异步生成摘要补写 `visit_note`；触发时机=同步后检查 v2 单 AI总结缺失的块
 
+- **里程读数异常 v2 口径**（2026-08-07 上线）：v2 只判起点/终点读数（途经点无读数属正常），RUNNING 单不判终点缺失；v1 逐点判定不变。上线后需清理首日误报（12 条 v1 式「第 N 个签到点缺少终点里程读数」）：`DELETE FROM anomalies WHERE type='mileage_reading_invalid' AND anomaly_date='2026-08-07' AND description ~ '审批单 20260807'`，受影响用户的风险摘要/异常在下次同步或 `POST /analytics/risk-summary/refresh?date=2026-08-07` 时按新口径自动重建（computeRiskSummary 对该 user+date 先删后插）。
+
 #### 前端展示与 AI 总结延迟（2026-08-07 追加）
 
 - **AI 总结延迟问题**：钉钉 AI总结在审批单结束后才生成，而 processParsedVisits 是「存在即跳过」——RUNNING 期入库的兜底文本不会被后续同步覆盖。解决：`processParsedVisits` 对 v2 重复行开放 **visit_note / visit_detail 刷新通道**（`IS DISTINCT FROM` 才写，其他字段维持存在即跳过），定时/手动/RUNNING 刷新三条同步路径自动覆盖。
