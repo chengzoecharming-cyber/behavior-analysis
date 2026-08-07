@@ -42,6 +42,8 @@ export interface Visit {
   business_date?: string;
   exclude_from_visit_count?: boolean;
   customer_count?: number;
+  form_version?: string;
+  visit_detail?: { comm?: string; issues?: string; ai?: string } | null;
 }
 
 export interface Stop {
@@ -126,6 +128,8 @@ export interface ParsedVisit {
   form_version?: "v2";
   // 该打卡点的客户数（v2 一个打卡点可填多家客户）；缺省按 1 处理
   customer_count?: number;
+  // v2 拜访块原始字段：comm=沟通内容详情，issues=存在问题点，ai=该块 AI 总结
+  visit_detail?: { comm?: string; issues?: string; ai?: string };
 }
 
 export interface User {

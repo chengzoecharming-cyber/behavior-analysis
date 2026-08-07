@@ -173,6 +173,11 @@ function isNonDrivingVisit(visit: Visit): boolean {
   return !isMileageRequiredTrip(visit.trip_type);
 }
 
+// v2 新表单的拜访：弹窗按 v2 字段名展示（拜访客户/沟通内容详情/存在问题点/AI总结/现场交流照片）
+function isV2VisitForm(visit: Visit): boolean {
+  return visit.form_version === "v2";
+}
+
 function isPublicTransportVisit(visit: Visit): boolean {
   return (visit.trip_type || "").includes("公共交通");
 }
@@ -574,10 +579,31 @@ export default function MapContainer({
                 {formatBeijingTime(selectedVisit.timestamp)}
               </DescItem>
               {selectedVisit.customer_name && (
-                <DescItem label="客户名称">{selectedVisit.customer_name}</DescItem>
+                <DescItem label={isV2VisitForm(selectedVisit) ? "拜访客户" : "客户名称"}>
+                  {selectedVisit.customer_name}
+                </DescItem>
               )}
-              {selectedVisit.visit_note && (
-                <DescItem label="本次拜访情况">{selectedVisit.visit_note}</DescItem>
+              {/* v2：按表单字段原样展示（沟通内容详情/存在问题点/AI总结）；v1：本次拜访情况 */}
+              {isV2VisitForm(selectedVisit) ? (
+                <>
+                  {selectedVisit.visit_detail?.ai && (
+                    <DescItem label="AI总结">{selectedVisit.visit_detail.ai}</DescItem>
+                  )}
+                  {selectedVisit.visit_detail?.comm && (
+                    <DescItem label="沟通内容详情">{selectedVisit.visit_detail.comm}</DescItem>
+                  )}
+                  {selectedVisit.visit_detail?.issues && (
+                    <DescItem label="存在问题点">{selectedVisit.visit_detail.issues}</DescItem>
+                  )}
+                  {/* visit_detail 缺失时（旧数据/异常）回退到合并文本 */}
+                  {!selectedVisit.visit_detail && selectedVisit.visit_note && (
+                    <DescItem label="拜访情况">{selectedVisit.visit_note}</DescItem>
+                  )}
+                </>
+              ) : (
+                selectedVisit.visit_note && (
+                  <DescItem label="本次拜访情况">{selectedVisit.visit_note}</DescItem>
+                )
               )}
               {selectedVisit.special_sign_reason && (
                 <>
@@ -591,7 +617,7 @@ export default function MapContainer({
               )}
               <DescItem label="详细地址">{selectedVisit.address}</DescItem>
               {selectedVisit.photos && selectedVisit.photos.length > 0 && (
-                <DescItem label="里程照片和拜访客户照片">
+                <DescItem label={isV2VisitForm(selectedVisit) ? "现场交流照片" : "里程照片和拜访客户照片"}>
                   <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
                     {selectedVisit.photos.map((url, idx) => (
                       <Image

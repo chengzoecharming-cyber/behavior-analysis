@@ -1162,13 +1162,21 @@ Dashboard 已承担「部门维度团队总览」的职责，因此控制台应�
 - [x] ~~（P2）AI 摘要~~：**2026-08-06 改由钉钉表单 AI 字段承担**（DDAIField「AI总结」，提交时生成「总结内容N」），解析器直接取 AI 内容进 `visit_note`，原始字段拼接作兜底
 - [ ] （后续 P2）**自建 LLM 摘要兜底**：钉钉 AI 字段额度不明，若额度耗尽/生成失败导致「AI总结」为空，用我们自己的 LLM（OpenAI 兼容协议，env 配置，DeepSeek/百炼）按 `沟通内容详情N`/`存在问题点N` 异步生成摘要补写 `visit_note`；触发时机=同步后检查 v2 单 AI总结缺失的块
 
+#### 前端展示与 AI 总结延迟（2026-08-07 追加）
+
+- **AI 总结延迟问题**：钉钉 AI总结在审批单结束后才生成，而 processParsedVisits 是「存在即跳过」——RUNNING 期入库的兜底文本不会被后续同步覆盖。解决：`processParsedVisits` 对 v2 重复行开放 **visit_note / visit_detail 刷新通道**（`IS DISTINCT FROM` 才写，其他字段维持存在即跳过），定时/手动/RUNNING 刷新三条同步路径自动覆盖。
+- **新增列**：`visits.form_version`（'v2' 标记，供前端版本化展示）、`visits.visit_detail` JSONB（`{comm: 沟通内容详情, issues: 存在问题点, ai: 该块AI总结}`，弹窗按 v2 表单字段名原样展示）。`visit_note` 维持「AI 优先/兜底拼接」合并文本供时间线使用。
+- **前端**：时间线「本次拜访情况」改标签「拜访情况：」，默认最多 3 行（-webkit-line-clamp），hover Popover 全文且卡片 maxWidth 400；地图弹窗 v2 行标签版本化（拜访客户/沟通内容详情/存在问题点/AI总结/现场交流照片），v1 行不变。
+- **部署后一次性 SQL**（若开启同步到本次部署之间已有 v2 行入库，为其补 form_version；当前生产无 v2 行，可跳过）：
+  `UPDATE visits v SET form_version='v2' FROM raw_approvals r WHERE v.approval_id=r.approval_id AND r.process_code='PROC-1BF061D3-38F0-4961-B41D-D41CDDDF9212' AND v.form_version IS NULL;`
+
 #### 上线步骤（2026-08-07 旧表单已停用、新表单启用）
 
 采用「代码先上、开关后开」：代码向后兼容，不配 `DINGTALK_PROCESS_CODE_V2` 时行为与现状完全一致。
 
-- [ ] **第一步：部署代码**（GHCR 镜像重新构建拉取即可），此时不加新 env，验证现有同步不受影响。
-- [ ] **第一步附（同批部署后执行一次）**：`docker exec sales-map-backend npm run backfill:customer-count` 回填 v1 存量多客户行的 customer_count（幂等，支持 --dry 预览；12 行量级）。
-- [ ] **第二步：开启 v2 同步**：服务器 `.env` 添加 `DINGTALK_PROCESS_CODE_V2=PROC-1BF061D3-38F0-4961-B41D-D41CDDDF9212`，然后 `docker compose -f docker-compose.ghcr.yml up -d --force-recreate backend`。
+- [x] **第一步：部署代码**（2026-08-07 完成，镜像 digest 已核对）。
+- [x] **第一步附（同批部署后执行一次）**：`docker exec sales-map-backend npm run backfill:customer-count` 回填 v1 存量多客户行的 customer_count（2026-08-07 完成，12 行）。
+- [x] **第二步：开启 v2 同步**（2026-08-07 完成）：服务器 `.env` 添加 `DINGTALK_PROCESS_CODE_V2`，compose 显式环境变量列表同步补充（仓库 commit 01fa89f；注意：compose 的 `environment:` 是显式列表，新增 env 变量必须同时加进 compose 文件，否则不会注入容器）。
 - [x] **清理测试单**：**2026-08-06 18:36 之前提交的 v2 单全部为测试数据**——业务方已于 2026-08-07 在钉钉后台全部删除，源端 listids 不再返回，系统侧零操作。
 - [ ] **旧表单 env 保留一周再清**：旧表单虽已停用，但停用前提交的在途 v1 单（RUNNING）仍可能审批完成，保留 `DINGTALK_PROCESS_CODE` 让同步窗口覆盖；约一周后（2026-08-14 起）无在途单再清空该 env。v1 解析代码永久保留用于历史重跑。
 - [ ] **观察首日**：查看 `dingtalk_sync_logs`（missing_count/duplicate_count 应为 0）、同步健康告警、数据血缘页抽查几张 v2 单的三步对照（原始表单 → 重新解析 → 已入库）。

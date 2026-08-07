@@ -95,6 +95,11 @@ export async function initDB(): Promise<void> {
       -- 该打卡点对应的客户数：v2 新表单一个打卡点可填多家客户，拜访次数统计按客户数计
       -- （SUM(customer_count) 而非 COUNT(*)）；v1/Excel 恒为 1，存量默认 1 无需回填
       ALTER TABLE visits ADD COLUMN IF NOT EXISTS customer_count INTEGER NOT NULL DEFAULT 1;
+      -- 表单版本标记：v2 新表单的行写入 'v2'，用于前端版本化展示（弹窗字段标签等）
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS form_version VARCHAR(8);
+      -- v2 拜访块原始字段（JSONB）：{comm: 沟通内容详情, issues: 存在问题点, ai: 该块AI总结}
+      -- 供弹窗按 v2 表单字段名原样展示；visit_note 仍是 AI 优先/兜底拼接的合并文本
+      ALTER TABLE visits ADD COLUMN IF NOT EXISTS visit_detail JSONB;
 
       -- 坐标失败后允许为 NULL，不再写入 0,0
       ALTER TABLE visits ALTER COLUMN lat DROP NOT NULL;

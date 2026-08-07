@@ -250,17 +250,21 @@ export default function TrajectoryTimeline({
 
               {v.visit_note && (
                 <div style={{ fontSize: 13, color: "#666", maxWidth: 500 }}>
-                  <span style={{ color: "#999", whiteSpace: "nowrap" }}>本次拜访情况：</span>
-                  <Popover content={v.visit_note} showArrow>
+                  <span style={{ color: "#999", whiteSpace: "nowrap" }}>拜访情况：</span>
+                  <Popover
+                    content={
+                      <div style={{ maxWidth: 400, whiteSpace: "pre-wrap" }}>{v.visit_note}</div>
+                    }
+                    showArrow
+                  >
                     <span
                       style={{
                         cursor: "default",
-                        display: "inline-block",
+                        display: "-webkit-box",
+                        WebkitBoxOrient: "vertical",
+                        WebkitLineClamp: 3,
                         maxWidth: "calc(500px - 6em)",
-                        verticalAlign: "bottom",
                         overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
                         lineHeight: 1.5,
                       }}
                     >

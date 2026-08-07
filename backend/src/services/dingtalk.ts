@@ -1393,17 +1393,23 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
 
     // visit_note：优先取 AI 总结的对应块；兜底拼接原始字段
     // （2026-08-06 表单改版后字段名带编号「沟通内容详情1」，正则用 \d* 兼容新旧快照）
-    let visitNoteText = customerComponent ? aiSummaryByBlock.get(customerBlockNo) || "" : "";
+    // visit_detail：原始字段结构化存储，供弹窗按 v2 表单字段名原样展示
+    const commDetail = findNearby(stop.index, /^沟通内容详情\d*$/);
+    const issues = findNearby(stop.index, /^存在问题点\d*$/);
+    const aiNote = customerComponent ? aiSummaryByBlock.get(customerBlockNo) || "" : "";
+    let visitNoteText = aiNote;
     if (!visitNoteText) {
       const contact = findNearby(stop.index, /^交流对象\d*$/); // 旧快照字段，已从新表单删除
-      const commDetail = findNearby(stop.index, /^沟通内容详情\d*$/);
-      const issues = findNearby(stop.index, /^存在问题点\d*$/);
       const noteParts: string[] = [];
       if (contact) noteParts.push(`交流对象：${contact}`);
       if (commDetail) noteParts.push(`沟通内容：${commDetail}`);
       if (issues) noteParts.push(`存在问题：${issues}`);
       visitNoteText = noteParts.join("；");
     }
+    const visitDetail =
+      commDetail || issues || aiNote
+        ? { comm: commDetail || undefined, issues: issues || undefined, ai: aiNote || undefined }
+        : undefined;
 
     const photosRaw = findNearby(stop.index, /^现场交流照片\d*$/);
     const photos = photosRaw ? parsePhotoUrls(photosRaw) : [];
@@ -1467,6 +1473,7 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
       source_detail: isDriving && isFirst ? "trip_start" : undefined,
       form_version: "v2",
       customer_count: customerCount,
+      visit_detail: visitDetail,
     });
   }
 

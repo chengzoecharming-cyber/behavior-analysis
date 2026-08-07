@@ -28,6 +28,8 @@ export interface Visit {
   source_detail?: string;
   approval_status?: string;
   exclude_from_visit_count?: boolean;
+  form_version?: string;
+  visit_detail?: { comm?: string; issues?: string; ai?: string } | null;
 }
 
 export interface RawVisit {

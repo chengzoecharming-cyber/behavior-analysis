@@ -286,6 +286,23 @@ export async function processParsedVisits(
     );
     if (isDuplicate) {
       skippedCount++;
+      // v2 特例：钉钉 AI总结在审批单结束后才生成，RUNNING 期入库的是兜底拼接文本，
+      // 因此允许 v2 行刷新 visit_note 与 visit_detail（其他字段维持「存在即跳过」不动）。
+      // IS DISTINCT FROM 保证只在内容变化时写，幂等。
+      if (visit.form_version === "v2" && visit.approval_id && visit.sequence != null) {
+        await pool.query(
+          `UPDATE visits SET visit_note = $1, visit_detail = $2
+           WHERE approval_id = $3 AND user_id = $4 AND sequence = $5
+             AND (visit_note IS DISTINCT FROM $1 OR visit_detail IS DISTINCT FROM $2)`,
+          [
+            visit.visit_note ?? null,
+            visit.visit_detail ? JSON.stringify(visit.visit_detail) : null,
+            visit.approval_id,
+            userId,
+            visit.sequence,
+          ]
+        );
+      }
       continue;
     }
 
@@ -356,9 +373,9 @@ export async function processParsedVisits(
           location_name, address, customer_name, source,
           approval_id, approval_status, sequence, trip_type, vehicle, start_odometer, end_odometer,
           reported_distance_km, cumulative_mileage_km, visit_note, special_sign_reason, photos, geocode_status, source_detail,
-          business_date, exclude_from_visit_count, customer_count)
+          business_date, exclude_from_visit_count, customer_count, form_version, visit_detail)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11,
-                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28)
+                 $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30)
          ON CONFLICT (approval_id, user_id, sequence) WHERE approval_id IS NOT NULL DO NOTHING
          RETURNING id`,
         [
@@ -392,6 +409,8 @@ export async function processParsedVisits(
           businessDates[i],
           excludeFromVisitCount,
           customerCount,
+          visit.form_version ?? null,
+          visit.visit_detail ? JSON.stringify(visit.visit_detail) : null,
         ]
       );
 
