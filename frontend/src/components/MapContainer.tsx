@@ -349,22 +349,30 @@ export default function MapContainer({
         });
       }
 
-      // 标记点：起 / 终 / 途N
+      // 标记点：起 / 终 / 途N（v2 非开车行程用紫色「签n」顺序编号）
       const sorted = sortVisits(uniqueVisits);
       const startVisit = sorted[0];
       const endVisit = sorted[sorted.length - 1];
       // 当起点与终点距离很近（<100m）或只有 1 个 visit 时，同时显示起、终
       const sameStartEnd = startVisit && endVisit;
 
+      // v2 表单非开车行程：无起终概念，紫色「签n」按时间顺序编号
+      let v2SignSeq = 0;
+
       sorted.forEach((v, idx) => {
         const isPublic = isPublicTransportVisit(v);
+        const isV2Sign = v.form_version === "v2" && !isMileageRequiredTrip(v.trip_type);
         const isStart = idx === 0;
         const isEnd = idx === sorted.length - 1;
         const isRunningApproval = v.approval_status === "RUNNING";
         let label: string;
         let bgColor: string;
 
-        if (isPublic) {
+        if (isV2Sign) {
+          v2SignSeq += 1;
+          label = `签${v2SignSeq}`;
+          bgColor = "#722ed1";
+        } else if (isPublic) {
           label = "公";
           bgColor = "#722ed1";
         } else if (isStart) {
@@ -380,16 +388,17 @@ export default function MapContainer({
         }
 
         // 起、终（含 RUNNING 时的虚拟终点）标记设置一定透明度，重合时也能看到下方标记
-        const opacity = !isPublic && (isStart || (isEnd && !isRunningApproval)) ? 0.85 : 1;
+        const isSeqMarker = isPublic || isV2Sign; // 顺序标记（公 / 签n），不参与起终的透明度与层级
+        const opacity = !isSeqMarker && (isStart || (isEnd && !isRunningApproval)) ? 0.85 : 1;
         // 终点在重合时位于更上层，保证"终"可见
         const zIndex =
-          sameStartEnd && isEnd && !isPublic && !isRunningApproval
+          sameStartEnd && isEnd && !isSeqMarker && !isRunningApproval
             ? 120
-            : isStart && !isPublic
+            : isStart && !isSeqMarker
             ? 110
-            : isEnd && !isPublic && !isRunningApproval
+            : isEnd && !isSeqMarker && !isRunningApproval
             ? 100
-            : isPublic
+            : isSeqMarker
             ? 130
             : 90;
 

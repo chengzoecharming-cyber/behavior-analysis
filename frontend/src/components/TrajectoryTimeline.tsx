@@ -1,6 +1,7 @@
 import { Timeline, Tag, Popover } from "@douyinfe/semi-ui";
 import type { CSSProperties } from "react";
 import { formatBeijingHHmm } from "../utils/time";
+import { isMileageRequiredTrip } from "../utils/tripType";
 import { Visit, Route, Anomaly } from "../types";
 import { AnomalyItem } from "./AnomalyItem";
 
@@ -112,15 +113,23 @@ export default function TrajectoryTimeline({
     routeMap.set(`${route.from_visit_id},${route.to_visit_id}`, route.distance_km);
   }
 
+  // v2 表单非开车行程：无起终概念，紫色「签n」按时间顺序编号
+  let v2SignSeq = 0;
+
   const nodes: TimelineNode[] = sortedVisits.map((visit, idx) => {
     const isStart = idx === 0;
     const isEnd = idx === sortedVisits.length - 1;
     const isPublic = isPublicTransportVisit(visit);
+    const isV2Sign = visit.form_version === "v2" && !isMileageRequiredTrip(visit.trip_type);
     const isRunningApproval = visit.approval_status === "RUNNING";
 
     let sequenceLabel: string;
     let markColor: string;
-    if (isPublic) {
+    if (isV2Sign) {
+      v2SignSeq += 1;
+      sequenceLabel = `签${v2SignSeq}`;
+      markColor = MARK_COLORS.publicTransport;
+    } else if (isPublic) {
       sequenceLabel = "公";
       markColor = MARK_COLORS.publicTransport;
     } else if (isStart) {
