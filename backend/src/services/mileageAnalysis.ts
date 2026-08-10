@@ -42,7 +42,8 @@ export interface MileageDistributionStats {
 }
 
 /**
- * 按 approval_id 分组，计算相邻签到点之间的填报里程 vs 高德推荐里程。
+ * 按 approval_id 分组，计算填报里程 vs 高德推荐里程。
+ * v1/Excel：相邻签到点逐段对比；v2：整单一条 segment（见 computeV2ApprovalSegment）。
  */
 function approvalGroupKey(v: Visit): string {
   return v.approval_id || `${v.user_id}_${v.business_date || ""}`;
@@ -51,37 +52,48 @@ function approvalGroupKey(v: Visit): string {
 export async function computeMileageSegments(
   visits: Visit[]
 ): Promise<MileageSegment[]> {
-  // 按审批单分组（无 approval_id 的按 user_id + 业务日期兜底）
-  const sorted = [...visits].sort((a, b) => {
-    const keyA = approvalGroupKey(a);
-    const keyB = approvalGroupKey(b);
-    if (keyA !== keyB) return keyA.localeCompare(keyB);
-    return (a.sequence || 0) - (b.sequence || 0);
-  });
+  // 按审批单分组（无 approval_id 的按 user_id + 业务日期兜底），组内按 sequence 排序
+  const groups = new Map<string, Visit[]>();
+  for (const v of visits) {
+    const key = approvalGroupKey(v);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push(v);
+  }
+  for (const list of groups.values()) {
+    list.sort((a, b) => (a.sequence || 0) - (b.sequence || 0));
+  }
 
-  const segments: MileageSegment[] = [];
-
-  // 收集同一审批单内的相邻 visit 对，用于查询已算好的 route
-  const pairs: { prev: Visit; curr: Visit }[] = [];
-  for (let i = 1; i < sorted.length; i++) {
-    const prev = sorted[i - 1];
-    const curr = sorted[i];
-    if (approvalGroupKey(prev) !== approvalGroupKey(curr)) continue;
-    // 只有驾车行程（含两端）才参与里程偏差计算
-    if (
-      !isMileageRequiredTrip(prev.trip_type) ||
-      !isMileageRequiredTrip(curr.trip_type)
-    ) {
-      continue;
+  // 收集所有需要查 routes 的相邻 visit 对（v1 逐段 + v2 整单的每一段）
+  const legacyPairs: { prev: Visit; curr: Visit }[] = [];
+  const v2Groups: Visit[][] = [];
+  const allPairs: { prev: Visit; curr: Visit }[] = [];
+  for (const list of groups.values()) {
+    // v2 表单只有出发前/终点两个里程读数，中间签到点无读数，
+    // 逐段填报里程算不出来，必须走整单口径，见下方 v2 分支
+    const isV2 = list.some((v) => v.form_version === "v2");
+    for (let i = 1; i < list.length; i++) {
+      const prev = list[i - 1];
+      const curr = list[i];
+      if (!isV2) {
+        // 只有驾车行程（含两端）才参与里程偏差计算
+        if (
+          !isMileageRequiredTrip(prev.trip_type) ||
+          !isMileageRequiredTrip(curr.trip_type)
+        ) {
+          continue;
+        }
+        legacyPairs.push({ prev, curr });
+      }
+      allPairs.push({ prev, curr });
     }
-    pairs.push({ prev, curr });
+    if (isV2) v2Groups.push(list);
   }
 
   // 批量查询 routes 表，避免重复请求高德 API
   const routeMap = new Map<string, Route>();
-  if (pairs.length > 0) {
+  if (allPairs.length > 0) {
     const visitIds = Array.from(
-      new Set(pairs.flatMap((p) => [p.prev.id, p.curr.id]))
+      new Set(allPairs.flatMap((p) => [p.prev.id, p.curr.id]))
     );
     // 两个 IN 子句的占位符必须全局唯一，不能复用 $1,$2,$3
     const placeholders1 = visitIds.map((_, i) => `$${i + 1}`).join(",");
@@ -99,18 +111,12 @@ export async function computeMileageSegments(
     }
   }
 
-  for (const { prev, curr } of pairs) {
+  const segments: MileageSegment[] = [];
+
+  // v1/Excel：逐段对比（每段都有里程读数或累计填报值）
+  for (const { prev, curr } of legacyPairs) {
     // 优先使用里程表读数差计算分段里程；缺失时回退到累计值差。
-    const prevEndOdometer = prev.end_odometer ?? prev.start_odometer;
-    let reportedSegmentKm: number | null = null;
-    if (curr.end_odometer != null && prevEndOdometer != null) {
-      reportedSegmentKm = curr.end_odometer - prevEndOdometer;
-    } else if (
-      prev.reported_distance_km != null &&
-      curr.reported_distance_km != null
-    ) {
-      reportedSegmentKm = curr.reported_distance_km - prev.reported_distance_km;
-    }
+    const reportedSegmentKm = computeSegmentReported(prev, curr);
 
     // 忽略里程读数异常（负数、或超过合理上限的离谱值）
     if (
@@ -146,7 +152,76 @@ export async function computeMileageSegments(
     });
   }
 
+  // v2：整单一条 segment——填报 = 终点读数 − 出发前读数，高德 = 各段 routes 之和
+  for (const list of v2Groups) {
+    const segment = await computeV2ApprovalSegment(list, routeMap);
+    if (segment) segments.push(segment);
+  }
+
   return segments;
+}
+
+/**
+ * v2 审批单整单里程 segment：
+ * - 填报里程 = 终点里程读数 − 出发前里程读数（= 表单「今日出行总里程」），
+ *   读数缺失时兜底取单内最大填报里程；
+ * - 高德里程 = 单内相邻签到点 routes 距离之和；任何一段路线缺失则整单跳过，
+ *   避免低估高德里程造成偏差误报。
+ */
+async function computeV2ApprovalSegment(
+  list: Visit[],
+  routeMap: Map<string, Route>
+): Promise<MileageSegment | null> {
+  if (list.length < 2) return null;
+
+  const first = list[0];
+  // v2 出行方式是审批单级的，非驾车（公共交通/特殊签到等）整单不参与里程偏差
+  if (!isMileageRequiredTrip(first.trip_type)) return null;
+
+  const startOdometer = first.start_odometer;
+  const endOdometer = [...list]
+    .reverse()
+    .find((v) => v.end_odometer != null)?.end_odometer;
+  let reportedKm: number | null = null;
+  if (startOdometer != null && endOdometer != null) {
+    reportedKm = endOdometer - startOdometer;
+  } else {
+    const maxReported = Math.max(
+      0,
+      ...list.map((v) => v.reported_distance_km ?? 0)
+    );
+    reportedKm = maxReported > 0 ? maxReported : null;
+  }
+  if (reportedKm == null || reportedKm < 0 || reportedKm > MAX_MILEAGE_KM) {
+    return null;
+  }
+
+  let gaodeKm = 0;
+  for (let i = 1; i < list.length; i++) {
+    const prev = list[i - 1];
+    const curr = list[i];
+    const cachedRoute = routeMap.get(`${prev.id},${curr.id}`);
+    const route = cachedRoute ?? (await planRoute(prev, curr, prev.user_id));
+    if (!route) return null;
+    gaodeKm += route.distance_km;
+  }
+
+  const last = list[list.length - 1];
+  const deviationRate = gaodeKm > 0
+    ? (reportedKm - gaodeKm) / gaodeKm
+    : reportedKm > 0 ? 1 : 0;
+
+  return {
+    user_id: first.user_id,
+    approval_id: approvalGroupKey(first),
+    from_visit_id: first.id,
+    to_visit_id: last.id,
+    from_location: first.location_name,
+    to_location: last.location_name,
+    reported_distance_km: parseFloat(reportedKm.toFixed(2)),
+    gaode_distance_km: parseFloat(gaodeKm.toFixed(2)),
+    deviation_rate: parseFloat(deviationRate.toFixed(4)),
+  };
 }
 
 export function computeMileageStats(
@@ -213,7 +288,8 @@ function computeSegmentReported(prev: Visit, curr: Visit): number | null {
  *
  * 口径：
  * 1. 日期归属到该审批单第一次签到的 business_date。
- * 2. 填报里程 = 审批单内相邻驾车签到点的里程差值之和。
+ * 2. 填报里程 = 审批单内相邻驾车签到点的里程差值之和；
+ *    v2 表单例外：仅整单口径（终点读数 − 出发前读数），见函数内注释。
  * 3. 估算里程 = 审批单内驾车相邻段的 routes 距离之和。
  * 4. 非驾车（公共交通、陪同拜访、特殊签到、虚拟客户）不计入。
  * 5. 无 approval_id 的（Excel 导入等）按 user_id + business_date 兜底分组。
@@ -331,6 +407,27 @@ export async function computeMileageByApprovalForUsers(
       if (route) {
         estimatedKm += route.distance_km;
         segmentCount++;
+      }
+    }
+
+    // v2 表单只有出发前/终点两个里程读数，中间签到点无读数，
+    // 逐段口径算不出填报里程（会误显示「未填报」）。
+    // v2 按整单口径：填报总里程 = 终点读数 − 出发前读数
+    // （与表单「今日出行总里程」一致），读数缺失时兜底取单内最大填报里程。
+    if (sorted.some((v) => v.form_version === "v2")) {
+      const startOdometer = sorted[0].start_odometer;
+      const endOdometer = [...sorted]
+        .reverse()
+        .find((v) => v.end_odometer != null)?.end_odometer;
+      if (startOdometer != null && endOdometer != null) {
+        const total = endOdometer - startOdometer;
+        reportedKm = total >= 0 && total <= MAX_MILEAGE_KM ? total : 0;
+      } else {
+        const maxReported = Math.max(
+          0,
+          ...sorted.map((v) => v.reported_distance_km ?? 0)
+        );
+        reportedKm = maxReported <= MAX_MILEAGE_KM ? maxReported : 0;
       }
     }
 
