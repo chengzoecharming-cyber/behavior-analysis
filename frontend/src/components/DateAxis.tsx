@@ -4,6 +4,8 @@ import { AvailableDate } from "../api";
 
 interface DateAxisProps {
   availableDateInfos: AvailableDate[];
+  /** 钉钉已同步覆盖的日期（全局），用于把轴延伸到「已同步但无数据」的日期 */
+  syncedDates?: string[];
   selectedDate: string | null;
   onSelectDate: (date: string) => void;
   emptyText?: string;
@@ -13,16 +15,23 @@ const weekdayLabels = ["日", "一", "二", "三", "四", "五", "六"];
 
 export default function DateAxis({
   availableDateInfos,
+  syncedDates = [],
   selectedDate,
   onSelectDate,
   emptyText = "暂无数据",
 }: DateAxisProps) {
-  // 日历视图：生成连续日期轴（从最早到最晚有数据日期），无数据置灰
+  // 日历视图：生成连续日期轴（从最早有数据日期，到最晚有数据/已同步日期），无数据置灰
   const calendarDates = useMemo(() => {
     if (availableDateInfos.length === 0) return [];
     const sorted = [...availableDateInfos].sort((a, b) => a.date.localeCompare(b.date));
     const min = dayjs.tz(sorted[0].date);
-    const max = dayjs.tz(sorted[sorted.length - 1].date);
+    // 上界取「最晚已同步日期」与「最晚有数据日期」的较大者：
+    // 已同步但无数据的日期（如全员未提交审批的周末）也要展示为置灰，避免被误认为未同步
+    let max = dayjs.tz(sorted[sorted.length - 1].date);
+    for (const d of syncedDates) {
+      const dt = dayjs.tz(d);
+      if (dt.isAfter(max)) max = dt;
+    }
     const infoMap = new Map(availableDateInfos.map((i) => [i.date, i]));
     const dates: AvailableDate[] = [];
     for (let d = min; d.isBefore(max) || d.isSame(max); d = d.add(1, "day")) {
@@ -31,9 +40,10 @@ export default function DateAxis({
       dates.push(info ?? { date: dateStr, has_anomaly: false });
     }
     return dates;
-  }, [availableDateInfos]);
+  }, [availableDateInfos, syncedDates]);
 
   const dateAxisRef = useRef<HTMLDivElement>(null);
+  const syncedSet = useMemo(() => new Set(syncedDates), [syncedDates]);
 
   const scrollDateAxis = (direction: "left" | "right") => {
     if (!dateAxisRef.current) return;
@@ -158,12 +168,17 @@ export default function DateAxis({
           const d = dayjs.tz(info.date);
           const hasData = availableDateInfos.some((i) => i.date === info.date);
           const isActive = selectedDate === info.date;
+          // 无数据日区分两种置灰含义：已同步（源端确实没数据）vs 未同步
+          const noDataTitle = syncedSet.has(info.date)
+            ? "已同步，无拜访数据"
+            : "未同步";
           return (
             <button
               key={info.date}
               data-date={info.date}
               onClick={() => selectDate(info.date)}
               disabled={!hasData}
+              title={hasData ? undefined : noDataTitle}
               style={{
                 flexShrink: 0,
                 width: 56,

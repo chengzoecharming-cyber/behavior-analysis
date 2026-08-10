@@ -31,6 +31,7 @@ import {
 import { isMileageRequiredTrip } from "../utils/tripType";
 import {
   fetchAvailableDates,
+  fetchSyncedDates,
   fetchVisits,
   fetchStops,
   fetchRoutes,
@@ -403,6 +404,8 @@ function ConsolePage() {
 
   // 个人视图状态
   const [availableDateInfos, setAvailableDateInfos] = useState<AvailableDate[]>([]);
+  // 钉钉已同步覆盖的日期（全局），用于日历轴展示「已同步但无数据」的置灰日期
+  const [syncedDates, setSyncedDates] = useState<string[]>([]);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
@@ -515,6 +518,13 @@ function ConsolePage() {
       setSelectedDate(dateFromUrl);
     }
   }, [searchParams, users, currentUser]);
+
+  // 加载一次全局已同步日期（日历轴上界用，与查询范围无关）
+  useEffect(() => {
+    fetchSyncedDates()
+      .then(setSyncedDates)
+      .catch(() => setSyncedDates([]));
+  }, []);
 
   // 当查询范围变化时，加载可用日期列表
   useEffect(() => {
@@ -1009,6 +1019,7 @@ function ConsolePage() {
             <Col span={24}>
               <DateAxis
                 availableDateInfos={availableDateInfos}
+                syncedDates={syncedDates}
                 selectedDate={selectedDate}
                 onSelectDate={handleSelectDate}
                 emptyText={scope === "person" ? "该员工暂无数据" : "该范围暂无数据"}

@@ -83,6 +83,12 @@ export async function fetchAvailableDates(
   return res.data;
 }
 
+// 钉钉同步已成功覆盖的日期（全局口径），用于日历轴展示「已同步但无数据」的置灰日期
+export async function fetchSyncedDates(): Promise<string[]> {
+  const res = await api.get("/visits/synced-dates");
+  return res.data;
+}
+
 export async function fetchVisits(
   userId: string,
   start: string,

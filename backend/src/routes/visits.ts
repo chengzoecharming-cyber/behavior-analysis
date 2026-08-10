@@ -200,4 +200,23 @@ router.get("/available-dates", authMiddleware, async (req: AuthRequest, res: Res
   }
 });
 
+// GET /visits/synced-dates
+// 返回钉钉同步已成功覆盖的日期列表（全局口径，不含用户数据，所有登录角色可读）。
+// 用途：前端日历轴把「已同步但无数据」的日期（如全员未提交审批的周末）展示为置灰，
+// 与「尚未同步」的日期区分开。
+router.get("/synced-dates", authMiddleware, async (_req: AuthRequest, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT generate_series(start_date, end_date, interval '1 day')::date AS date
+       FROM dingtalk_sync_logs
+       WHERE status = 'success'
+       ORDER BY date`
+    );
+    res.json(result.rows.map((r) => formatBeijingDate(r.date)));
+  } catch (err) {
+    console.error("Failed to fetch synced dates:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 export default router;

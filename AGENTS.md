@@ -370,6 +370,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET | `/visits?user=&start=&end=` | 查询标准化拜访记录 |
 | GET | `/visits/users` | 获取所有员工列表 |
 | GET | `/visits/available-dates?user=` | 某员工有数据的日期列表 |
+| GET | `/visits/synced-dates` | 钉钉同步已成功覆盖的日期列表（全局口径，所有登录角色可读；前端日历轴据此把「已同步但无数据」的日期置灰展示，与「未同步」区分） |
 | POST | `/visits/:id/coordinates` | 手动修正拜访点坐标 |
 | GET | `/stops?user=&start=&end=` | 查询停留点（范围模式） |
 | GET | `/stops?user=&date=` | 计算并持久化停留点（单日模式） |
