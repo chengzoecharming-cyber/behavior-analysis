@@ -474,6 +474,12 @@ export async function initDB(): Promise<void> {
         ON report_generation_logs(created_at DESC);
       CREATE INDEX IF NOT EXISTS idx_report_generation_logs_type_period
         ON report_generation_logs(report_type, period_start, period_end);
+
+      CREATE TABLE IF NOT EXISTS locked_approvals (
+        approval_id VARCHAR(64) PRIMARY KEY,
+        reason TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
     `);
 
     // 初始化数据质量监控表

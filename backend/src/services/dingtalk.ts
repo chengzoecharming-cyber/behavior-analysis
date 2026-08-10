@@ -1531,12 +1531,37 @@ export async function saveRawApproval(instance: any, processInstanceId?: string,
   }
 }
 
+// 锁定审批单：销售在钉钉修改表单期间（或等待重录期间），同步链路必须整体跳过这些单——
+// 不更新 raw_approvals、不重解析、不触碰 visits，防止修改中间态（状态回退/字段清空）
+// 污染库内数据。锁定名单落库 locked_approvals 表，由管理员手工维护；
+// 重录请走 scripts/reparseApproval.ts（刻意通道，不受锁定影响）。
+async function getLockedApprovalIds(): Promise<Set<string>> {
+  try {
+    const result = await pool.query(`SELECT approval_id FROM locked_approvals`);
+    return new Set(result.rows.map((r) => r.approval_id));
+  } catch (err) {
+    // 表不存在等异常时降级为不锁定（宁可同步，不可误判全锁）
+    console.warn("[locked_approvals] 读取锁定名单失败，按无锁定处理:", err);
+    return new Set();
+  }
+}
+
+// 与 saveRawApproval 一致的 approval_id 推导，用于命中锁定名单
+function resolveApprovalId(instance: any): string {
+  return (
+    instance.business_id ||
+    instance.businessId ||
+    instance.process_instance_id ||
+    instance.processInstanceId ||
+    ""
+  );
+}
+
 // 把 visits.approval_status 与 raw_approvals.status 对齐。
 // 背景：processParsedVisits 对已有行「存在即跳过」，字段不会被刷新；
 // 而审批单会从 RUNNING 变为 COMPLETED，不刷新会导致前端轨迹终点永远显示「途n」而不是「终」。
 // 该语句幂等且全表代价很低，每次同步都执行，兼有自愈存量数据的作用。
-async function refreshVisitApprovalStatus(): Promise<number> {
-  const result = await pool.query(
+async function refreshVisitApprovalStatus(): Promise<number> {  const result = await pool.query(
     `UPDATE visits v
      SET approval_status = r.status
      FROM raw_approvals r
@@ -1686,13 +1711,25 @@ async function syncApprovalsInternal(
 
   try {
     const refs = await fetchAllApprovalIds(startTimeMs, endTimeMs);
+    const lockedIds = await getLockedApprovalIds();
+    if (lockedIds.size > 0) {
+      console.log(`[syncApprovals] 本次同步跳过 ${lockedIds.size} 张锁定审批单`);
+    }
     const parsedVisits: ParsedVisit[] = [];
     const processedApprovalIds = new Set<string>();
     let parseFailures = 0;
+    let lockedSkipped = 0;
 
     for (const ref of refs) {
       try {
         const instance = await getApprovalDetail(ref.id);
+
+        // 锁定审批单整体跳过：不更新 raw_approvals、不解析、不触碰 visits
+        const approvalId = resolveApprovalId(instance);
+        if (approvalId && lockedIds.has(approvalId)) {
+          lockedSkipped++;
+          continue;
+        }
 
         // 先保存原始审批数据，同时记录真正的 process_instance_id（来自 listids）
         // 和已知的 process_code（v1/v2 解析分发依据）
@@ -1769,6 +1806,9 @@ async function syncApprovalsInternal(
       parsedVisits: parsedVisits.length,
       parseFailures,
     };
+    if (lockedSkipped > 0) {
+      console.log(`[syncApprovals] 已跳过 ${lockedSkipped} 张锁定审批单`);
+    }
 
     await updateLog(
       "success",
@@ -1814,6 +1854,7 @@ export async function syncRunningApprovals(): Promise<{
      FROM raw_approvals
      WHERE status = 'RUNNING'`
   );
+  const lockedIds = await getLockedApprovalIds();
 
   let updated = 0;
   let errors = 0;
@@ -1823,6 +1864,11 @@ export async function syncRunningApprovals(): Promise<{
 
   for (const row of result.rows) {
     try {
+      // 锁定审批单整体跳过，见 getLockedApprovalIds 注释
+      if (lockedIds.has(row.approval_id)) {
+        console.log(`[syncRunningApprovals] 跳过锁定审批单 ${row.approval_id}`);
+        continue;
+      }
       if (row.process_instance_id && row.process_instance_id !== row.approval_id) {
         // 有真正的 process_instance_id 时直接拉取最新详情
         const instance = await getApprovalDetail(row.process_instance_id);

@@ -1252,6 +1252,12 @@ v2 按「打卡 + 客户名称」判定，与地址无关：**占位写法 = 虚
 
 **进度备注（2026-08-10）**：`reparseApproval --dry` 对 7 张单验证通过；黄小川已完成表单修改（签2 已补「苏州博锐鑫机械技术有限公司」），其余 6 单销售尚未修改（贺鹏程那单钉钉侧仍为 RUNNING）。
 
+**⚠️ 杨天序事件与审批单锁定机制（2026-08-10 晚）**：杨天序在钉钉点击「修改」后其审批单在钉钉侧进入修改中间态。为防止同步把中间态（状态回退/字段清空）刷进库，新增 `locked_approvals` 表（approval_id + reason）：**同步链路（`syncApprovals` 与 `syncRunningApprovals`）对锁定单整体跳过**——不更新 raw_approvals、不解析、不触碰 visits；`reparseApproval` 重录脚本不受锁定影响（刻意通道）。7 张问题单已于当晚全部锁定。「一起改」时每张单重录完成后解锁：
+```sql
+-- 重录完成后解锁（可逐张或全部）
+DELETE FROM locked_approvals WHERE approval_id = '<approval_id>';
+```
+
 **待办**：
 
 - [ ] 确认钉钉表单已开启「审批单修改」；
