@@ -79,7 +79,8 @@ map/
 │   │   ├── seed.ts                       # 从 data/mock-visits.xlsx 导入模拟数据
 │   │   ├── refreshRiskCache.ts           # 手动刷新风险摘要缓存
 │   │   ├── backfillVisitExclusion.ts     # 回填 visits.exclude_from_visit_count（拜访次数排除住址/公司地址，--dry 预览）
-│   │   └── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
+│   │   ├── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
+│   │   └── reparseApproval.ts        # 销售修改钉钉表单后重录指定审批单（重拉实例→重解析替换 visits→重算派生数据，--dry 预览）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
 │   ├── Dockerfile
@@ -160,6 +161,7 @@ map/
    - 全量异常重算：`npm run recompute:anomalies`（重，全表删除重建，慎用）；
    - 拜访排除标记：`npm run backfill:visit-exclusion`（幂等）；多客户计数：`npm run backfill:customer-count`；
    - routes/里程：`npm run recompute:routes`；
+   - 单张审批单重录（销售改完钉钉表单后）：`npm run reparse:approval -- <approval_id> [--dry]`（删旧 visits 重解析 + 全量重算该单影响的派生数据）；
 3. **把重算/清理命令写进部署步骤**（PLAN.md 对应条目），部署代码和重算数据是同一次变更的两半。
 
 反过来说：只改代码里的口径常量/权重（`anomaly_weights` 表配置类）且确认无存量误报时，可只清理受影响日期的 anomalies 让读路径自然重建，不必全量重算。
