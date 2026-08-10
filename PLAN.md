@@ -1248,11 +1248,37 @@ v2 按「打卡 + 客户名称」判定，与地址无关：**占位写法 = 虚
 
 附带观察：林伟东客户名带句号（「深圳市宝旭机械有限公司。」），客户名按文本去重会被算成不同客户，已提醒销售勿带标点。
 
+**2026-08-10 补丁（已提交，待随「一起改」部署）**：占位识别从 `/虚拟|签到用/` 扩展为 `/虚拟|签到用|住址|住所|住处|回家|到家|在家|家里/`（`normalization.ts` 的 `PLACEHOLDER_CUSTOMER_PATTERN`）——员工绕过下拉手写「住址」类字眼也按住址处理、不计拜访；不匹配单独的「家」字（避免误伤「厂家」等真实客户名）。入库打标（processParsedVisits）与回填脚本（backfillVisitExclusion）共用该模式，改一处全链路生效。
+
+**进度备注（2026-08-10）**：`reparseApproval --dry` 对 7 张单验证通过；黄小川已完成表单修改（签2 已补「苏州博锐鑫机械技术有限公司」），其余 6 单销售尚未修改（贺鹏程那单钉钉侧仍为 RUNNING）。
+
 **待办**：
 
 - [ ] 确认钉钉表单已开启「审批单修改」；
 - [x] 实现 `reparseApproval` 重录脚本：`cd backend && npm run reparse:approval -- <approval_id> [--dry]`（重拉钉钉实例 → 更新 raw_approvals → 删旧 visits 重解析入库 → 重算派生数据；`--dry` 只打印新旧对照不写库）；
-- [ ] 收齐销售修改反馈后，逐单重录并复核拜访计数/客户名单。
+- [ ] 收齐销售修改反馈后「一起改」，服务器完整步骤：
+  ```bash
+  cd /root/sales-map
+  # 1. 部署（含住址模糊识别补丁）
+  docker compose -f docker-compose.ghcr.yml pull backend
+  docker compose -f docker-compose.ghcr.yml up -d
+  # 2. 逐张重录问题审批单（先 --dry 预览确认销售已改，再去掉 --dry 实跑）
+  docker exec sales-map-backend npx ts-node scripts/reparseApproval.ts \
+    202608071057000303031 202608071332000399569 202608071101000142591 \
+    202608070832000358617 202608071037000177135 202608070851000562349 \
+    202608070759000049995 --dry
+  docker exec sales-map-backend npx ts-node scripts/reparseApproval.ts \
+    202608071057000303031 202608071332000399569 202608071101000142591 \
+    202608070832000358617 202608071037000177135 202608070851000562349 \
+    202608070759000049995
+  # 3. 住址模糊识别补丁对存量数据重打标（幂等，--dry 可预览）
+  docker exec sales-map-backend npx ts-node scripts/backfillVisitExclusion.ts
+  # 4. 重算受影响日期的异常与风险摘要
+  docker exec sales-map-backend npx ts-node scripts/refreshRiskCache.ts date=2026-08-07
+  docker exec sales-map-backend npx ts-node scripts/refreshRiskCache.ts date=2026-08-08
+  docker exec sales-map-backend npx ts-node scripts/refreshRiskCache.ts date=2026-08-09
+  # 5. 复核：控制台抽查上述人员的拜访点数与客户名单
+  ```
 
 ---
 

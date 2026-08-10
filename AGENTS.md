@@ -240,7 +240,7 @@ map/
 - **AI 总结延迟**：AI总结在审批单结束后才生成，而写入是「存在即跳过」——v2 重复行开放 `visit_note`/`visit_detail` 刷新通道（processParsedVisits，`IS DISTINCT FROM` 才写），其他字段不刷新。
 - **里程读数异常（mileage_reading_invalid）v2 口径**（anomalyDetection.ts）：v2 单只判定起点（出发读数缺失）与终点（终点读数缺失/终点<出发/差值超限），途经点无读数不参与判定；RUNNING 中的 v2 单不判终点缺失（审批完成后才判）。v1 单维持逐点判定不变。「累计里程不一致」规则对 v2 天然不触发（v2 无逐段累计值），无需改动。
 - **填报里程与里程偏差 v2 整单口径**（mileageAnalysis.ts）：v2 单只有出发前/终点两个里程读数，中间签到点无读数，逐段口径算不出。填报里程聚合（`computeMileageByApprovalForUsers`）与里程偏差（`computeMileageSegments`）对 v2 统一走整单：填报 = 终点读数 − 出发前读数（读数缺失兜底取单内最大填报里程），高德 = 单内各段 routes 之和，任何一段路线缺失则整单跳过。v1/Excel 维持逐段口径不变。
-- **拜访计数口径分流**（`ParsedVisit.form_version='v2'`）：v2 按「出行方式 × 客户名称」逐个判定——真实客户名数为 0（空或全部为占位名，占位 = `/虚拟|签到用/`）→ `exclude_from_visit_count=true`，不看地址；有真实客户名即使在住址/公司/酒店也算拜访；混合填写真实客户照计。v1/Excel 仍走住址+公司地址白名单（纯地址制，不看客户名）。`backfillVisitExclusion` 脚本同样按此分流。
+- **拜访计数口径分流**（`ParsedVisit.form_version='v2'`）：v2 按「出行方式 × 客户名称」逐个判定——真实客户名数为 0（空或全部为占位名）→ `exclude_from_visit_count=true`，不看地址；有真实客户名即使在住址/公司/酒店也算拜访；混合填写真实客户照计。占位模式 `PLACEHOLDER_CUSTOMER_PATTERN`（normalization.ts）= `/虚拟|签到用|住址|住所|住处|回家|到家|在家|家里/`（2026-08-10 起模糊识别手写住址类字眼，不匹配单独的「家」字防误伤「厂家」等）；改该模式后需重跑 `backfill:visit-exclusion` 刷新存量打标。v1/Excel 仍走住址+公司地址白名单（纯地址制，不看客户名）。`backfillVisitExclusion` 脚本同样按此分流。
 - **一个打卡点 N 家客户 = N 次拜访**：`visits.customer_count`（v2 按客户数写；v1/Excel 按 customer_name 分隔符 `[,，、]` 拆分计，空名单值按 1；存量用 `npm run backfill:customer-count` 回填）。「拜访次数」类统计一律 `SUM(customer_count)`，不要用 `COUNT(*)`；「客户数」类统计用 `splitCustomerNames`（normalization.ts）拆分去重，不要在 SQL 里 LATERAL 展开（会让同行其他聚合翻倍）。
 - 旧表单停用时清空 `DINGTALK_PROCESS_CODE` 即可，v1 解析代码保留用于历史重跑。详见 PLAN.md Step 3.6。
 
