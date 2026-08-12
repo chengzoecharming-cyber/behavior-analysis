@@ -158,6 +158,18 @@ function renderCustomerList(
   }
 }
 
+/**
+ * 报告中拜访备注的展示口径：
+ * v2 表单优先展示钉钉「AI总结」（DDAIField 按「总结内容N」拆块，解析时已对齐到对应打卡点的
+ * visit_detail.ai）；无 AI 总结时回退 visit_note（v2 兜底为「沟通内容详情/存在问题点」原字段
+ * 拼接，v1/Excel 为原有拜访备注）。AI 总结场景直接用 visit_note 以保留末尾追加的里程备注。
+ */
+export function resolveReportVisitNote(v: Visit): { label: string; text: string } | null {
+  if (v.visit_detail?.ai) return { label: "AI总结", text: v.visit_note || v.visit_detail.ai };
+  if (v.visit_note) return { label: "拜访情况", text: v.visit_note };
+  return null;
+}
+
 function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[]) {
   if (!visits || visits.length === 0) return;
 
@@ -181,8 +193,9 @@ function renderDailyItinerary(lines: string[], visits: Visit[], routes: Route[])
     if (v.reported_distance_km) {
       lines.push(`- **累计里程：** ${v.reported_distance_km} km`);
     }
-    if (v.visit_note) {
-      lines.push(`- **拜访情况：** ${v.visit_note}`);
+    const note = resolveReportVisitNote(v);
+    if (note) {
+      lines.push(`- **${note.label}：** ${note.text}`);
     }
     lines.push("");
   }
@@ -255,12 +268,6 @@ export function renderConsoleReportMarkdown(input: MarkdownReportInput): string 
   if (isPersonalDaily && stops) {
     renderMileageStops(lines, totals, stops);
   }
-
-  // AI 拜访总结占位
-  lines.push("## 客户拜访总结");
-  lines.push("");
-  lines.push("（AI 总结能力待接入，后续将由 Kimi 基于拜访情况自动生成）");
-  lines.push("");
 
   // 个人日报：拜访轨迹（拜访明细 + 行驶路段）
   if (isPersonalDaily && visits && visits.length > 0) {

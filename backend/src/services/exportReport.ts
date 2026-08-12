@@ -1,5 +1,6 @@
 import { DailyOverview, UserOverviewResult } from "./userOverviewService";
 import { Visit, Stop, Route, Anomaly } from "../types";
+import { resolveReportVisitNote } from "./exportConsoleReportMarkdown";
 
 export interface HeatMapPoint {
   lat: number;
@@ -691,6 +692,7 @@ export function renderPersonSingleDayHtml(input: PersonSingleDayReportInput): st
         : undefined;
     const tags = getVisitTags(visit);
     const address = formatAddress(visit.address || visit.location_name);
+    const note = resolveReportVisitNote(visit);
 
     return `
       <div class="timeline-item">
@@ -701,6 +703,7 @@ export function renderPersonSingleDayHtml(input: PersonSingleDayReportInput): st
             <span class="timeline-time">${formatHHmm(visit.timestamp)}</span>
           </div>
           ${visit.customer_name ? `<div class="timeline-customer">客户：${escapeHtml(visit.customer_name)}</div>` : ""}
+          ${note ? `<div class="timeline-note">${escapeHtml(note.label)}：${escapeHtml(note.text)}</div>` : ""}
           ${tags.length > 0 ? `<div class="timeline-tags">${tags.map((t) => `<span class="timeline-tag">${t}</span>`).join("")}</div>` : ""}
           ${nextDistance != null ? `<div class="timeline-distance">${nextDistance.toFixed(1)} km</div>` : ""}
         </div>
@@ -875,6 +878,16 @@ export function renderPersonSingleDayHtml(input: PersonSingleDayReportInput): st
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .timeline-note {
+      font-size: 13px;
+      color: #444;
+      line-height: 1.6;
+      background-color: #f6f8fa;
+      border-radius: 4px;
+      padding: 6px 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
     }
     .timeline-tags {
       display: flex;
