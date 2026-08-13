@@ -355,16 +355,20 @@ function buildSystemLink(
   start: string,
   end: string
 ): string {
+  const baseUrl = (
+    process.env.REPORT_SYSTEM_BASE_URL ||
+    process.env.FRONTEND_BASE_URL ||
+    "http://8.219.97.3:5173"
+  ).replace(/\/+$/, "");
+
   if (scope === "person" && target.userId) {
     if (start === end) {
-      return `/console?user=${encodeURIComponent(target.userId)}&date=${start}`;
+      return `${baseUrl}/console?user=${encodeURIComponent(target.userId)}&date=${start}`;
     }
-    return `/console?user=${encodeURIComponent(target.userId)}&start=${start}&end=${end}`;
+    return `${baseUrl}/console?user=${encodeURIComponent(target.userId)}&start=${start}&end=${end}`;
   }
   const params = new URLSearchParams({
     scope,
-    start,
-    end,
   });
   if (scope === "department" && target.deptName) {
     params.set("node", target.deptName);
@@ -372,7 +376,9 @@ function buildSystemLink(
   if (scope === "sub_department" && target.subDeptName) {
     params.set("node", target.subDeptName);
   }
-  return `/console?${params.toString()}`;
+  params.set("start", start);
+  params.set("end", end);
+  return `${baseUrl}/console?${params.toString()}`;
 }
 
 export async function exportReportToDingTalkDoc(options: {

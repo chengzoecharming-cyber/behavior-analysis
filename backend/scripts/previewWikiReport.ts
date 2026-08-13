@@ -116,14 +116,22 @@ async function findUser(user: string): Promise<{ userId: string; userName: strin
 }
 
 function buildSystemLink(target: ReportScopeTarget, start: string, end: string): string {
+  const baseUrl = (
+    process.env.REPORT_SYSTEM_BASE_URL ||
+    process.env.FRONTEND_BASE_URL ||
+    "http://8.219.97.3:5173"
+  ).replace(/\/+$/, "");
+
   if (target.scope === "person" && target.userId) {
-    if (start === end) return `/console?user=${encodeURIComponent(target.userId)}&date=${start}`;
-    return `/console?user=${encodeURIComponent(target.userId)}&start=${start}&end=${end}`;
+    if (start === end) return `${baseUrl}/console?user=${encodeURIComponent(target.userId)}&date=${start}`;
+    return `${baseUrl}/console?user=${encodeURIComponent(target.userId)}&start=${start}&end=${end}`;
   }
-  const params = new URLSearchParams({ scope: target.scope, start, end });
+  const params = new URLSearchParams({ scope: target.scope });
   if (target.scope === "department" && target.deptName) params.set("node", target.deptName);
   if (target.scope === "sub_department" && target.subDeptName) params.set("node", target.subDeptName);
-  return `/console?${params.toString()}`;
+  params.set("start", start);
+  params.set("end", end);
+  return `${baseUrl}/console?${params.toString()}`;
 }
 
 async function loadVisits(userIds: string[], start: string, end: string): Promise<Visit[]> {
