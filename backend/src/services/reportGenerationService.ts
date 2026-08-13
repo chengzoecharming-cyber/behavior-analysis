@@ -9,7 +9,7 @@ import {
   loadCompanyAddresses,
 } from "./addressWhitelistService";
 import { computeUserOverview } from "./userOverviewService";
-import { renderConsoleReportMarkdown } from "./exportConsoleReportMarkdown";
+import { renderWikiReportMarkdown } from "./wikiReportMarkdown";
 import { splitCustomerNames } from "./normalization";
 import {
   computeMileageByApprovalForUsers,
@@ -28,7 +28,7 @@ import {
   ReportScopeTarget,
   ReportType,
 } from "./dingtalkDoc";
-import { Visit, Route, Stop } from "../types";
+import { Visit, Route } from "../types";
 import { formatBeijingDate, getBeijingWeekday } from "../utils/timezone";
 
 const RECENT_DATA_WINDOW_DAYS = 14;
@@ -361,7 +361,18 @@ function buildSystemLink(
     }
     return `/console?user=${encodeURIComponent(target.userId)}&start=${start}&end=${end}`;
   }
-  return `/decision?start=${start}&end=${end}&mode=custom`;
+  const params = new URLSearchParams({
+    scope,
+    start,
+    end,
+  });
+  if (scope === "department" && target.deptName) {
+    params.set("node", target.deptName);
+  }
+  if (scope === "sub_department" && target.subDeptName) {
+    params.set("node", target.subDeptName);
+  }
+  return `/console?${params.toString()}`;
 }
 
 export async function exportReportToDingTalkDoc(options: {
@@ -414,7 +425,6 @@ export async function exportReportToDingTalkDoc(options: {
 
   // 计算数据
   let scopeData: Awaited<ReturnType<typeof computeScopeOverview>>;
-  let personStops: Stop[] | undefined;
   if (scope === "person" && target.userId) {
     const overview = await computeUserOverview(target.userId, start, end);
     const visits = (
@@ -426,13 +436,6 @@ export async function exportReportToDingTalkDoc(options: {
     const routes = (
       await pool.query(
         `SELECT * FROM routes WHERE user_id = $1 AND business_date >= $2::date AND business_date <= $3::date ORDER BY id`,
-        [target.userId, start, end]
-      )
-    ).rows;
-    // 停留点（按开始时间排序，用于个人日报的「理论签到里程」板块）
-    personStops = (
-      await pool.query(
-        `SELECT * FROM stops WHERE user_id = $1 AND business_date >= $2::date AND business_date <= $3::date ORDER BY start_time`,
         [target.userId, start, end]
       )
     ).rows;
@@ -481,19 +484,20 @@ export async function exportReportToDingTalkDoc(options: {
     homeVisitIds.add(id);
   }
 
-  // 生成 Markdown
-  const markdown = renderConsoleReportMarkdown({
-    userName: titleName,
-    userId: target.userId,
+  // 生成自动写入钉钉知识库的手机端友好 Markdown。
+  const markdown = renderWikiReportMarkdown({
+    scope,
+    scopeName,
+    titleName,
     start,
     end,
     reportType,
     overview: scopeData.overview as any,
-    visits: scope === "person" ? scopeData.visits : scopeData.visits,
-    routes: scope === "person" ? scopeData.routes : undefined,
-    stops: scope === "person" ? personStops : undefined,
+    visits: scopeData.visits,
+    routes: scopeData.routes,
     homeVisitIds,
     systemLink: buildSystemLink(scope, target, start, end),
+    orgTree: tree,
   });
 
   // 记录内容大小，便于排查钉钉文档 API 因内容过大返回 ServiceUnavailable 的问题
