@@ -1,7 +1,7 @@
 import crypto, { randomUUID } from "crypto";
 import { pool } from "../db";
 import { buildOrgTree, OrgTreeNode } from "./orgService";
-import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat } from "./dingtalkFile";
+import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat, isWorkNotificationConfigured, sendWorkNotificationMarkdown } from "./dingtalkFile";
 import {
   batchFilterCompanyVisits,
   batchFilterHomeVisits,
@@ -16,6 +16,11 @@ import {
   aggregateMileageByDate,
 } from "./mileageAnalysis";
 import { ensureFreshRoutes } from "./routeService";
+import {
+  getCompanyLeaderIds,
+  getDeptLeaderIds,
+  getSubDeptLeaderIds,
+} from "./leaderConfig";
 import {
   getOperatorUnionId,
   getOrCreateWorkspace,
@@ -396,6 +401,11 @@ export async function exportReportToDingTalkDoc(options: {
   scope: ReportScope;
   reportType: ReportType;
   hasData: boolean;
+  totals: {
+    visit_count: number;
+    estimated_distance_km: number;
+    anomaly_count: number;
+  };
 }> {
   const { operatorUserId, workspaceName, scope, target, start, end, orgTree } =
     options;
@@ -565,6 +575,11 @@ export async function exportReportToDingTalkDoc(options: {
     scope,
     reportType,
     hasData: scopeData.hasData,
+    totals: {
+      visit_count: scopeData.overview.totals.visit_count,
+      estimated_distance_km: scopeData.overview.totals.estimated_distance_km,
+      anomaly_count: scopeData.overview.totals.anomaly_count,
+    },
   };
 }
 
@@ -579,6 +594,11 @@ export interface ReportGenerationResult {
   hasData?: boolean;
   status: "success" | "failed";
   error?: string;
+  totals?: {
+    visit_count: number;
+    estimated_distance_km: number;
+    anomaly_count: number;
+  };
 }
 
 /** 单维度导出最大尝试次数（含首次） */
@@ -707,6 +727,7 @@ async function exportScopeWithRetry(options: {
         name: scopeName,
         url: result.url,
         hasData: result.hasData,
+        totals: result.totals,
         status: "success",
       };
     } catch (err: any) {
@@ -740,6 +761,85 @@ async function exportScopeWithRetry(options: {
     triggerSource,
   });
   return { scope, name: scopeName, status: "failed", error: errorMessage };
+}
+
+/**
+ * 给区总/负责人发一条汇总通知：只报「生成 N 份、成功 X、失败 Y、总拜访 Z 次」，
+ * 附一个其可见的第一层级入口链接（区总→该区日报，部门负责人→部门日报，公司→公司日报），
+ * 成员明细进入 wiki 自行查看。
+ */
+async function sendLeaderDailySummary(params: {
+  leaderIds: string[];
+  groupName: string;
+  date: string;
+  stats: { generated: number; failed: number; totalVisits: number };
+  reportUrl?: string;
+}): Promise<void> {
+  if (!isWorkNotificationConfigured()) return;
+  const { leaderIds, groupName, date, stats, reportUrl } = params;
+  if (leaderIds.length === 0) {
+    console.log(`[Report Gen] ${groupName} 无区总/负责人，跳过汇总推送`);
+    return;
+  }
+  try {
+    const lines = [
+      `### ${groupName} ${date} 外勤日报`,
+      "",
+      `- 生成日报 ${stats.generated} 份：成功 ${stats.generated - stats.failed}，失败 ${stats.failed}`,
+      `- 总拜访：${stats.totalVisits} 次`,
+    ];
+    if (reportUrl) {
+      lines.push("", `[查看${groupName}日报](${reportUrl})`);
+    }
+    await sendWorkNotificationMarkdown(
+      leaderIds,
+      `外勤日报-${groupName}-${date}`,
+      lines.join("\n")
+    );
+    console.log(
+      `[Report Gen] 已推送日报汇总: ${groupName} → ${leaderIds.length} 人`
+    );
+  } catch (err: any) {
+    console.warn(
+      `[Report Gen] 日报汇总发送失败（不影响生成）: ${groupName}:`,
+      err?.message || err
+    );
+  }
+}
+
+/**
+ * 个人日报生成后推送钉钉工作通知给本人（拜访数/里程/异常数 + 自己的日报链接）。
+ * 0 拜访也推送；发送失败不影响生成结果。
+ */
+async function sendPersonDailyReportNotification(params: {
+  userId: string;
+  userName: string;
+  date: string;
+  url?: string;
+  totals?: ReportGenerationResult["totals"];
+}): Promise<void> {
+  if (!isWorkNotificationConfigured()) return;
+  const { userId, userName, date, url, totals } = params;
+  try {
+    const title = `外勤日报-${userName}-${date}`;
+    const lines = [
+      `### ${userName} ${date} 外勤日报`,
+      "",
+      `- 拜访次数：${totals?.visit_count ?? 0} 次`,
+      `- 总里程：${Math.round(totals?.estimated_distance_km ?? 0)} km`,
+      `- 异常：${totals?.anomaly_count ?? 0} 条`,
+    ];
+    if (url) {
+      lines.push("", `[查看完整日报](${url})`);
+    }
+    await sendWorkNotificationMarkdown([userId], title, lines.join("\n"));
+    console.log(`[Report Gen] 已推送日报通知: ${userName}（本人）`);
+  } catch (err: any) {
+    console.warn(
+      `[Report Gen] 日报通知发送失败（不影响生成）: ${userName}:`,
+      err?.message || err
+    );
+  }
 }
 
 /**
@@ -939,6 +1039,10 @@ async function generateReportsForPeriod(
   // 同一次 run 内所有维度共享 run_id，用于聚合查询
   const runId = randomUUID();
   const results: ReportGenerationResult[] = [];
+  let companyResult: ReportGenerationResult | null = null;
+  // 日报推送统计（仅 daily + scheduler 时发送）：按子部门/部门/公司三级聚合
+  const notifyDaily = reportType === "daily" && triggerSource === "scheduler";
+  const companyStats = { generated: 0, failed: 0, totalVisits: 0 };
 
   // 公司维度
   const companyUserIds = getUserIdsForScope("company", null, tree);
@@ -952,108 +1056,81 @@ async function generateReportsForPeriod(
     console.warn("[Report Gen] 报告前路线补齐失败，继续生成:", err);
   }
   if (await hasRecentData(companyUserIds)) {
-    results.push(
-      await exportScopeWithRetry({
+    companyResult = await exportScopeWithRetry({
+      operatorUserId,
+      workspaceName,
+      scope: "company",
+      target: { scope: "company" },
+      scopeName: "公司",
+      start,
+      end,
+      orgTree: tree,
+      runId,
+      reportType,
+      triggerSource,
+    });
+    results.push(companyResult);
+  }
+
+  // 部门 / 子部门 / 个人维度
+  for (const dept of tree) {
+    const deptUserIds = getUserIdsForScope("department", dept, tree);
+    const deptStats = { generated: 0, failed: 0, totalVisits: 0 };
+    let deptResult: ReportGenerationResult | null = null;
+    if (await hasRecentData(deptUserIds)) {
+      deptResult = await exportScopeWithRetry({
         operatorUserId,
         workspaceName,
-        scope: "company",
-        target: { scope: "company" },
-        scopeName: "公司",
+        scope: "department",
+        target: { scope: "department", deptName: dept.shortName },
+        scopeName: dept.shortName,
         start,
         end,
         orgTree: tree,
         runId,
         reportType,
         triggerSource,
-      })
-    );
-  }
+      });
+      results.push(deptResult);
+    }
 
-  // 部门 / 子部门 / 个人维度
-  for (const dept of tree) {
-    const deptUserIds = getUserIdsForScope("department", dept, tree);
-    if (await hasRecentData(deptUserIds)) {
-      results.push(
-        await exportScopeWithRetry({
+    for (const sub of dept.children) {
+      const subUserIds = getUserIdsForScope("sub_department", sub, tree);
+      let subResult: ReportGenerationResult | null = null;
+      if (await hasRecentData(subUserIds)) {
+        subResult = await exportScopeWithRetry({
           operatorUserId,
           workspaceName,
-          scope: "department",
-          target: { scope: "department", deptName: dept.shortName },
-          scopeName: dept.shortName,
+          scope: "sub_department",
+          target: {
+            scope: "sub_department",
+            deptName: dept.shortName,
+            subDeptName: sub.shortName,
+          },
+          scopeName: sub.shortName,
           start,
           end,
           orgTree: tree,
           runId,
           reportType,
           triggerSource,
-        })
-      );
-    }
-
-    for (const sub of dept.children) {
-      const subUserIds = getUserIdsForScope("sub_department", sub, tree);
-      if (await hasRecentData(subUserIds)) {
-        results.push(
-          await exportScopeWithRetry({
-            operatorUserId,
-            workspaceName,
-            scope: "sub_department",
-            target: {
-              scope: "sub_department",
-              deptName: dept.shortName,
-              subDeptName: sub.shortName,
-            },
-            scopeName: sub.shortName,
-            start,
-            end,
-            orgTree: tree,
-            runId,
-            reportType,
-            triggerSource,
-          })
-        );
+        });
+        results.push(subResult);
       }
 
+      // 收集本区个人日报统计：本人各收一条，区总收一条汇总（不含成员明细，进 wiki 查看）
+      const subStats = { generated: 0, failed: 0, totalVisits: 0 };
       for (const userId of sub.userIds || []) {
         if (await hasRecentData([userId])) {
           const userName = await getUserNameById(userId);
-          results.push(
-            await exportScopeWithRetry({
-              operatorUserId,
-              workspaceName,
-              scope: "person",
-              target: {
-                scope: "person",
-                deptName: dept.shortName,
-                subDeptName: sub.shortName,
-                userId,
-                userName,
-              },
-              scopeName: userName,
-              start,
-              end,
-              orgTree: tree,
-              runId,
-              reportType,
-              triggerSource,
-            })
-          );
-        }
-      }
-    }
-
-    // 部门直属人员
-    for (const userId of dept.userIds || []) {
-      if (await hasRecentData([userId])) {
-        const userName = await getUserNameById(userId);
-        results.push(
-          await exportScopeWithRetry({
+          const result = await exportScopeWithRetry({
             operatorUserId,
             workspaceName,
             scope: "person",
             target: {
               scope: "person",
               deptName: dept.shortName,
+              subDeptName: sub.shortName,
               userId,
               userName,
             },
@@ -1064,10 +1141,114 @@ async function generateReportsForPeriod(
             runId,
             reportType,
             triggerSource,
-          })
-        );
+          });
+          results.push(result);
+          subStats.generated++;
+          if (result.status === "success") {
+            subStats.totalVisits += result.totals?.visit_count ?? 0;
+            // 个人日报推送工作通知：仅定时任务触发，manual/catchup 不推（避免补跑刷消息）
+            if (notifyDaily) {
+              await sendPersonDailyReportNotification({
+                userId,
+                userName,
+                date: start,
+                url: result.url,
+                totals: result.totals,
+              });
+            }
+          } else {
+            subStats.failed++;
+          }
+        }
+      }
+      deptStats.generated += subStats.generated;
+      deptStats.failed += subStats.failed;
+      deptStats.totalVisits += subStats.totalVisits;
+      if (notifyDaily && subStats.generated > 0) {
+        await sendLeaderDailySummary({
+          leaderIds: await getSubDeptLeaderIds(dept, sub),
+          groupName: sub.shortName,
+          date: start,
+          stats: subStats,
+          reportUrl:
+            subResult && subResult.status === "success"
+              ? subResult.url
+              : undefined,
+        });
       }
     }
+
+    // 部门直属人员
+    for (const userId of dept.userIds || []) {
+      if (await hasRecentData([userId])) {
+        const userName = await getUserNameById(userId);
+        const result = await exportScopeWithRetry({
+          operatorUserId,
+          workspaceName,
+          scope: "person",
+          target: {
+            scope: "person",
+            deptName: dept.shortName,
+            userId,
+            userName,
+          },
+          scopeName: userName,
+          start,
+          end,
+          orgTree: tree,
+          runId,
+          reportType,
+          triggerSource,
+        });
+        results.push(result);
+        deptStats.generated++;
+        if (result.status === "success") {
+          deptStats.totalVisits += result.totals?.visit_count ?? 0;
+          // 个人日报推送工作通知：仅定时任务触发，manual/catchup 不推（避免补跑刷消息）
+          if (notifyDaily) {
+            await sendPersonDailyReportNotification({
+              userId,
+              userName,
+              date: start,
+              url: result.url,
+              totals: result.totals,
+            });
+          }
+        } else {
+          deptStats.failed++;
+        }
+      }
+    }
+    companyStats.generated += deptStats.generated;
+    companyStats.failed += deptStats.failed;
+    companyStats.totalVisits += deptStats.totalVisits;
+    // 部门负责人：一条部门级汇总（生成份数/成功/失败/总拜访 + 部门日报入口链接）
+    if (notifyDaily && deptStats.generated > 0) {
+      await sendLeaderDailySummary({
+        leaderIds: await getDeptLeaderIds(dept),
+        groupName: dept.shortName,
+        date: start,
+        stats: deptStats,
+        reportUrl:
+          deptResult && deptResult.status === "success"
+            ? deptResult.url
+            : undefined,
+      });
+    }
+  }
+
+  // 公司级接收人（REPORT_DEPT_LEADERS 配置「公司:姓名」）：全公司汇总 + 公司日报入口链接
+  if (notifyDaily && companyStats.generated > 0) {
+    await sendLeaderDailySummary({
+      leaderIds: await getCompanyLeaderIds(),
+      groupName: "公司",
+      date: start,
+      stats: companyStats,
+      reportUrl:
+        companyResult && companyResult.status === "success"
+          ? companyResult.url
+          : undefined,
+    });
   }
 
     // run 结束后发一条机器人汇总（含失败告警），失败不影响返回结果
