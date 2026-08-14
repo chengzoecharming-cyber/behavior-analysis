@@ -393,6 +393,12 @@ export async function fetchDingTalkOrgUsers(): Promise<User[]> {
   return res.data.users || [];
 }
 
+/** 控制台人员选择器数据源：staff 返回「自己 + 本区 leader」，manager/admin 返回可见成员全集 */
+export async function fetchConsoleMembers(): Promise<Pick<User, "user_id" | "user_name">[]> {
+  const res = await api.get("/dingtalk/console-members");
+  return res.data.members || [];
+}
+
 export async function fetchCompanyDashboard(
   start: string,
   end: string

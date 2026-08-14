@@ -10,6 +10,7 @@ import {
   Toast,
   Cascader,
   Popover,
+  Select,
   Timeline,
 } from "@douyinfe/semi-ui";
 import {
@@ -41,6 +42,7 @@ import {
   fetchOrgOverview,
   fetchDingTalkOrgTree,
   fetchDingTalkOrgUsers,
+  fetchConsoleMembers,
   fetchCurrentUser,
   exportConsoleReport,
   AvailableDate,
@@ -379,6 +381,10 @@ function ConsolePage() {
   // 组织架构与人员
   const [users, setUsers] = useState<User[]>([]);
   const [orgTree, setOrgTree] = useState<OrgTreeNode[]>([]);
+  // staff 人员选择器数据源（自己 + 本区 leader）
+  const [consoleMembers, setConsoleMembers] = useState<
+    Pick<User, "user_id" | "user_name">[]
+  >([]);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const cascaderData = useMemo<CascaderDataItem[]>(
     () => buildCascaderData(orgTree, users),
@@ -436,12 +442,13 @@ function ConsolePage() {
   useEffect(() => {
     let cancelled = false;
     setDataLoading(true);
-    Promise.all([fetchDingTalkOrgUsers(), fetchDingTalkOrgTree(), fetchCurrentUser()])
-      .then(([userData, treeData, me]) => {
+    Promise.all([fetchDingTalkOrgUsers(), fetchDingTalkOrgTree(), fetchCurrentUser(), fetchConsoleMembers()])
+      .then(([userData, treeData, me, members]) => {
         if (cancelled) return;
         setUsers(userData);
         setOrgTree(treeData);
         setCurrentUser(me);
+        setConsoleMembers(members);
       })
       .finally(() => {
         if (!cancelled) setDataLoading(false);
@@ -471,9 +478,18 @@ function ConsolePage() {
     let initialUser: string | undefined;
 
     if (currentUser.role === "staff") {
-      // staff 只能看自己，忽略 URL 里他人的 user 参数
+      // staff 可看「自己 + 本区 leader」；名单未加载完时等待下次 effect 执行
+      if (consoleMembers.length === 0) return;
+      const allowed = new Set(consoleMembers.map((m) => m.user_id));
+      let target = currentUser.user_id;
+      if (userFromUrl) {
+        const resolved = allowed.has(userFromUrl)
+          ? userFromUrl
+          : consoleMembers.find((m) => m.user_name === userFromUrl)?.user_id;
+        if (resolved && allowed.has(resolved)) target = resolved;
+      }
       initialScope = "person";
-      initialUser = currentUser.user_id;
+      initialUser = target;
     } else if (userFromUrl) {
       initialScope = "person";
       const looksLikeUserId = /^\d+$/.test(userFromUrl);
@@ -517,7 +533,7 @@ function ConsolePage() {
       setDateRange([dateFromUrl, dateFromUrl]);
       setSelectedDate(dateFromUrl);
     }
-  }, [searchParams, users, currentUser]);
+  }, [searchParams, users, currentUser, consoleMembers]);
 
   // 加载一次全局已同步日期（日历轴上界用，与查询范围无关）
   useEffect(() => {
@@ -692,6 +708,24 @@ function ConsolePage() {
     else params.delete("node");
     if (newUserId) params.set("user", newUserId);
     else params.delete("user");
+    params.set("start", dateRange[0]);
+    params.set("end", dateRange[1]);
+    params.delete("date");
+    setSearchParams(params);
+  };
+
+  // staff 人员选择器：在「自己 + 本区 leader」之间切换
+  const handleStaffMemberChange = (value: unknown) => {
+    const newUserId = String(value);
+    if (!newUserId || newUserId === userId) return;
+    setScope("person");
+    setNode(undefined);
+    setUserId(newUserId);
+
+    const params = new URLSearchParams(searchParams);
+    params.set("scope", "person");
+    params.delete("node");
+    params.set("user", newUserId);
     params.set("start", dateRange[0]);
     params.set("end", dateRange[1]);
     params.delete("date");
@@ -937,8 +971,20 @@ function ConsolePage() {
       <div style={{ paddingBottom: 12 }}>
         <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16 }}>
           <Col style={{ flex: "0 0 auto" }}>
-            {/* staff 无范围选择器，只能看自己 */}
-            {currentUser?.role !== "staff" && (
+            {/* staff 用精简人员选择器（自己 + 本区 leader）；manager/admin 用完整级联选择器 */}
+            {currentUser?.role === "staff" ? (
+              <Select
+                style={{ width: 200 }}
+                placeholder={dataLoading ? "加载中..." : "选择成员"}
+                value={userId}
+                onChange={handleStaffMemberChange}
+                disabled={dataLoading}
+                optionList={consoleMembers.map((m) => ({
+                  value: m.user_id,
+                  label: m.user_name || m.user_id,
+                }))}
+              />
+            ) : (
               <Cascader
                 style={{ width: 320 }}
                 dropdownClassName="console-scope-cascader"

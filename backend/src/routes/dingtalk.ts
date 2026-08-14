@@ -24,7 +24,7 @@ import {
 import { toBeijingDayStart, toBeijingDayEnd, formatBeijingDate, getYesterdayBeijing } from "../utils/timezone";
 import { pool } from "../db";
 import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
-import { getVisibleUserIds, topDepartmentOf } from "../services/permission";
+import { getVisibleUserIds, getDistrictLeaderIds, topDepartmentOf } from "../services/permission";
 import { OrgTreeNode } from "../services/orgService";
 
 const router = Router();
@@ -300,6 +300,43 @@ router.get("/users", async (req: AuthRequest, res: Response) => {
   } catch (err: any) {
     console.error("Failed to get DingTalk users:", err);
     res.status(500).json({ error: err.message || "Failed to get users" });
+  }
+});
+
+// GET /dingtalk/console-members
+// 控制台人员选择器数据源：staff 返回「自己 + 本区 leader」（员工可看上级，不看其他普通员工）；
+// manager/admin 返回可见成员全集。自己始终排在第一位。
+router.get("/console-members", async (req: AuthRequest, res: Response) => {
+  try {
+    const currentUser = req.currentUser!;
+    let memberIds: string[] | null;
+    if (currentUser.role === "staff") {
+      const leaders = await getDistrictLeaderIds(currentUser);
+      memberIds = [...new Set([currentUser.user_id, ...leaders])];
+    } else {
+      memberIds = await getVisibleUserIds(currentUser);
+    }
+
+    const result =
+      memberIds === null
+        ? await pool.query(
+            `SELECT user_id, user_name FROM users WHERE NOT is_invalid ORDER BY user_name`
+          )
+        : await pool.query(
+            `SELECT user_id, user_name FROM users WHERE user_id = ANY($1::text[])`,
+            [memberIds]
+          );
+    const members = result.rows.sort((a, b) =>
+      a.user_id === currentUser.user_id
+        ? -1
+        : b.user_id === currentUser.user_id
+        ? 1
+        : (a.user_name || "").localeCompare(b.user_name || "", "zh-CN")
+    );
+    res.json({ success: true, count: members.length, members });
+  } catch (err: any) {
+    console.error("Failed to get console members:", err);
+    res.status(500).json({ error: err.message || "Failed to get console members" });
   }
 });
 
