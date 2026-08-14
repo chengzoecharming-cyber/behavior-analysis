@@ -143,12 +143,16 @@ router.post("/console-report-to-doc", requireRole("admin", "manager"), async (re
     const { reportType } = inferReportType(start, end);
 
     // 客户统计与客户列表排除员工住址（跨员工：任何人的家都不算客户）+ 公司地址
+    // v2 表单的 exclude_from_visit_count 已含「客户名 × 地址」完整判定，地址过滤只作用于 v1/Excel
     let homeVisitIds: Set<number> | undefined;
     if (visits && visits.length > 0) {
+      const addressFilterVisits = visits.filter(
+        (v) => v.form_version !== "v2"
+      );
       const homeAddressMap = await loadAllHomeAddresses();
-      homeVisitIds = await batchFilterHomeVisits(visits, homeAddressMap);
+      homeVisitIds = await batchFilterHomeVisits(addressFilterVisits, homeAddressMap);
       const companyAddresses = await loadCompanyAddresses();
-      for (const id of batchFilterCompanyVisits(visits, companyAddresses)) {
+      for (const id of batchFilterCompanyVisits(addressFilterVisits, companyAddresses)) {
         homeVisitIds.add(id);
       }
     }

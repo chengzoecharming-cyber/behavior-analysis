@@ -483,10 +483,16 @@ export async function exportReportToDingTalkDoc(options: {
   const titleName = scopeData.hasData ? scopeName : `${scopeName}（${reportDate}_${reportType.replace("报", "无拜访")}）`;
 
   // 客户统计与客户列表排除员工住址（跨员工：任何人的家都不算客户）+ 公司地址（拜访轨迹仍完整展示）
+  // v2 表单的 exclude_from_visit_count 已包含「客户名 × 地址」完整判定
+  // （真实客户名即使在住址/公司打卡也算拜访），地址过滤只作用于 v1/Excel 数据，
+  // 否则 v2 真实客户在公司/住址附近的打卡会被二次排除（2026-08-14 彭珅豪日报 0 拜访问题）
+  const addressFilterVisits = scopeData.visits.filter(
+    (v) => v.form_version !== "v2"
+  );
   const homeAddressMap = await loadAllHomeAddresses();
-  const homeVisitIds = await batchFilterHomeVisits(scopeData.visits, homeAddressMap);
+  const homeVisitIds = await batchFilterHomeVisits(addressFilterVisits, homeAddressMap);
   const companyAddresses = await loadCompanyAddresses();
-  for (const id of batchFilterCompanyVisits(scopeData.visits, companyAddresses)) {
+  for (const id of batchFilterCompanyVisits(addressFilterVisits, companyAddresses)) {
     homeVisitIds.add(id);
   }
 

@@ -165,10 +165,13 @@ async function loadRoutes(userIds: string[], start: string, end: string): Promis
 }
 
 async function buildHomeVisitIds(visits: Visit[]): Promise<Set<number>> {
+  // 与 reportGenerationService 同口径：v2 的 exclude_from_visit_count 已含「客户名 × 地址」
+  // 完整判定（真实客户名即使在住址/公司打卡也算拜访），地址过滤只作用于 v1/Excel 数据
+  const addressFilterVisits = visits.filter((v) => v.form_version !== "v2");
   const homeAddressMap = await loadAllHomeAddresses();
-  const homeVisitIds = await batchFilterHomeVisits(visits, homeAddressMap);
+  const homeVisitIds = await batchFilterHomeVisits(addressFilterVisits, homeAddressMap);
   const companyAddresses = await loadCompanyAddresses();
-  for (const id of batchFilterCompanyVisits(visits, companyAddresses)) {
+  for (const id of batchFilterCompanyVisits(addressFilterVisits, companyAddresses)) {
     homeVisitIds.add(id);
   }
   return homeVisitIds;
