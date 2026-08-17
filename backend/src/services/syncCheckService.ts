@@ -236,6 +236,50 @@ export async function sendSyncAlertToDingTalk(alert: SyncAlert): Promise<void> {
   }
 }
 
+/**
+ * 多条告警合并为一条汇总消息发送。
+ * 自定义机器人限流 20 条/分钟：逐条发送在积压超过 20 条时会打爆通道，
+ * 失败的不标记、下轮重试，形成永久告警风暴（8/16 事故：107 条积压全是
+ * parse_failures>0 的常规噪音）。汇总为一条后单轮最多 1 条消息。
+ */
+export async function sendSyncAlertsDigestToDingTalk(alerts: SyncAlert[]): Promise<void> {
+  const { robotWebhook } = getExportConfig();
+  if (!robotWebhook) {
+    throw new Error("机器人 webhook 未配置，无法发送告警");
+  }
+
+  const url = buildRobotSignedUrl(robotWebhook, process.env.DINGTALK_EXPORT_ROBOT_SECRET);
+
+  const lines = [
+    `## 🚨 钉钉同步异常告警（${alerts.length} 条）`,
+    "",
+    ...alerts.map(
+      (a) =>
+        `- **#${a.id}** ${a.startDate} ~ ${a.endDate}（${a.triggeredBy}）：${a.issues.join("；")}`
+    ),
+    "",
+    "请进入「同步健康」页面查看详情并处理。",
+  ];
+
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      msgtype: "markdown",
+      markdown: { title: `钉钉同步异常告警（${alerts.length} 条）`, text: lines.join("\n") },
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`机器人告警发送失败: HTTP ${res.status} ${res.statusText}`);
+  }
+
+  const data: any = await res.json().catch(() => null);
+  if (data && data.errcode !== 0) {
+    throw new Error(`机器人告警发送失败: ${data.errmsg} (${data.errcode})`);
+  }
+}
+
 /** 发送机器人 markdown 消息，失败抛错（调用方据此决定是否记录/重试） */
 async function sendRobotMarkdown(title: string, text: string): Promise<void> {
   const { robotWebhook } = getExportConfig();
@@ -336,16 +380,13 @@ export async function checkAndSendAlerts(): Promise<SyncAlert[]> {
   const alerts = await getSyncAlerts(true);
   if (alerts.length === 0) return [];
 
-  const sentIds: number[] = [];
-  for (const alert of alerts) {
-    try {
-      await sendSyncAlertToDingTalk(alert);
-      sentIds.push(alert.id);
-    } catch (err) {
-      console.error(`[syncCheck] 发送告警 ${alert.id} 失败:`, err);
-    }
+  // 合并为一条汇总消息发送（机器人限流 20 条/分钟，逐条发会打爆通道）；
+  // 发送失败不标记 alert_sent，下轮重发
+  try {
+    await sendSyncAlertsDigestToDingTalk(alerts);
+    await markAlertsSent(alerts.map((a) => a.id));
+  } catch (err) {
+    console.error(`[syncCheck] 汇总告警发送失败（${alerts.length} 条）:`, err);
   }
-
-  await markAlertsSent(sentIds);
   return alerts;
 }
