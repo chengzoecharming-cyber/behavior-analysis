@@ -230,6 +230,77 @@ export async function sendWorkNotificationMarkdown(
 }
 
 /**
+ * 以应用机器人身份发送 Markdown 单聊消息（/v1.0/robot/oToMessages/batchSend）。
+ * 消息以机器人 1 对 1 会话出现在消息列表，比「工作通知」会话更显眼。
+ * robotCode 默认取 DINGTALK_APP_KEY（企业内部应用的机器人 code 即 AppKey），
+ * 也可用 DINGTALK_ROBOT_CODE 覆盖。部分接收人无效/被过滤只告警不抛错。
+ */
+export async function sendRobotMarkdownToUsers(
+  userIds: string[],
+  title: string,
+  text: string
+): Promise<void> {
+  if (userIds.length === 0) {
+    throw new Error("接收用户列表为空");
+  }
+  const robotCode = process.env.DINGTALK_ROBOT_CODE || process.env.DINGTALK_APP_KEY;
+  if (!robotCode) {
+    throw new Error("未配置 DINGTALK_APP_KEY（机器人单聊 robotCode）");
+  }
+
+  const accessToken = await getAccessToken();
+  const res = await fetch(`${DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-acs-dingtalk-access-token": accessToken,
+    },
+    body: JSON.stringify({
+      robotCode,
+      userIds,
+      msgKey: "sampleMarkdown",
+      msgParam: JSON.stringify({ title, text }),
+    }),
+  });
+
+  if (!res.ok) {
+    throw new Error(`机器人单聊 HTTP 错误: ${res.status} ${res.statusText}`);
+  }
+  const data: any = await res.json();
+  if (data.code) {
+    throw new Error(`机器人单聊发送失败: ${data.message} (${data.code})`);
+  }
+  const invalid: string[] = data.invalidStaffIdList || [];
+  const filtered: string[] = data.filteredStaffIdList || [];
+  if (invalid.length > 0 || filtered.length > 0) {
+    console.warn(
+      `[DingTalk RobotDM] 部分接收人未送达: invalid=${invalid.join(",")} filtered=${filtered.join(",")}`
+    );
+  }
+  if (invalid.length + filtered.length >= userIds.length) {
+    throw new Error("机器人单聊全部接收人未送达");
+  }
+}
+
+/**
+ * 报告推送统一入口：优先走机器人单聊（更显眼），失败回退工作通知。
+ */
+export async function sendReportMessageToUsers(
+  userIds: string[],
+  title: string,
+  text: string
+): Promise<void> {
+  try {
+    await sendRobotMarkdownToUsers(userIds, title, text);
+  } catch (err: any) {
+    console.warn(
+      `[DingTalk RobotDM] 机器人单聊失败，回退工作通知: ${err?.message || err}`
+    );
+    await sendWorkNotificationMarkdown(userIds, title, text);
+  }
+}
+
+/**
  * 计算自定义机器人加签（当配置了 DINGTALK_EXPORT_ROBOT_SECRET 时）。
  */
 export function buildRobotSignedUrl(

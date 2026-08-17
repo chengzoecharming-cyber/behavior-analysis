@@ -1,7 +1,7 @@
 import crypto, { randomUUID } from "crypto";
 import { pool } from "../db";
 import { buildOrgTree, OrgTreeNode } from "./orgService";
-import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat, isWorkNotificationConfigured, sendWorkNotificationMarkdown } from "./dingtalkFile";
+import { buildRobotSignedUrl, getExportConfig, sendMarkdownToDingTalkChat, isWorkNotificationConfigured, sendReportMessageToUsers } from "./dingtalkFile";
 import {
   batchFilterCompanyVisits,
   batchFilterHomeVisits,
@@ -768,6 +768,16 @@ async function exportScopeWithRetry(options: {
  * 附一个其可见的第一层级入口链接（区总→该区日报，部门负责人→部门日报，公司→公司日报），
  * 成员明细进入 wiki 自行查看。
  */
+/** 报告推送通道是否可用：机器人单聊（DINGTALK_APP_KEY）或工作通知（DINGTALK_AGENT_ID）任一即可 */
+function isReportPushConfigured(): boolean {
+  return !!process.env.DINGTALK_APP_KEY || isWorkNotificationConfigured();
+}
+
+/**
+ * 给区总/负责人发一条汇总通知：只报「生成 N 份、成功 X、失败 Y、总拜访 Z 次」，
+ * 附一个其可见的第一层级入口链接（区总→该区日报，部门负责人→部门日报，公司→公司日报），
+ * 成员明细进入 wiki 自行查看。优先机器人单聊，失败回退工作通知。
+ */
 async function sendLeaderDailySummary(params: {
   leaderIds: string[];
   groupName: string;
@@ -775,7 +785,7 @@ async function sendLeaderDailySummary(params: {
   stats: { generated: number; failed: number; totalVisits: number };
   reportUrl?: string;
 }): Promise<void> {
-  if (!isWorkNotificationConfigured()) return;
+  if (!isReportPushConfigured()) return;
   const { leaderIds, groupName, date, stats, reportUrl } = params;
   if (leaderIds.length === 0) {
     console.log(`[Report Gen] ${groupName} 无区总/负责人，跳过汇总推送`);
@@ -791,7 +801,7 @@ async function sendLeaderDailySummary(params: {
     if (reportUrl) {
       lines.push("", `[查看${groupName}日报](${reportUrl})`);
     }
-    await sendWorkNotificationMarkdown(
+    await sendReportMessageToUsers(
       leaderIds,
       `外勤日报-${groupName}-${date}`,
       lines.join("\n")
@@ -808,8 +818,8 @@ async function sendLeaderDailySummary(params: {
 }
 
 /**
- * 个人日报生成后推送钉钉工作通知给本人（拜访数/里程/异常数 + 自己的日报链接）。
- * 0 拜访也推送；发送失败不影响生成结果。
+ * 个人日报生成后推送给本人（拜访数/里程/异常数 + 自己的日报链接）。
+ * 0 拜访也推送；优先机器人单聊，失败回退工作通知；发送失败不影响生成结果。
  */
 async function sendPersonDailyReportNotification(params: {
   userId: string;
@@ -818,7 +828,7 @@ async function sendPersonDailyReportNotification(params: {
   url?: string;
   totals?: ReportGenerationResult["totals"];
 }): Promise<void> {
-  if (!isWorkNotificationConfigured()) return;
+  if (!isReportPushConfigured()) return;
   const { userId, userName, date, url, totals } = params;
   try {
     const title = `外勤日报-${userName}-${date}`;
@@ -832,7 +842,7 @@ async function sendPersonDailyReportNotification(params: {
     if (url) {
       lines.push("", `[查看完整日报](${url})`);
     }
-    await sendWorkNotificationMarkdown([userId], title, lines.join("\n"));
+    await sendReportMessageToUsers([userId], title, lines.join("\n"));
     console.log(`[Report Gen] 已推送日报通知: ${userName}（本人）`);
   } catch (err: any) {
     console.warn(
