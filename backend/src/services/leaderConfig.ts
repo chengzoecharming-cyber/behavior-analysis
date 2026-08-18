@@ -34,7 +34,8 @@ export async function resolveLeaderUserIds(names: string[]): Promise<string[]> {
   if (names.length === 0) return [];
   const userRows = (
     await pool.query(
-      `SELECT user_id, user_name FROM users WHERE user_name = ANY($1::text[])`,
+      // 排除 is_invalid 隐藏账号（如同名脏数据「陈盐」会被重复解析成 2 个接收人）
+      `SELECT user_id, user_name FROM users WHERE user_name = ANY($1::text[]) AND NOT is_invalid`,
       [names]
     )
   ).rows;

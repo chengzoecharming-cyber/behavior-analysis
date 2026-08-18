@@ -2,6 +2,15 @@ import { pool } from "../db";
 import { buildRobotSignedUrl, getExportConfig } from "./dingtalkFile";
 import { getYesterdayBeijing } from "../utils/timezone";
 
+/**
+ * 群自定义机器人若配置了安全关键词，消息内容必须包含该关键词，否则被拒（310000）。
+ * 统一在文本前加【关键词】前缀（与报告群汇总的处理一致）。
+ */
+function withRobotKeyword(text: string): string {
+  const keyword = process.env.DINGTALK_EXPORT_ROBOT_KEYWORD || "";
+  return keyword ? `【${keyword}】${text}` : text;
+}
+
 export type SyncHealthStatus = "healthy" | "warning" | "error";
 
 export interface SyncHealthItem {
@@ -222,7 +231,7 @@ export async function sendSyncAlertToDingTalk(alert: SyncAlert): Promise<void> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       msgtype: "markdown",
-      markdown: { title: "钉钉同步异常告警", text },
+      markdown: { title: "钉钉同步异常告警", text: withRobotKeyword(text) },
     }),
   });
 
@@ -266,7 +275,10 @@ export async function sendSyncAlertsDigestToDingTalk(alerts: SyncAlert[]): Promi
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       msgtype: "markdown",
-      markdown: { title: `钉钉同步异常告警（${alerts.length} 条）`, text: lines.join("\n") },
+      markdown: {
+        title: `钉钉同步异常告警（${alerts.length} 条）`,
+        text: withRobotKeyword(lines.join("\n")),
+      },
     }),
   });
 
@@ -290,7 +302,7 @@ async function sendRobotMarkdown(title: string, text: string): Promise<void> {
   const res = await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ msgtype: "markdown", markdown: { title, text } }),
+    body: JSON.stringify({ msgtype: "markdown", markdown: { title, text: withRobotKeyword(text) } }),
   });
   if (!res.ok) {
     throw new Error(`机器人消息发送失败: HTTP ${res.status} ${res.statusText}`);
