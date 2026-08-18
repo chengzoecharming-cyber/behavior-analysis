@@ -1739,6 +1739,14 @@ async function syncApprovalsInternal(
         const visits = await parseApprovalInstance(instance, ref.processCode);
 
         if (visits.length === 0) {
+          // 已撤销（TERMINATED）的审批单解析出 0 条签到是预期行为，不算解析失败——
+          // 否则它在 3 天同步窗口内每轮都被重复计数，造成每 3 小时一条告警噪音（8/19 案例）
+          if ((instance.status || "") === "TERMINATED") {
+            console.log(
+              `[syncApprovals] 跳过已撤销审批单（0 签到，不计解析失败）: ${ref.id}`
+            );
+            continue;
+          }
           parseFailures++;
           continue;
         }
