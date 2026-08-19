@@ -34,7 +34,7 @@ import {
   ReportType,
 } from "./dingtalkDoc";
 import { Visit, Route } from "../types";
-import { formatBeijingDate, getBeijingWeekday } from "../utils/timezone";
+import { formatBeijingDate, getBeijingWeekday, getYesterdayBeijing } from "../utils/timezone";
 
 const RECENT_DATA_WINDOW_DAYS = 14;
 
@@ -1051,7 +1051,13 @@ async function generateReportsForPeriod(
   const results: ReportGenerationResult[] = [];
   let companyResult: ReportGenerationResult | null = null;
   // 日报推送统计（仅 daily + scheduler 时发送）：按子部门/部门/公司三级聚合
-  const notifyDaily = reportType === "daily" && triggerSource === "scheduler";
+  // 日报推送：仅 manual 不推。scheduler 正常推；catchup 只在补跑「昨天」的日报时推——
+  // 典型场景是 9:00 前部署重启，启动补跑抢先生成了昨天的日报，若 catchup 一律不推，
+  // 9:00 定时任务又会因「已生成」跳过，导致整天无人收到推送（8/19 案例）。
+  const notifyDaily =
+    reportType === "daily" &&
+    (triggerSource === "scheduler" ||
+      (triggerSource === "catchup" && start === getYesterdayBeijing()));
   const companyStats = { generated: 0, failed: 0, totalVisits: 0 };
 
   // 公司维度
