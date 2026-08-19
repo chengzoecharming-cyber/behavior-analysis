@@ -154,7 +154,7 @@ export async function getSyncAlerts(unacknowledgedOnly = true): Promise<SyncAler
             missing_count, duplicate_count,
             started_at, alert_sent
      FROM dingtalk_sync_logs
-     WHERE status = 'failed' OR missing_count > 0 OR duplicate_count > 0 OR parse_failures > 0
+     WHERE (status = 'failed' OR missing_count > 0 OR duplicate_count > 0 OR parse_failures > 0)
      ${status}
      ORDER BY started_at DESC
      LIMIT 100`
