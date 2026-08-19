@@ -388,17 +388,18 @@ export async function sendDailySyncSummary(): Promise<void> {
   );
 }
 
+/**
+ * 每轮同步后的实时群告警已下线（8/19：parse_failures 噪音 + 历史查询 bug 导致告警刷屏，
+ * 运维决定不再实时打扰群）。同步异常照常写入 dingtalk_sync_logs，
+ * 查看入口：「同步健康」页面 + 每天 9:00 的 sendDailySyncSummary 群摘要（一天一条）。
+ * 如需恢复实时群告警，把本函数改回调用 sendSyncAlertsDigestToDingTalk 即可。
+ */
 export async function checkAndSendAlerts(): Promise<SyncAlert[]> {
   const alerts = await getSyncAlerts(true);
-  if (alerts.length === 0) return [];
-
-  // 合并为一条汇总消息发送（机器人限流 20 条/分钟，逐条发会打爆通道）；
-  // 发送失败不标记 alert_sent，下轮重发
-  try {
-    await sendSyncAlertsDigestToDingTalk(alerts);
-    await markAlertsSent(alerts.map((a) => a.id));
-  } catch (err) {
-    console.error(`[syncCheck] 汇总告警发送失败（${alerts.length} 条）:`, err);
+  if (alerts.length > 0) {
+    console.log(
+      `[syncCheck] ${alerts.length} 条未确认同步异常（实时群告警已下线，见同步健康页/每日摘要）`
+    );
   }
   return alerts;
 }
