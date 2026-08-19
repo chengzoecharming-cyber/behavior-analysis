@@ -1739,11 +1739,15 @@ async function syncApprovalsInternal(
         const visits = await parseApprovalInstance(instance, ref.processCode);
 
         if (visits.length === 0) {
-          // 已撤销（TERMINATED）的审批单解析出 0 条签到是预期行为，不算解析失败——
-          // 否则它在 3 天同步窗口内每轮都被重复计数，造成每 3 小时一条告警噪音（8/19 案例）
-          if ((instance.status || "") === "TERMINATED") {
+          // 已撤销（TERMINATED）/进行中（RUNNING）的审批单解析出 0 条签到是预期行为——
+          // 撤销单无有效签到；进行中的单可能还没打卡，由 syncRunningApprovals 跟进。
+          // 计入解析失败会在 3 天同步窗口内每轮重复计数，造成每 3 小时一条告警噪音
+          // （8/19 案例：8-12 撤销单 + 8-18 进行中单轮流触发）。
+          // COMPLETED 仍解析为 0 才是真异常，保留计数告警。
+          const instanceStatus = instance.status || "";
+          if (instanceStatus === "TERMINATED" || instanceStatus === "RUNNING") {
             console.log(
-              `[syncApprovals] 跳过已撤销审批单（0 签到，不计解析失败）: ${ref.id}`
+              `[syncApprovals] 跳过${instanceStatus === "TERMINATED" ? "已撤销" : "进行中"}审批单（0 签到，不计解析失败）: ${ref.id}`
             );
             continue;
           }
