@@ -24,6 +24,7 @@
     "fill:routes": "ts-node scripts/fillMissingRoutes.ts",
     "backfill:visit-exclusion": "ts-node scripts/backfillVisitExclusion.ts",
     "backfill:customer-count": "ts-node scripts/backfillCustomerCount.ts",
+    "alias:sales-channels": "ts-node scripts/addSalesChannelAliases.ts",
     "reparse:approval": "ts-node scripts/reparseApproval.ts"
   },
   "dependencies": {

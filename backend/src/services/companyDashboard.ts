@@ -14,6 +14,10 @@ import {
   computeMileageByApprovalForUsers,
   aggregateMileageByDate,
 } from "./mileageAnalysis";
+import {
+  normalizedPrimaryDeptSql,
+  departmentAliasJoinSql,
+} from "./departmentAliasService";
 
 export interface WeeklyTrendItem {
   week: string; // 展示文案，如 "6.29-7.5"
@@ -313,14 +317,15 @@ export async function computeCompanyDashboard(
       activeEmployees: w.activeEmployees.size,
     }));
 
-  // 3. 员工活跃度词云：只返回有数据的员工
+  // 3. 员工活跃度词云：只返回有数据的员工（部门展示名做查询时归一化）
   const employeeResult = await pool.query(
     `SELECT
        user_id,
        MAX(user_name) AS user_name,
-       MAX(SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1)) AS department,
+       MAX(SPLIT_PART(${normalizedPrimaryDeptSql()}, '-', 1)) AS department,
        COALESCE(SUM(customer_count), 0) AS visit_count
      FROM visits
+     ${departmentAliasJoinSql()}
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
        ${userFilter}
@@ -357,7 +362,8 @@ export async function computeCompanyDashboard(
     anomalyCount: anomalyCountMap.get(row.user_id) || 0,
   }));
 
-  // 4. 部门雷达：只对比销售部下的四个指定子部门
+  // 4. 部门雷达：只对比销售部下的四个指定子部门（部门名查询时归一化，
+  //    「销售渠道-江苏区域」等原始名并入对应销售部子部门）
   const radarParams = [
     ...params,
     "销售部",
@@ -365,17 +371,19 @@ export async function computeCompanyDashboard(
   ];
   const parentIdx = params.length + 1;
   const subIdx = params.length + 2;
+  const normDept = normalizedPrimaryDeptSql();
   const departmentResult = await pool.query(
     `SELECT
-       SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) AS dept_name,
+       SPLIT_PART(${normDept}, '-', 2) AS dept_name,
        COALESCE(SUM(customer_count), 0) AS visit_count,
        COUNT(DISTINCT user_id) AS employee_count
      FROM visits
+     ${departmentAliasJoinSql()}
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
        ${userFilter}
-       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) = $${parentIdx}
-       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) = ANY($${subIdx}::text[])
+       AND SPLIT_PART(${normDept}, '-', 1) = $${parentIdx}
+       AND SPLIT_PART(${normDept}, '-', 2) = ANY($${subIdx}::text[])
      GROUP BY dept_name
      ORDER BY visit_count DESC`,
     radarParams
@@ -384,15 +392,16 @@ export async function computeCompanyDashboard(
   // 各部门客户覆盖数：多客户名拆开去重（单独查询避免 LATERAL 展开影响聚合行数）
   const deptCustomerResult = await pool.query(
     `SELECT DISTINCT
-       SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) AS dept_name,
+       SPLIT_PART(${normDept}, '-', 2) AS dept_name,
        customer_name
      FROM visits
+     ${departmentAliasJoinSql()}
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
        AND customer_name IS NOT NULL AND customer_name <> ''
        ${userFilter}
-       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) = $${parentIdx}
-       AND SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 2) = ANY($${subIdx}::text[])`,
+       AND SPLIT_PART(${normDept}, '-', 1) = $${parentIdx}
+       AND SPLIT_PART(${normDept}, '-', 2) = ANY($${subIdx}::text[])`,
     radarParams
   );
   const deptCustomerMap = new Map<string, Set<string>>();
@@ -405,19 +414,21 @@ export async function computeCompanyDashboard(
     for (const n of splitCustomerNames(row.customer_name)) set.add(n);
   }
 
-  // 各部门估算里程（按 route 去重，避免 join visits 后重复计算）
+  // 各部门估算里程（按 route 去重，避免 join visits 后重复计算；部门名查询时归一化）
+  const normDeptV = normalizedPrimaryDeptSql("v.department");
   const deptMileageResult = await pool.query(
     `WITH route_dept AS (
        SELECT DISTINCT
          r.id,
          r.distance_km,
-         SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 2) AS dept_name
+         SPLIT_PART(${normDeptV}, '-', 2) AS dept_name
        FROM routes r
        JOIN visits v ON r.user_id = v.user_id AND r.business_date = v.business_date
+       ${departmentAliasJoinSql("v.department")}
        WHERE v.business_date >= $1::date AND v.business_date <= $2::date
          ${joinUserFilter}
-         AND SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 1) = $${parentIdx}
-         AND SPLIT_PART(SPLIT_PART(v.department, ',', 1), '-', 2) = ANY($${subIdx}::text[])
+         AND SPLIT_PART(${normDeptV}, '-', 1) = $${parentIdx}
+         AND SPLIT_PART(${normDeptV}, '-', 2) = ANY($${subIdx}::text[])
      )
      SELECT dept_name, COALESCE(SUM(distance_km), 0) AS estimated_km
      FROM route_dept

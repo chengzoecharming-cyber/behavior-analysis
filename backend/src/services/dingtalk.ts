@@ -5,6 +5,10 @@ import { parseDateTimeAsBeijing, formatBeijingDate, toBeijingDayStart, toBeijing
 import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { recomputeDerivedDataForVisits } from "./derivedComputation";
 import { OrgTreeNode, isExcludedTopDepartment } from "./orgService";
+import {
+  loadDepartmentAliasMap,
+  normalizePrimaryDepartment,
+} from "./departmentAliasService";
 import crypto from "crypto";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
@@ -686,64 +690,105 @@ export async function getDingTalkOrgUsers(): Promise<DingTalkOrgUser[]> {
   }));
 }
 
+/**
+ * 构建钉钉组织架构树（级联选择器数据源）。
+ * 部门路径先按 department_aliases 做查询时归一化：
+ * 挂在「销售渠道-华南区域」等顶层渠道部门下的销售，会被归一化补挂到
+ * 「销售部-华南一部」等主部门节点下（原始缓存表不改）。
+ */
 export async function buildDingTalkOrgTree(): Promise<OrgTreeNode[]> {
-  const [deptResult, userResult] = await Promise.all([
+  const [deptResult, userResult, aliasMap] = await Promise.all([
     pool.query(`SELECT dept_id, parent_id, name FROM dingtalk_departments ORDER BY dept_id`),
     pool.query(`SELECT userid, source_dept_id FROM dingtalk_users`),
+    loadDepartmentAliasMap(),
   ]);
 
-  const deptMap = new Map<number, OrgTreeNode>();
-  const childrenMap = new Map<number, number[]>();
-
+  // 每个部门的原始完整路径（沿 parent_id 上溯拼接，如「销售渠道-华南区域」）
+  const deptById = new Map<number, { name: string; parentId: number | null }>();
   for (const row of deptResult.rows) {
-    const deptId = parseInt(row.dept_id, 10);
-    const parentId = row.parent_id ? parseInt(row.parent_id, 10) : null;
-    deptMap.set(deptId, {
-      name: row.name,
-      shortName: row.name,
-      level: 0,
-      children: [],
-      userIds: [],
+    deptById.set(parseInt(row.dept_id, 10), {
+      name: String(row.name),
+      parentId: row.parent_id ? parseInt(row.parent_id, 10) : null,
     });
-    if (parentId) {
-      const siblings = childrenMap.get(parentId) || [];
-      siblings.push(deptId);
-      childrenMap.set(parentId, siblings);
-    }
   }
 
-  for (const row of userResult.rows) {
-    const sourceDeptId = parseInt(row.source_dept_id, 10);
-    const node = deptMap.get(sourceDeptId);
-    if (node) {
-      node.userIds = node.userIds || [];
-      node.userIds.push(row.userid);
+  const rawPathCache = new Map<number, string>();
+  const rawPathOf = (deptId: number): string => {
+    const cached = rawPathCache.get(deptId);
+    if (cached !== undefined) return cached;
+    const segments: string[] = [];
+    let current: number | null = deptId;
+    // 防御环：最多上溯 10 层
+    for (let depth = 0; current !== null && depth < 10; depth++) {
+      const dept = deptById.get(current);
+      if (!dept) break;
+      segments.unshift(dept.name);
+      current = dept.parentId;
     }
-  }
-
-  const buildNode = (deptId: number, level: number): OrgTreeNode | null => {
-    const node = deptMap.get(deptId);
-    if (!node) return null;
-    node.level = level;
-    const childIds = childrenMap.get(deptId) || [];
-    for (const childId of childIds) {
-      const child = buildNode(childId, level + 1);
-      if (child) node.children.push(child);
-    }
-    return node;
+    const path = segments.join("-");
+    rawPathCache.set(deptId, path);
+    return path;
   };
 
-  const roots: OrgTreeNode[] = [];
-  for (const row of deptResult.rows) {
-    const deptId = parseInt(row.dept_id, 10);
-    const parentId = row.parent_id ? parseInt(row.parent_id, 10) : null;
-    if (!parentId || parentId === 1 || !deptMap.has(parentId)) {
-      const root = buildNode(deptId, 1);
-      if (root) roots.push(root);
+  // 归一化路径（销售渠道-X区域 → 销售部-主部门；未命中别名保持原路径）
+  const normPathOf = (deptId: number): string =>
+    normalizePrimaryDepartment(rawPathOf(deptId), aliasMap);
+
+  // 按归一化路径重建两层树：第一段为父部门，其余为子部门（前端级联选择器只消费两层）
+  const roots = new Map<string, OrgTreeNode>();
+  const nodeByPath = new Map<string, OrgTreeNode>();
+
+  const ensureNode = (path: string): OrgTreeNode => {
+    const existing = nodeByPath.get(path);
+    if (existing) return existing;
+
+    const sepIdx = path.indexOf("-");
+    if (sepIdx === -1) {
+      const root: OrgTreeNode = {
+        name: path,
+        shortName: path,
+        level: 1,
+        children: [],
+        userIds: [],
+      };
+      roots.set(path, root);
+      nodeByPath.set(path, root);
+      return root;
     }
+
+    const rootName = path.slice(0, sepIdx);
+    const root = ensureNode(rootName);
+    const child: OrgTreeNode = {
+      name: path.slice(sepIdx + 1),
+      shortName: path.slice(sepIdx + 1),
+      level: 2,
+      children: [],
+      userIds: [],
+    };
+    root.children.push(child);
+    nodeByPath.set(path, child);
+    return child;
+  };
+
+  // 先建部门节点（含暂无人员的部门，保持树的完整展示）
+  for (const deptId of deptById.keys()) {
+    ensureNode(normPathOf(deptId));
   }
 
-  return roots;
+  // 再把用户挂到其 source 部门的归一化路径节点上
+  for (const row of userResult.rows) {
+    if (!row.source_dept_id) continue;
+    const sourceDeptId = parseInt(row.source_dept_id, 10);
+    if (!deptById.has(sourceDeptId)) continue;
+    const node = ensureNode(normPathOf(sourceDeptId));
+    node.userIds!.push(row.userid);
+  }
+
+  const sorted = Array.from(roots.values());
+  for (const root of sorted) {
+    root.children.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
+  }
+  return sorted.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
 }
 
 export async function getApprovalInstances(

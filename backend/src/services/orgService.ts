@@ -3,6 +3,12 @@ import { MAX_MILEAGE_KM } from "./mileageConfig";
 import { formatBeijingDate } from "../utils/timezone";
 import { splitCustomerNames } from "./normalization";
 import {
+  loadDepartmentAliasMap,
+  normalizePrimaryDepartment,
+  normalizedPrimaryDeptSql,
+  departmentAliasJoinSql,
+} from "./departmentAliasService";
+import {
   computeMileageByApprovalForUsers,
   aggregateMileageByUser,
   aggregateMileageByDate,
@@ -40,7 +46,7 @@ export function isExcludedTopDepartment(name: string): boolean {
  * - 当前部门树从 visits.department 字段解析得到（如 "销售部-华东宁波"）
  * - "-" 前面的部分作为父部门，后面作为子部门
  * - 没有 "-" 的部门作为叶子节点
- * - 用户归属取其历史拜访记录中最常出现的叶子部门
+ * - 用户归属取其历史拜访记录中最常出现的叶子部门（部门名按 department_aliases 查询时归一化）
  */
 
 export interface OrgTreeNode {
@@ -109,14 +115,19 @@ export interface OrgOverviewResult {
 
 /**
  * 从 visits.department 解析出所有部门节点，并构建成树。
+ * 部门第一段先按 department_aliases 做查询时归一化（销售渠道-X区域 → 销售部-主部门），
+ * 归一化后「销售渠道」等黑名单顶层自然不再命中。
  */
 export async function buildOrgTree(): Promise<OrgTreeNode[]> {
-  const result = await pool.query(
-    `SELECT DISTINCT department
-     FROM visits
-     WHERE department IS NOT NULL AND department <> ''
-     ORDER BY department`
-  );
+  const [result, aliasMap] = await Promise.all([
+    pool.query(
+      `SELECT DISTINCT department
+       FROM visits
+       WHERE department IS NOT NULL AND department <> ''
+       ORDER BY department`
+    ),
+    loadDepartmentAliasMap(),
+  ]);
 
   const roots = new Map<string, OrgTreeNode>();
 
@@ -124,9 +135,10 @@ export async function buildOrgTree(): Promise<OrgTreeNode[]> {
     const raw = String(row.department).trim();
     if (!raw) continue;
 
-    // 处理逗号分隔的多部门：取第一个作为主业部门
-    const primary = raw.split(",")[0].trim();
-    if (!primary) continue;
+    // 处理逗号分隔的多部门：取第一个作为主业部门，并做查询时归一化
+    const primaryRaw = raw.split(",")[0].trim();
+    if (!primaryRaw) continue;
+    const primary = normalizePrimaryDepartment(primaryRaw, aliasMap);
 
     const segments = primary.split("-");
 
@@ -185,18 +197,20 @@ export async function buildOrgTree(): Promise<OrgTreeNode[]> {
 
 /**
  * 根据部门节点路径获取归属的用户ID列表（精确匹配叶子节点）。
- * 用户归属：取该用户在 visits 中最常出现的叶子部门。
+ * 用户归属：取该用户在 visits 中最常出现的叶子部门（部门名先做查询时归一化，
+ * 避免「销售渠道-华南区域」与「销售部-华南一部」原始名分裂导致多数派归错部门）。
  */
 async function getUserIdsByOrgNode(nodeName: string): Promise<string[]> {
   const result = await pool.query(
     `WITH user_primary_dept AS (
        SELECT user_id,
-              SPLIT_PART(department, ',', 1) AS primary_dept,
+              ${normalizedPrimaryDeptSql()} AS primary_dept,
               COUNT(*) AS cnt,
               ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC) AS rn
        FROM visits
+       ${departmentAliasJoinSql()}
        WHERE department IS NOT NULL AND department <> ''
-       GROUP BY user_id, SPLIT_PART(department, ',', 1)
+       GROUP BY user_id, ${normalizedPrimaryDeptSql()}
      )
      SELECT user_id
      FROM user_primary_dept
@@ -214,12 +228,13 @@ export async function getUserIdsUnderNode(nodeName: string): Promise<string[]> {
   const result = await pool.query(
     `WITH user_primary_dept AS (
        SELECT user_id,
-              SPLIT_PART(department, ',', 1) AS primary_dept,
+              ${normalizedPrimaryDeptSql()} AS primary_dept,
               COUNT(*) AS cnt,
               ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC) AS rn
        FROM visits
+       ${departmentAliasJoinSql()}
        WHERE department IS NOT NULL AND department <> ''
-       GROUP BY user_id, SPLIT_PART(department, ',', 1)
+       GROUP BY user_id, ${normalizedPrimaryDeptSql()}
      )
      SELECT user_id
      FROM user_primary_dept
@@ -517,13 +532,14 @@ async function computeRanking(
   userIds: string[]
 ): Promise<OrgRankingItem[]> {
   if (scope === "company") {
-    // 按父部门分组；过滤白名单，并强制保留销售部
+    // 按父部门分组（部门名查询时归一化）；过滤白名单，并强制保留销售部
     const result = await pool.query(
       `SELECT
-         SPLIT_PART(SPLIT_PART(department, ',', 1), '-', 1) AS dept_name,
+         SPLIT_PART(${normalizedPrimaryDeptSql()}, '-', 1) AS dept_name,
          COALESCE(SUM(customer_count), 0) AS visit_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
+       ${departmentAliasJoinSql()}
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND user_id = ANY($3)
          AND NOT exclude_from_visit_count
@@ -582,17 +598,18 @@ async function computeRanking(
       const salesSubDepts = await getSalesSubDepartments();
       const fullSubDeptNames = salesSubDepts.map((n) => `${SALES_DEPARTMENT_NAME}-${n}`);
 
-      // 查询这些子部门在日期范围内的实际数据
+      // 查询这些子部门在日期范围内的实际数据（部门名查询时归一化，销售渠道-X区域 并入主部门）
       const result = await pool.query(
         `SELECT
-           SPLIT_PART(department, ',', 1) AS sub_dept_name,
+           ${normalizedPrimaryDeptSql()} AS sub_dept_name,
            COALESCE(SUM(customer_count), 0) AS visit_count,
            COUNT(DISTINCT user_id) AS employee_count
          FROM visits
+         ${departmentAliasJoinSql()}
          WHERE business_date >= $1::date AND business_date <= $2::date
            AND user_id = ANY($3)
            AND NOT exclude_from_visit_count
-           AND SPLIT_PART(department, ',', 1) LIKE $4 || '-%'
+           AND ${normalizedPrimaryDeptSql()} LIKE $4 || '-%'
          GROUP BY sub_dept_name
          ORDER BY visit_count DESC`,
         [startDate, endDate, userIds, nodeName]
@@ -628,17 +645,18 @@ async function computeRanking(
       });
     }
 
-    // 其它父部门：仅展示有数据的子部门
+    // 其它父部门：仅展示有数据的子部门（部门名查询时归一化）
     const result = await pool.query(
       `SELECT
-         SPLIT_PART(department, ',', 1) AS sub_dept_name,
+         ${normalizedPrimaryDeptSql()} AS sub_dept_name,
          COALESCE(SUM(customer_count), 0) AS visit_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
+       ${departmentAliasJoinSql()}
        WHERE business_date >= $1::date AND business_date <= $2::date
          AND user_id = ANY($3)
          AND NOT exclude_from_visit_count
-         AND SPLIT_PART(department, ',', 1) LIKE $4 || '-%'
+         AND ${normalizedPrimaryDeptSql()} LIKE $4 || '-%'
        GROUP BY sub_dept_name
        ORDER BY visit_count DESC`,
       [startDate, endDate, userIds, nodeName]

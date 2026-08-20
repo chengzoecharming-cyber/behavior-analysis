@@ -1,5 +1,9 @@
 import { pool } from "../db";
 import { syncContacts } from "./dingtalk";
+import {
+  normalizedPrimaryDeptSql,
+  departmentAliasJoinSql,
+} from "./departmentAliasService";
 
 /**
  * 用户同步对账服务
@@ -96,19 +100,21 @@ interface ReconcilePlan {
 
 /**
  * 从 visits 取每个 user_id 的「最常出现的 primary department」（与 orgService 的
- * user_primary_dept CTE 口径一致：SPLIT_PART(department, ',', 1)，ROW_NUMBER 取 cnt 最大的），
- * 以及最近一次出现的 user_name。
+ * user_primary_dept CTE 口径一致：第一段部门名先按 department_aliases 查询时归一化，
+ * ROW_NUMBER 取 cnt 最大的；归一化避免「销售渠道-华南区域」与「销售部-华南一部」
+ * 原始名分裂导致多数派归错部门），以及最近一次出现的 user_name。
  */
 async function fetchVisitUsers(): Promise<VisitUserAgg[]> {
   const result = await pool.query(
     `WITH dept_ranked AS (
        SELECT user_id,
-              SPLIT_PART(department, ',', 1) AS primary_dept,
+              ${normalizedPrimaryDeptSql()} AS primary_dept,
               COUNT(*) AS cnt,
               ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY COUNT(*) DESC) AS rn
        FROM visits
+       ${departmentAliasJoinSql()}
        WHERE department IS NOT NULL AND department <> ''
-       GROUP BY user_id, SPLIT_PART(department, ',', 1)
+       GROUP BY user_id, ${normalizedPrimaryDeptSql()}
      ),
      latest_name AS (
        SELECT DISTINCT ON (user_id) user_id, user_name

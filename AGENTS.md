@@ -80,7 +80,8 @@ map/
 │   │   ├── refreshRiskCache.ts           # 手动刷新风险摘要缓存
 │   │   ├── backfillVisitExclusion.ts     # 回填 visits.exclude_from_visit_count（拜访次数排除住址/公司地址，--dry 预览）
 │   │   ├── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
-│   │   └── reparseApproval.ts        # 销售修改钉钉表单后重录指定审批单（重拉实例→重解析替换 visits→重算派生数据，--dry 预览）
+│   │   ├── reparseApproval.ts        # 销售修改钉钉表单后重录指定审批单（重拉实例→重解析替换 visits→重算派生数据，--dry 预览）
+│   │   └── addSalesChannelAliases.ts # 销售渠道-X区域 → 销售部主部门 别名归一化配置（幂等，npm run alias:sales-channels）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
 │   ├── Dockerfile
@@ -514,6 +515,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 - `backend/schema.sql` 与 `backend/src/db.ts` 不同步，实际 schema 以 `db.ts` 为准。
 - 权限系统已完成收口（见「认证方式」章节）：核心接口均按角色过滤数据，越权返回 403。
 - 部门名称通过 `department_aliases` 表规范化，当前有 10 个规范部门/分组。
+- **部门归一化（查询时生效，不回填数据）**：部分销售挂在钉钉「销售渠道-华南区域 / 销售渠道-江苏区域 / 销售渠道-浙江区域」顶层渠道部门下，业务主部门是「销售部-华南一部 / 华东昆山 / 华东宁波」。`visits.department` 保留原始值，所有组织归属/聚合/级联选择器口径在查询时归一化：第一段部门名命中 `department_aliases` 且 `canonical_name` 非空时，映射为「销售部-canonical」（canonical 本身含 `-` 则原样），否则保持原始第一段。统一入口在 `departmentAliasService.ts`（JS 侧 `normalizePrimaryDepartment` + `loadDepartmentAliasMap`，SQL 侧 `normalizedPrimaryDeptSql` + `departmentAliasJoinSql`）；`orgService`（组织树/归属多数派/排行榜分组）、`userSyncService.fetchVisitUsers`（users.department 归属）、`companyDashboard`（词云/雷达）、`buildDingTalkOrgTree`（级联选择器树，归一化后补挂到主部门节点）均走该口径。「销售渠道」顶层黑名单（`EXCLUDED_TOP_DEPARTMENTS`）继续保留，归一化后自然不再命中。别名配置脚本：`cd backend && npm run alias:sales-channels`（幂等写入三条 销售渠道-X区域 → 主部门 映射）。纯查询时归一化，改别名配置不需要重算派生数据。
 - 风险摘要缓存策略：历史日期优先读 `risk_summary_cache`，今天及以后实时计算。
 - 钉钉表单中的 `累计里程N` 是截至本次签到的累计值，系统统计时应按 `approval_id` 取 `MAX(reported_distance_km)`，不能直接 `SUM`。
 - 路线计算已按 `approval_id` 分组，控制台地图支持按审批单切换视图。
