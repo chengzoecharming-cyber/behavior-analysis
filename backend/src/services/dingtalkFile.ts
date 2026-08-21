@@ -4,6 +4,9 @@ import path from "path";
 import { getAccessToken } from "./dingtalk";
 
 const DINGTALK_API_BASE = "https://oapi.dingtalk.com";
+// 新版 API（/v1.0/robot/oToMessages/batchSend 等）必须走 api.dingtalk.com；
+// 打到 oapi.dingtalk.com 会返回 HTTP 200 + {"errcode":404}，不会真实发送（2026-08-21 假成功事故）
+const DINGTALK_NEW_API_BASE = "https://api.dingtalk.com";
 
 export interface DingTalkFileSendConfig {
   chatId: string;
@@ -249,7 +252,7 @@ export async function sendRobotMarkdownToUsers(
   }
 
   const accessToken = await getAccessToken();
-  const res = await fetch(`${DINGTALK_API_BASE}/v1.0/robot/oToMessages/batchSend`, {
+  const res = await fetch(`${DINGTALK_NEW_API_BASE}/v1.0/robot/oToMessages/batchSend`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -267,8 +270,11 @@ export async function sendRobotMarkdownToUsers(
     throw new Error(`机器人单聊 HTTP 错误: ${res.status} ${res.statusText}`);
   }
   const data: any = await res.json();
-  if (data.code) {
-    throw new Error(`机器人单聊发送失败: ${data.message} (${data.code})`);
+  // 同时检查新版 code 与旧版 errcode，防止域名/路径打错时 HTTP 200 假成功
+  if (data.code || (typeof data.errcode === "number" && data.errcode !== 0)) {
+    throw new Error(
+      `机器人单聊发送失败: ${data.message || data.errmsg} (${data.code ?? data.errcode})`
+    );
   }
   const invalid: string[] = data.invalidStaffIdList || [];
   const filtered: string[] = data.filteredStaffIdList || [];
