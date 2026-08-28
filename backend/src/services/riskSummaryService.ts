@@ -225,6 +225,7 @@ export async function computeRiskSummaryForDate(
     `SELECT DISTINCT user_id, user_name, department
      FROM visits
      WHERE business_date = $1::date
+       AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)
      ORDER BY department, user_name`,
     [dateStr]
   );

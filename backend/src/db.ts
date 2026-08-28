@@ -259,6 +259,8 @@ export async function initDB(): Promise<void> {
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_super_admin BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS leader_dept_ids BIGINT[] DEFAULT '{}';
       ALTER TABLE users ADD COLUMN IF NOT EXISTS is_invalid BOOLEAN NOT NULL DEFAULT false;
+      -- 统计排除标记：可登录、仅看自己控制台，不纳入任何公司/部门统计与组织树
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS exclude_from_stats BOOLEAN NOT NULL DEFAULT false;
       ALTER TABLE users ADD COLUMN IF NOT EXISTS home_address TEXT;
       -- 住址坐标（导入住址 Excel 时一次性地理编码持久化，报告/异常检测运行时不再实时解析）
       ALTER TABLE users ADD COLUMN IF NOT EXISTS home_lat DOUBLE PRECISION;

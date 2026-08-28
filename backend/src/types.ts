@@ -141,6 +141,8 @@ export interface User {
   role: "admin" | "manager" | "staff";
   manager_id: number | null;
   is_resigned: boolean;
+  /** 统计排除标记：全系统聚合口径排除，仅本人控制台可见 */
+  exclude_from_stats?: boolean;
   home_address: string | null;
   created_at: Date;
 }

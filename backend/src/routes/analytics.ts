@@ -302,6 +302,7 @@ router.get("/mileage-distribution", authMiddleware, async (req: AuthRequest, res
       `SELECT * FROM visits
        WHERE business_date >= ($1::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
          AND business_date <= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)
        ORDER BY user_id, timestamp ASC`,
       [rangeStart, rangeEnd]
     );

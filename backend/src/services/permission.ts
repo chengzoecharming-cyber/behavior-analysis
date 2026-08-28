@@ -10,18 +10,19 @@ import { pool } from "../db";
  * - admin：返回 null，表示不过滤（全部数据）。
  * - manager（区总/部门负责人）：可见范围由 users.department 自动决定——
  *   '销售部' → 整个部门含子部门；'销售部-华东昆山' → 仅该子部门；
- *   department 为空时仅自己。始终 ∪ 自己 ∪ (全部 admin − 嵌入式 leader admin)。
- * - staff：自己 ∪ (全部 admin − 嵌入式 leader admin) ∪ 本区 leader（见 getDistrictLeaderIds）。
+ *   department 为空时仅自己。始终 ∪ 自己 ∪ (全部 admin − 嵌入式 leader admin − exclude_from_stats 用户)。
+ * - staff：自己 ∪ (全部 admin − 嵌入式 leader admin − exclude_from_stats 用户) ∪ 本区 leader（见 getDistrictLeaderIds）。
  *   普通成员之间互不可见，区总（manager）之间互不可见。
  * - 「管理相对透明」：role='admin' 的用户数据默认对全员可见（含离职者的历史数据），
  *   但被 REPORT_DEPT_LEADERS 配置为子部门/部门 leader 的 admin（如李朝晖=华南一部）除外——
  *   他们按 leader 处理，数据仅本区下属与 admin 可见。
  */
 
-/** 全部 admin 的 user_id（admin 数据对全员可见，不按 is_resigned 过滤） */
+/** 全部 admin 的 user_id（admin 数据对全员可见，不按 is_resigned 过滤；
+ *  exclude_from_stats 用户除外——他们可看全部数据，但自己的数据仅自查，不对 staff/manager 开放） */
 async function getAdminUserIds(): Promise<string[]> {
   const res = await pool.query<{ user_id: string }>(
-    `SELECT user_id FROM users WHERE role = 'admin'`
+    `SELECT user_id FROM users WHERE role = 'admin' AND NOT exclude_from_stats`
   );
   return res.rows.map((r) => r.user_id);
 }

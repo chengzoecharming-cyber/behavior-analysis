@@ -66,6 +66,8 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
       baseParams.push(`%${department}%`);
     }
 
+    // exclude_from_stats 用户不进入任何区域聚合统计
+    const excludeStatsSql = `AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)`;
 
     // 1. 总拜访数、员工数、不重复地点数
     const overviewResult = await pool.query(
@@ -78,6 +80,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
          AND NOT exclude_from_visit_count
+         ${excludeStatsSql}
          ${departmentFilter}`,
       baseParams
     );
@@ -93,6 +96,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
          AND NOT exclude_from_visit_count
+         ${excludeStatsSql}
          ${departmentFilter}
        GROUP BY department
        ORDER BY visit_count DESC`,
@@ -114,6 +118,7 @@ router.get("/regional-overview", authMiddleware, async (req: AuthRequest, res: R
          AND lat IS NOT NULL AND lng IS NOT NULL
          AND (lat <> 0 OR lng <> 0)
          AND NOT exclude_from_visit_count
+         ${excludeStatsSql}
          ${departmentFilter}
        GROUP BY lat, lng
        ORDER BY count DESC`,

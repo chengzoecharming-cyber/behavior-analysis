@@ -85,6 +85,7 @@ interface ExistingUserRow {
   role: string;
   is_resigned: boolean;
   is_invalid: boolean;
+  exclude_from_stats: boolean;
 }
 
 interface ReconcilePlan {
@@ -136,7 +137,7 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
   const [visitUsers, existingUsers, contacts, recentActive] = await Promise.all([
     fetchVisitUsers(),
     pool.query<ExistingUserRow>(
-      `SELECT user_id, user_name, department, role, is_resigned, is_invalid FROM users`
+      `SELECT user_id, user_name, department, role, is_resigned, is_invalid, exclude_from_stats FROM users`
     ),
     pool.query(`SELECT userid, name FROM dingtalk_users`),
     // 近期活跃：近 N 天有签到记录的人不自动标离职（防通讯录可见范围缺失等误伤）
@@ -184,6 +185,10 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
     if (!existing) {
       if (!isInWhitelist(vu.primary_dept)) continue;
       plan.added.push({ user_id: vu.user_id, user_name: name, department: vu.primary_dept });
+    } else if (existing.exclude_from_stats) {
+      // 统计排除用户：对账完全不干预（不覆盖姓名/部门、不置 is_invalid、不标离职），
+      // 防止「渠道及销售管理部」这类白名单外部门被每晚置 is_invalid 导致无法登录
+      continue;
     } else if (canUpdateExisting && (existing.user_name !== name || existing.department !== vu.primary_dept)) {
       plan.updated.push({ user_id: vu.user_id, user_name: name, department: vu.primary_dept });
     }
@@ -194,7 +199,7 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
   // 部门以本次对账更新后的值为准
   const updatedDeptMap = new Map(plan.updated.map((u) => [u.user_id, u.department]));
   for (const u of existingUsers.rows) {
-    if (u.role === "admin") continue;
+    if (u.role === "admin" || u.exclude_from_stats) continue;
     const effectiveDept = updatedDeptMap.has(u.user_id)
       ? updatedDeptMap.get(u.user_id)!
       : u.department;
@@ -207,7 +212,7 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
   if (contactsSynced) {
     const contactIds = new Set(contacts.rows.map((r) => r.userid));
     for (const u of existingUsers.rows) {
-      if (u.role === "admin") continue;
+      if (u.role === "admin" || u.exclude_from_stats) continue;
       const inContacts = contactIds.has(u.user_id);
       if (!inContacts && !u.is_resigned) {
         // 防误伤：近期活跃的人跳过标记，单独列出供人工复核

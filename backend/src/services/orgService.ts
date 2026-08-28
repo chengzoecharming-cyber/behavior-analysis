@@ -124,6 +124,7 @@ export async function buildOrgTree(): Promise<OrgTreeNode[]> {
       `SELECT DISTINCT department
        FROM visits
        WHERE department IS NOT NULL AND department <> ''
+         AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)
        ORDER BY department`
     ),
     loadDepartmentAliasMap(),
@@ -210,6 +211,7 @@ async function getUserIdsByOrgNode(nodeName: string): Promise<string[]> {
        FROM visits
        ${departmentAliasJoinSql()}
        WHERE department IS NOT NULL AND department <> ''
+         AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)
        GROUP BY user_id, ${normalizedPrimaryDeptSql()}
      )
      SELECT user_id
@@ -234,6 +236,7 @@ export async function getUserIdsUnderNode(nodeName: string): Promise<string[]> {
        FROM visits
        ${departmentAliasJoinSql()}
        WHERE department IS NOT NULL AND department <> ''
+         AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)
        GROUP BY user_id, ${normalizedPrimaryDeptSql()}
      )
      SELECT user_id
@@ -325,7 +328,9 @@ export async function resolveUserIdsForScope(
 ): Promise<string[]> {
   if (scope === "company" || nodeName === "__ALL__") {
     const result = await pool.query(
-      `SELECT DISTINCT user_id FROM visits WHERE user_id IS NOT NULL AND user_id <> ''`
+      `SELECT DISTINCT user_id FROM visits
+       WHERE user_id IS NOT NULL AND user_id <> ''
+         AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)`
     );
     return result.rows.map((r) => r.user_id);
   }

@@ -134,6 +134,9 @@ export async function computeCompanyDashboard(
     userFilter = `AND user_id = ANY($${params.length})`;
   }
   const joinUserFilter = userFilter.replace(/user_id/g, "v.user_id");
+  // exclude_from_stats 用户不进入任何公司/部门聚合统计
+  const excludeStatsSql = `AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)`;
+  const excludeStatsSqlV = `AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = v.user_id AND ux.exclude_from_stats)`;
 
   // 1. 汇总指标
   const summaryResult = await pool.query(
@@ -143,6 +146,7 @@ export async function computeCompanyDashboard(
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        ${userFilter}`,
     params
   );
@@ -153,6 +157,7 @@ export async function computeCompanyDashboard(
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        AND customer_name IS NOT NULL AND customer_name <> ''
        ${userFilter}`,
     params
@@ -194,6 +199,7 @@ export async function computeCompanyDashboard(
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        ${userFilter}
      GROUP BY business_date
      ORDER BY business_date`,
@@ -213,6 +219,7 @@ export async function computeCompanyDashboard(
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        ${userFilter}
      GROUP BY business_date, user_id`,
     params
@@ -229,6 +236,7 @@ export async function computeCompanyDashboard(
   const mileageUserIdsResult = await pool.query(
     `SELECT DISTINCT user_id FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
+       ${excludeStatsSql}
        ${userFilter}`,
     params
   );
@@ -328,6 +336,7 @@ export async function computeCompanyDashboard(
      ${departmentAliasJoinSql()}
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        ${userFilter}
      GROUP BY user_id
      ORDER BY visit_count DESC`,
@@ -381,6 +390,7 @@ export async function computeCompanyDashboard(
      ${departmentAliasJoinSql()}
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        ${userFilter}
        AND SPLIT_PART(${normDept}, '-', 1) = $${parentIdx}
        AND SPLIT_PART(${normDept}, '-', 2) = ANY($${subIdx}::text[])
@@ -398,6 +408,7 @@ export async function computeCompanyDashboard(
      ${departmentAliasJoinSql()}
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND NOT exclude_from_visit_count
+       ${excludeStatsSql}
        AND customer_name IS NOT NULL AND customer_name <> ''
        ${userFilter}
        AND SPLIT_PART(${normDept}, '-', 1) = $${parentIdx}
@@ -426,6 +437,7 @@ export async function computeCompanyDashboard(
        JOIN visits v ON r.user_id = v.user_id AND r.business_date = v.business_date
        ${departmentAliasJoinSql("v.department")}
        WHERE v.business_date >= $1::date AND v.business_date <= $2::date
+         ${excludeStatsSqlV}
          ${joinUserFilter}
          AND SPLIT_PART(${normDeptV}, '-', 1) = $${parentIdx}
          AND SPLIT_PART(${normDeptV}, '-', 2) = ANY($${subIdx}::text[])
