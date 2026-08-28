@@ -96,6 +96,18 @@ function DecisionPage() {
 
   const [start, end] = useMemo(() => getPresetRange(mode), [mode]);
 
+  // 趋势图粒度：短时间范围（本周/上周/过去两周，≤14 天）按天展示，
+  // 避免时间范围内只有一个周桶导致趋势图只剩一个点
+  const trendData = useMemo(() => {
+    if (!data) return [];
+    const DAY_GRANULARITY_MAX_DAYS = 14;
+    const spanDays =
+      Math.round(
+        (new Date(end).getTime() - new Date(start).getTime()) / (24 * 3600 * 1000)
+      ) + 1;
+    return spanDays <= DAY_GRANULARITY_MAX_DAYS ? data.dailyTrend : data.weeklyTrend;
+  }, [data, start, end]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -225,29 +237,29 @@ function DecisionPage() {
             </Col>
           </Row>
 
-          {/* Weekly Trend: Visits + Mileage */}
+          {/* Trend: Visits + Mileage（≤14 天按日粒度，更长按周粒度） */}
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={12}>
               <Card
-                title="周拜访趋势"
+                title="拜访趋势"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
                 bodyStyle={{ padding: 12, height: 500 }}
               >
                 <Suspense fallback={chartFallback}>
-                  <VisitCountTrendChart data={data.weeklyTrend} />
+                  <VisitCountTrendChart data={trendData} />
                 </Suspense>
               </Card>
             </Col>
             <Col span={12}>
               <Card
-                title="周里程趋势"
+                title="里程趋势"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
                 bodyStyle={{ padding: 12, height: 500 }}
               >
                 <Suspense fallback={chartFallback}>
-                  <MileageAreaChart data={data.weeklyTrend} />
+                  <MileageAreaChart data={trendData} />
                 </Suspense>
               </Card>
             </Col>

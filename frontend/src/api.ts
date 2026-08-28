@@ -335,6 +335,7 @@ export interface CompanyDashboardResponse {
   end: string;
   summary: CompanyDashboardSummary;
   weeklyTrend: WeeklyTrendItem[];
+  dailyTrend: WeeklyTrendItem[]; // 日粒度趋势，结构与 weeklyTrend 相同（week 为日标签，weekStart=weekEnd=当天）
   employeeWordCloud: WordCloudEmployee[];
   departmentRadar: DepartmentRadarItem[];
 }

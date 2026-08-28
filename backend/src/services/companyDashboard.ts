@@ -57,6 +57,7 @@ export interface CompanyDashboardResult {
   end: string;
   summary: CompanyDashboardSummary;
   weeklyTrend: WeeklyTrendItem[];
+  dailyTrend: WeeklyTrendItem[]; // 日粒度趋势，条目结构与 weeklyTrend 相同（week 为日标签，weekStart=weekEnd=当天）
   employeeWordCloud: WordCloudEmployee[];
   departmentRadar: DepartmentRadarItem[];
 }
@@ -325,6 +326,25 @@ export async function computeCompanyDashboard(
       activeEmployees: w.activeEmployees.size,
     }));
 
+  // 日趋势：与周趋势同构（week 字段为日标签，weekStart=weekEnd=当天），
+  // 供前端在短时间范围（本周/上周等）按天展示，避免趋势图只剩一个点
+  const dailyTrend: WeeklyTrendItem[] = dates.map((d) => {
+    const day = dailyMap.get(d)!;
+    return {
+      week: formatShortDate(d),
+      weekStart: d,
+      weekEnd: d,
+      visitCount: day.visitCount,
+      avgVisitsPerEmployee:
+        day.activeEmployees.size > 0
+          ? parseFloat((day.visitCount / day.activeEmployees.size).toFixed(2))
+          : 0,
+      reportedKm: parseFloat(day.reportedKm.toFixed(2)),
+      estimatedKm: parseFloat(day.estimatedKm.toFixed(2)),
+      activeEmployees: day.activeEmployees.size,
+    };
+  });
+
   // 3. 员工活跃度词云：只返回有数据的员工（部门展示名做查询时归一化）
   const employeeResult = await pool.query(
     `SELECT
@@ -485,6 +505,7 @@ export async function computeCompanyDashboard(
       avgVisitFrequency,
     },
     weeklyTrend,
+    dailyTrend,
     employeeWordCloud,
     departmentRadar,
   };

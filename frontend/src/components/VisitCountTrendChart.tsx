@@ -9,8 +9,6 @@ interface VisitCountTrendChartProps {
   height?: number | string;
 }
 
-const BASELINE_VALUE = 10;
-
 export default function VisitCountTrendChart({
   data,
   height = "100%",
@@ -19,7 +17,6 @@ export default function VisitCountTrendChart({
     const values = data.map((d) => ({
       week: d.week,
       avgVisitsPerEmployee: d.avgVisitsPerEmployee,
-      baseline: BASELINE_VALUE,
     }));
 
     return {
@@ -32,7 +29,7 @@ export default function VisitCountTrendChart({
           dataId: "visits",
           xField: "week",
           yField: "avgVisitsPerEmployee",
-          name: "周人均拜访次数",
+          name: "人均拜访次数",
           line: {
             style: {
               stroke: "#1890ff",
@@ -53,33 +50,7 @@ export default function VisitCountTrendChart({
             dimension: {
               title: { value: (datum: any) => datum?.week ?? "" },
               content: [
-                { key: "周人均拜访次数", value: (datum: any) => String(datum?.avgVisitsPerEmployee ?? "") },
-              ],
-            },
-          },
-        },
-        {
-          type: "line",
-          id: "baseline",
-          dataId: "visits",
-          xField: "week",
-          yField: "baseline",
-          name: "目标 (10次/人/周)",
-          line: {
-            style: {
-              stroke: "#f5222d",
-              lineWidth: 2,
-              lineDash: [4, 4],
-            },
-          },
-          point: {
-            visible: false,
-          },
-          tooltip: {
-            dimension: {
-              title: { value: (datum: any) => datum?.week ?? "" },
-              content: [
-                { key: "目标人均拜访量", value: () => `${BASELINE_VALUE}次/人/周` },
+                { key: "人均拜访次数", value: (datum: any) => String(datum?.avgVisitsPerEmployee ?? "") },
               ],
             },
           },
@@ -91,7 +62,7 @@ export default function VisitCountTrendChart({
         },
         {
           orient: "left",
-          seriesId: ["avg_visits", "baseline"],
+          seriesId: ["avg_visits"],
           title: { text: "人均拜访次数" },
         },
       ],
