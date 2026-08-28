@@ -784,6 +784,22 @@ export async function buildDingTalkOrgTree(): Promise<OrgTreeNode[]> {
     node.userIds!.push(row.userid);
   }
 
+  // exclude_from_stats 用户（陈列/李杰）：其真实部门在级联黑名单中，树上不可见。
+  // 补挂一个「其他」顶层节点，让 admin 能在控制台级联选择器中选中他们做单自查；
+  // manager 的树会被裁剪到本部门（该节点被丢弃），staff 无树，权限侧无影响。
+  const excludedUsers = await pool.query<{ user_id: string }>(
+    `SELECT user_id FROM users WHERE exclude_from_stats`
+  );
+  if (excludedUsers.rows.length > 0) {
+    roots.set("其他", {
+      name: "其他",
+      shortName: "其他",
+      level: 1,
+      children: [],
+      userIds: excludedUsers.rows.map((r) => r.user_id),
+    });
+  }
+
   const sorted = Array.from(roots.values());
   for (const root of sorted) {
     root.children.sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
