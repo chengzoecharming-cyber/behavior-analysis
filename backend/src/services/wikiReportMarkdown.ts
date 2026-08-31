@@ -3,6 +3,7 @@ import { ReportScope, ReportType } from "./dingtalkDoc";
 import { splitCustomerNames } from "./normalization";
 import { resolveReportVisitNote } from "./exportConsoleReportMarkdown";
 import { Route, Visit } from "../types";
+import { formatBeijingDate, getBeijingWeekday } from "../utils/timezone";
 
 interface WikiReportOverview {
   totals: {
@@ -112,6 +113,58 @@ function renderSummary(lines: string[], visitCount: number, estimatedKm: number)
   lines.push("");
 }
 
+const WEEKDAY_NAMES = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
+
+/** 取拜访的业务日期（YYYY-MM-DD），business_date 缺失时回退按签到时间的北京时间日期 */
+function visitBusinessDate(v: Visit): string {
+  const raw: any = v.business_date;
+  if (raw instanceof Date) return formatBeijingDate(raw);
+  if (typeof raw === "string" && raw) return raw.slice(0, 10);
+  return formatBeijingDate(new Date(v.timestamp));
+}
+
+/** 日期分组标题：「周一 2026-08-25」，灰色粗体（钉钉文档支持 <font color> 标签，已实测） */
+function formatDateGroupTitle(date: string): string {
+  const weekday = getBeijingWeekday(new Date(`${date}T00:00:00Z`));
+  return `<font color="gray">**${WEEKDAY_NAMES[weekday]} ${date}**</font>`;
+}
+
+/**
+ * 渲染拜访条目列表。周报/月报（groupByDate=true）按业务日期升序分组，
+ * 每日加「周X YYYY-MM-DD」小标题；编号在同一成员下跨日期连续。
+ */
+function renderVisitItems(
+  lines: string[],
+  items: VisitItem[],
+  duplicateCounts: Map<string, number>,
+  groupByDate: boolean
+): void {
+  if (!groupByDate) {
+    for (let i = 0; i < items.length; i++) {
+      lines.push(renderVisitItem(i + 1, items[i], duplicateCounts));
+      lines.push("");
+    }
+    return;
+  }
+
+  const byDate = new Map<string, VisitItem[]>();
+  for (const item of items) {
+    const date = visitBusinessDate(item.visit);
+    if (!byDate.has(date)) byDate.set(date, []);
+    byDate.get(date)!.push(item);
+  }
+
+  let index = 0;
+  for (const date of Array.from(byDate.keys()).sort()) {
+    lines.push(formatDateGroupTitle(date));
+    lines.push("");
+    for (const item of byDate.get(date)!) {
+      lines.push(renderVisitItem(++index, item, duplicateCounts));
+      lines.push("");
+    }
+  }
+}
+
 function renderSystemLink(lines: string[], systemLink: string): void {
   lines.push("---");
   lines.push("");
@@ -200,6 +253,8 @@ function buildEmployeeGroups(input: WikiReportInput): EmployeeGroup[] {
 export function renderWikiReportMarkdown(input: WikiReportInput): string {
   const lines: string[] = [];
   const duplicateCounts = buildDuplicateCounts(input.visits, input.homeVisitIds);
+  // 日报只有一天，无需按日期分组；周报/月报按日期分组展示
+  const groupByDate = input.reportType !== "日报";
 
   lines.push(`# ${input.titleName} 客户拜访${input.reportType}`);
   lines.push("");
@@ -210,10 +265,7 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
     const items = buildVisitItems(input.visits, input.homeVisitIds);
     renderSummary(lines, countVisits(input.visits, input.homeVisitIds), input.overview.totals.estimated_distance_km);
 
-    for (let i = 0; i < items.length; i++) {
-      lines.push(renderVisitItem(i + 1, items[i], duplicateCounts));
-      lines.push("");
-    }
+    renderVisitItems(lines, items, duplicateCounts, groupByDate);
     if (items.length === 0) {
       lines.push("暂无有效客户拜访记录。");
       lines.push("");
@@ -237,10 +289,7 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
       lines.push("");
       renderSummary(lines, countVisits(user.visits, input.homeVisitIds), user.estimatedKm);
 
-      for (let i = 0; i < items.length; i++) {
-        lines.push(renderVisitItem(i + 1, items[i], duplicateCounts));
-        lines.push("");
-      }
+      renderVisitItems(lines, items, duplicateCounts, groupByDate);
       if (items.length === 0) {
         lines.push("暂无有效客户拜访记录。");
         lines.push("");
