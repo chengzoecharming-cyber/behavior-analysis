@@ -293,7 +293,7 @@ export async function sendSyncAlertsDigestToDingTalk(alerts: SyncAlert[]): Promi
 }
 
 /** 发送机器人 markdown 消息，失败抛错（调用方据此决定是否记录/重试） */
-async function sendRobotMarkdown(title: string, text: string): Promise<void> {
+export async function sendRobotMarkdown(title: string, text: string): Promise<void> {
   const { robotWebhook } = getExportConfig();
   if (!robotWebhook) {
     throw new Error("机器人 webhook 未配置，无法发送消息");

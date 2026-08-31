@@ -7,7 +7,7 @@ import {
   generateWeeklyReports,
   generateMonthlyReports,
 } from "./reportGenerationService";
-import { checkAndSendAlerts, sendDailySyncSummary } from "./syncCheckService";
+import { checkAndSendAlerts, sendDailySyncSummary, sendRobotMarkdown } from "./syncCheckService";
 import { reconcileUsers } from "./userSyncService";
 
 function pad2(n: number): string {
@@ -144,6 +144,20 @@ export function startUserReconcileScheduler(): void {
         `[Scheduler] User reconcile done: added=${result.added.length}, updated=${result.updated}, ` +
           `resigned=${result.resigned.length}, restored=${result.restored.length}, contactsSynced=${result.contactsSynced}`
       );
+      // 有人被置 is_invalid（会被禁止登录）时立即群告警，管理员可当天人工恢复，
+      // 避免像历史案例一样直到当事人反馈才发现
+      if (result.invalidated.length > 0) {
+        try {
+          await sendRobotMarkdown(
+            "用户对账告警：账号被停用",
+            `### 用户对账告警\n\n本次对账将以下账号置为 is_invalid（无法登录系统）：\n\n` +
+              result.invalidated.map((label) => `- ${label}`).join("\n") +
+              `\n\nis_invalid 不会自动恢复，请管理员核实后手工改库解除。`
+          );
+        } catch (err) {
+          console.error("[Scheduler] Failed to send invalidate alert:", err);
+        }
+      }
     } catch (err) {
       console.error("[Scheduler] Failed to reconcile users:", err);
     }

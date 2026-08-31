@@ -134,7 +134,7 @@ async function fetchVisitUsers(): Promise<VisitUserAgg[]> {
 /** 计算对账计划（不写库） */
 async function computePlan(contactsSynced: boolean, errors: string[]): Promise<ReconcilePlan> {
   // 通讯录快照无论本次是否刷新都可用于姓名解析（离职标记仍要求本次同步成功）
-  const [visitUsers, existingUsers, contacts, recentActive] = await Promise.all([
+  const [visitUsers, existingUsers, contacts, recentActive, userDeptRows] = await Promise.all([
     fetchVisitUsers(),
     pool.query<ExistingUserRow>(
       `SELECT user_id, user_name, department, role, is_resigned, is_invalid, exclude_from_stats FROM users`
@@ -144,6 +144,13 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
     pool.query(
       `SELECT DISTINCT user_id FROM visits
        WHERE business_date >= CURRENT_DATE - INTERVAL '${RECENT_ACTIVE_DAYS} days'`
+    ),
+    // 白名单按人判定：收集每个 user_id 出现过的全部部门值（可能是逗号分隔的多段路径），
+    // 任一段的一级部门在白名单内即视为白名单成员（「销售渠道-XX」只是挂名渠道部门，
+    // 与白名单无对应关系，但该销售通常同时有「销售部-XX」的签到记录）
+    pool.query<{ user_id: string; department: string }>(
+      `SELECT DISTINCT user_id, department FROM visits
+       WHERE department IS NOT NULL AND department <> ''`
     ),
   ]);
 
@@ -196,14 +203,28 @@ async function computePlan(contactsSynced: boolean, errors: string[]): Promise<R
 
   // e：部门白名单——非 admin 用户一级部门不在白名单则置 is_invalid（只置位，不自动恢复；
   // 恢复只能由管理员手工操作，防止车辆误导入账号这类被手工隐藏的记录每晚被翻回来）。
-  // 部门以本次对账更新后的值为准
+  // 判定口径按人而非按单条部门值：该 user_id 出现过的任一部门段（含本次对账更新后的值）
+  // 的一级部门在白名单内即通过。「销售渠道-XX」与销售部无对应关系，不能直接映射，
+  // 但该销售通常同时有「销售部-XX」的签到部门，按人看集合即可覆盖这种情况。
   const updatedDeptMap = new Map(plan.updated.map((u) => [u.user_id, u.department]));
+  const userDeptValues = new Map<string, string[]>();
+  for (const r of userDeptRows.rows) {
+    const list = userDeptValues.get(r.user_id) ?? [];
+    list.push(r.department);
+    userDeptValues.set(r.user_id, list);
+  }
+  const isUserInWhitelist = (userId: string, dept: string | null): boolean => {
+    const values = [...(userDeptValues.get(userId) ?? [])];
+    if (dept) values.push(dept);
+    // 部门值可能是逗号分隔的多段路径，逐段取一级部门判定
+    return values.some((v) => v.split(",").some((seg) => isInWhitelist(seg.trim())));
+  };
   for (const u of existingUsers.rows) {
     if (u.role === "admin" || u.exclude_from_stats) continue;
     const effectiveDept = updatedDeptMap.has(u.user_id)
       ? updatedDeptMap.get(u.user_id)!
       : u.department;
-    if (!isInWhitelist(effectiveDept) && !u.is_invalid) {
+    if (!isUserInWhitelist(u.user_id, effectiveDept) && !u.is_invalid) {
       plan.invalidated.push(`${u.user_name}(${u.user_id})`);
     }
   }
