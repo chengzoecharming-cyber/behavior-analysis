@@ -303,6 +303,11 @@ DINGTALK_EXPORT_ROBOT_WEBHOOK=
 
 # 钉钉企业内部应用 AgentId，用于 ConsolePage「导出到我的工作通知」
 DINGTALK_AGENT_ID=YOUR_DINGTALK_AGENT_ID
+
+# 自建 LLM 拜访总结（OpenAI 兼容，默认 DeepSeek；不配置则维持原始兜底文本）
+LLM_API_KEY=
+LLM_BASE_URL=https://api.deepseek.com
+LLM_MODEL=deepseek-chat
 ```
 
 ### 前端 `frontend/.env.example`
@@ -514,6 +519,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 ## 已知问题与注意事项
 
 - `backend/schema.sql` 与 `backend/src/db.ts` 不同步，实际 schema 以 `db.ts` 为准。
+- **v2 行的 `visit_note`/`visit_detail.ai` 现由自建 LLM 总结生成**（`llmSummaryService.ts`，OpenAI 兼容接口，`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` 走环境变量，默认 DeepSeek），替代已失效的钉钉 DDAIField「AI总结」字段；同步成功后经 `recomputeDerivedDataForVisits` fire-and-forget 补写。未配置 key 或调用失败时维持原始兜底拼接（「沟通内容：...；存在问题：...」），存量回填执行 `cd backend && npm run backfill:ai-summary`（`--dry` 预览）。回写时保留 visit_note 末尾的里程备注后缀（如「[缺少终点里程读数]」）。
 - 权限系统已完成收口（见「认证方式」章节）：核心接口均按角色过滤数据，越权返回 403。
 - 部门名称通过 `department_aliases` 表规范化，当前有 10 个规范部门/分组。
 - **部门归一化（查询时生效，不回填数据）**：部分销售挂在钉钉「销售渠道-华南区域 / 销售渠道-江苏区域 / 销售渠道-浙江区域」顶层渠道部门下，业务主部门是「销售部-华南一部 / 华东昆山 / 华东宁波」。`visits.department` 保留原始值，所有组织归属/聚合/级联选择器口径在查询时归一化：第一段部门名命中 `department_aliases` 且 `canonical_name` 非空时，映射为「销售部-canonical」（canonical 本身含 `-` 则原样），否则保持原始第一段。统一入口在 `departmentAliasService.ts`（JS 侧 `normalizePrimaryDepartment` + `loadDepartmentAliasMap`，SQL 侧 `normalizedPrimaryDeptSql` + `departmentAliasJoinSql`）；`orgService`（组织树/归属多数派/排行榜分组）、`userSyncService.fetchVisitUsers`（users.department 归属）、`companyDashboard`（词云/雷达）、`buildDingTalkOrgTree`（级联选择器树，归一化后补挂到主部门节点）均走该口径。「销售渠道」顶层黑名单（`EXCLUDED_TOP_DEPARTMENTS`）继续保留，归一化后自然不再命中。别名配置脚本：`cd backend && npm run alias:sales-channels`（幂等写入三条 销售渠道-X区域 → 主部门 映射）。纯查询时归一化，改别名配置不需要重算派生数据。

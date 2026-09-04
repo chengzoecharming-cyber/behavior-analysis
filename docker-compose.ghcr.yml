@@ -40,6 +40,9 @@ services:
       AMAP_KEY: ${AMAP_KEY}
       AMAP_ROUTE_TIMEOUT_MS: ${AMAP_ROUTE_TIMEOUT_MS:-15000}
       AMAP_ROUTE_RETRY_COUNT: ${AMAP_ROUTE_RETRY_COUNT:-5}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.deepseek.com}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-chat}
       HTTP_PROXY: ${HTTP_PROXY:-}
       HTTPS_PROXY: ${HTTPS_PROXY:-}
       NO_PROXY: ${NO_PROXY:-postgres,localhost,127.0.0.1}

@@ -1,6 +1,7 @@
 import { computeAndPersistRoutes } from "./routeService";
 import { computeAndPersistStops } from "./stopDetection";
 import { persistRiskSummaryCache } from "./riskSummaryService";
+import { summarizeMissingAiForUserDates } from "./llmSummaryService";
 import { toBeijingDayStart, toBeijingDayEnd } from "../utils/timezone";
 
 export interface AffectedUserDate {
@@ -58,5 +59,13 @@ export async function recomputeDerivedDataForVisits(
         err
       );
     }
+  }
+
+  // 钉钉 AI总结字段失效后，为缺 AI 总结的 v2 行补生成自建 LLM 总结。
+  // 未配置 LLM_API_KEY 时内部静默跳过；失败只记日志，不影响主流程。
+  try {
+    await summarizeMissingAiForUserDates(uniquePairs);
+  } catch (err) {
+    console.warn(`[recomputeDerivedDataForVisits] LLM 总结补全失败:`, err);
   }
 }

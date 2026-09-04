@@ -25,7 +25,8 @@
     "backfill:visit-exclusion": "ts-node scripts/backfillVisitExclusion.ts",
     "backfill:customer-count": "ts-node scripts/backfillCustomerCount.ts",
     "alias:sales-channels": "ts-node scripts/addSalesChannelAliases.ts",
-    "reparse:approval": "ts-node scripts/reparseApproval.ts"
+    "reparse:approval": "ts-node scripts/reparseApproval.ts",
+    "backfill:ai-summary": "ts-node scripts/backfillAiSummary.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",
