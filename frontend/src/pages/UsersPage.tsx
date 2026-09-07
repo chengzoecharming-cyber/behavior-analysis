@@ -356,6 +356,7 @@ export default function UsersPage() {
                   dataSource={sub.members}
                   columns={columns}
                   pagination={false}
+                  scroll={{ x: 800 }}
                 />
               </div>
             ))}

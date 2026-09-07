@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
 import { Button, Typography, Spin, Row, Col, Card } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
+import { useIsMobile } from "../hooks/useIsMobile";
 import {
   fetchCompanyDashboard,
   fetchCurrentUser,
@@ -93,6 +94,9 @@ function DecisionPage() {
   const [loading, setLoading] = useState(false);
   // 总览页所有角色可看全量数据，但只有 admin 可以点击内容跳转（员工卡片 → 控制台）
   const [isAdmin, setIsAdmin] = useState(false);
+
+  // 移动端（<768px）布局：统计卡 2×2、图表单列
+  const isMobile = useIsMobile();
 
   const [start, end] = useMemo(() => getPresetRange(mode), [mode]);
 
@@ -197,9 +201,9 @@ function DecisionPage() {
 
       {!loading && data && (
         <>
-          {/* Summary Cards */}
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={6}>
+          {/* Summary Cards：移动端 2×2，需纵向间距 */}
+          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>总拜访次数</span>
                 <span style={statValueStyle}>
@@ -208,7 +212,7 @@ function DecisionPage() {
                 </span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>活跃员工数</span>
                 <span style={statValueStyle}>
@@ -217,7 +221,7 @@ function DecisionPage() {
                 </span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>客户覆盖数</span>
                 <span style={statValueStyle}>
@@ -226,7 +230,7 @@ function DecisionPage() {
                 </span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>平均拜访频率</span>
                 <span style={statValueStyle}>
@@ -237,26 +241,26 @@ function DecisionPage() {
             </Col>
           </Row>
 
-          {/* Trend: Visits + Mileage（≤14 天按日粒度，更长按周粒度） */}
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={12}>
+          {/* Trend: Visits + Mileage（≤14 天按日粒度，更长按周粒度）；移动端单列堆叠 */}
+          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+            <Col span={isMobile ? 24 : 12}>
               <Card
                 title="拜访趋势"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: 500 }}
+                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
               >
                 <Suspense fallback={chartFallback}>
                   <VisitCountTrendChart data={trendData} />
                 </Suspense>
               </Card>
             </Col>
-            <Col span={12}>
+            <Col span={isMobile ? 24 : 12}>
               <Card
                 title="里程趋势"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: 500 }}
+                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
               >
                 <Suspense fallback={chartFallback}>
                   <MileageAreaChart data={trendData} />
@@ -265,14 +269,14 @@ function DecisionPage() {
             </Col>
           </Row>
 
-          {/* Employee Word Cloud + Department Radar */}
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={12}>
+          {/* Employee Word Cloud + Department Radar；移动端单列堆叠 */}
+          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+            <Col span={isMobile ? 24 : 12}>
               <Card
                 title="员工活跃度"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: 500 }}
+                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
               >
                 {data.employeeWordCloud.length === 0 ? (
                   <div style={{ color: "#999", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -288,7 +292,7 @@ function DecisionPage() {
                 )}
               </Card>
             </Col>
-            <Col span={12}>
+            <Col span={isMobile ? 24 : 12}>
               <Card
                 title={
                   <div>
@@ -302,7 +306,7 @@ function DecisionPage() {
                 }
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: 500 }}
+                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
               >
                 {data.departmentRadar.length === 0 ? (
                   <div style={{ color: "#999", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>

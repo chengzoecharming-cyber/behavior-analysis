@@ -508,6 +508,7 @@ export default function MapContainer({
         borderRadius: 8,
         background: "#e5e5e5",
         position: "relative",
+        overflow: "hidden",
       }}
     >
       <div
@@ -564,6 +565,10 @@ export default function MapContainer({
             top: 12,
             right: 12,
             width: 320,
+            maxWidth: "calc(100% - 24px)",
+            maxHeight: "calc(100% - 24px)",
+            overflowY: "auto",
+            borderRadius: 8,
             zIndex: 10,
           }}
         >

@@ -5,6 +5,7 @@ import { fetchOrgOverview, OrgOverviewResponse, OrgRankingItem } from "../api";
 import HeatMapContainer from "./HeatMapContainer";
 import ProvinceDonutChart from "./ProvinceDonutChart";
 import { Suspense, lazy } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 const OverviewChart = lazy(() => import("./OverviewChart"));
 
@@ -58,6 +59,8 @@ function buildConsoleHref(record: OrgRankingItem, start: string, end: string): s
 function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<OrgOverviewResponse | null>(null);
+  // 移动端（<768px）：指标卡 2×2、图表卡单列
+  const isMobile = useIsMobile();
 
   // 行内展开状态
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
@@ -382,6 +385,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             rowKey="key"
             size="small"
             showHeader={false}
+            scroll={{ x: 500 }}
             expandedRowRender={expandedRowRender}
             rowExpandable={(r?: OrgRankingItem) => !!r?.hasChildren}
             expandedRowKeys={Array.from(expandedKeys)}
@@ -417,9 +421,9 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           padding-right: 0 !important;
         }
       `}</style>
-      {/* 指标卡：与个人周期总览保持一致，并补充正向指标卡 */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={6}>
+      {/* 指标卡：与个人周期总览保持一致，并补充正向指标卡；移动端 2×2 */}
+      <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+        <Col span={isMobile ? 12 : 6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>填报 / 估算里程</span>
             <span style={statValueStyle}>
@@ -430,7 +434,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </span>
           </div>
         </Col>
-        <Col span={6}>
+        <Col span={isMobile ? 12 : 6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>拜访频率</span>
             <span style={statValueStyle}>
@@ -439,7 +443,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </span>
           </div>
         </Col>
-        <Col span={6}>
+        <Col span={isMobile ? 12 : 6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>人均拜访次数</span>
             <span style={statValueStyle}>
@@ -448,7 +452,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </span>
           </div>
         </Col>
-        <Col span={6}>
+        <Col span={isMobile ? 12 : 6}>
           <div style={statStyle}>
             <span style={statLabelStyle}>客户覆盖数</span>
             <span style={statValueStyle}>
@@ -459,15 +463,15 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         </Col>
       </Row>
 
-      {/* 拜访热力图 + 排行榜 */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
-        <Col span={12}>
+      {/* 拜访热力图 + 排行榜；移动端单列堆叠 */}
+      <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+        <Col span={isMobile ? 24 : 12}>
           <div
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
               padding: 20,
-              height: 500,
+              height: isMobile ? 360 : 500,
               display: "flex",
               flexDirection: "column",
             }}
@@ -480,14 +484,14 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </div>
           </div>
         </Col>
-        <Col span={12}>
+        <Col span={isMobile ? 24 : 12}>
           <div
             className="org-ranking-card"
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
               padding: 20,
-              height: 500,
+              height: isMobile ? 360 : 500,
               display: "flex",
               flexDirection: "column",
             }}
@@ -504,6 +508,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
                 pagination={false}
                 rowKey="key"
                 size="small"
+                scroll={{ x: 500 }}
                 expandedRowRender={expandedRowRender}
                 rowExpandable={(record?: OrgRankingItem) => !!record?.hasChildren}
                 expandedRowKeys={Array.from(expandedKeys)}
@@ -517,16 +522,16 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         </Col>
       </Row>
 
-      {/* 趋势分析 + 拜访省份分布 */}
-      <Row gutter={16} style={{ marginBottom: 16 }}>
+      {/* 趋势分析 + 拜访省份分布；移动端单列堆叠 */}
+      <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
         {!isSingleDay && (
-          <Col span={12}>
+          <Col span={isMobile ? 24 : 12}>
             <div
               style={{
                 backgroundColor: "#fff",
                 borderRadius: 16,
                 padding: 20,
-                height: 500,
+                height: isMobile ? 360 : 500,
                 display: "flex",
                 flexDirection: "column",
               }}
@@ -564,13 +569,13 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             </div>
           </Col>
         )}
-        <Col span={isSingleDay ? 24 : 12}>
+        <Col span={isMobile ? 24 : isSingleDay ? 24 : 12}>
           <div
             style={{
               backgroundColor: "#fff",
               borderRadius: 16,
               padding: 20,
-              height: 500,
+              height: isMobile ? 360 : 500,
               display: "flex",
               flexDirection: "column",
             }}

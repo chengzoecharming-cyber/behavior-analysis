@@ -397,6 +397,7 @@ function SyncOverviewTab({ onViewLineage }: OverviewTabProps) {
           pagination={{ pageSize: 20 }}
           size="small"
           bordered
+          scroll={{ x: 900 }}
           locale={{ emptyText: "暂无同步记录" }}
         />
       </Spin>
@@ -623,6 +624,7 @@ function ReportGenerationTab() {
           dataSource={logs}
           size="small"
           bordered
+          scroll={{ x: 900 }}
           locale={{ emptyText: "暂无报告生成日志" }}
           pagination={{
             current: page,

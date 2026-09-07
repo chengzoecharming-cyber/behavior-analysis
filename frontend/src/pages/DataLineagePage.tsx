@@ -52,6 +52,7 @@ function RawFormStep({ detail }: { detail: LineageDetail }) {
       size="small"
       rowKey={(_, i) => String(i)}
       pagination={false}
+      scroll={{ x: 600 }}
       dataSource={fields}
       columns={[
         {
@@ -106,6 +107,7 @@ function CompareStep({ detail }: { detail: LineageDetail }) {
       size="small"
       rowKey="key"
       pagination={false}
+      scroll={{ x: 900 }}
       dataSource={rows}
       columns={[
         { title: "#", dataIndex: "seq", width: 40 },
@@ -152,6 +154,7 @@ function QualityStep({ records }: { records: LineageQualityRecord[] }) {
       size="small"
       rowKey="id"
       pagination={false}
+      scroll={{ x: 600 }}
       dataSource={records}
       columns={[
         { title: "级别", dataIndex: "severity", width: 90, render: severityTag },
@@ -295,6 +298,7 @@ export function DataLineagePanel({
           loading={loading}
           columns={columns}
           dataSource={items}
+          scroll={{ x: 800 }}
           pagination={{
             current: page,
             pageSize,

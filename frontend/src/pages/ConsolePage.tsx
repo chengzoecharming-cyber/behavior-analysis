@@ -60,6 +60,7 @@ import TrajectoryTimeline from "../components/TrajectoryTimeline";
 import { AnomalyItem } from "../components/AnomalyItem";
 import DateAxis from "../components/DateAxis";
 import { Suspense, lazy } from "react";
+import { useIsMobile } from "../hooks/useIsMobile";
 
 const OverviewChart = lazy(() => import("../components/OverviewChart"));
 
@@ -377,6 +378,8 @@ function fillDailyRange(
 
 function ConsolePage() {
   const [searchParams, setSearchParams] = useSearchParams();
+  // 移动端（<768px）布局开关：查询区换行、统计卡 2×2、地图与面板纵向排列
+  const isMobile = useIsMobile();
 
   // 组织架构与人员
   const [users, setUsers] = useState<User[]>([]);
@@ -969,12 +972,13 @@ function ConsolePage() {
     <div>
       {/* 顶部查询区 */}
       <div style={{ paddingBottom: 12 }}>
-        <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16 }}>
-          <Col style={{ flex: "0 0 auto" }}>
+        {/* 移动端允许换行，避免控件横向溢出 */}
+        <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16, ...(isMobile ? { flexWrap: "wrap", rowGap: 8 } : {}) }}>
+          <Col style={{ flex: isMobile ? "0 0 100%" : "0 0 auto" }}>
             {/* staff 用精简人员选择器（自己 + 本区 leader）；manager/admin 用完整级联选择器 */}
             {currentUser?.role === "staff" ? (
               <Select
-                style={{ width: 200 }}
+                style={{ width: isMobile ? "100%" : 200 }}
                 placeholder={dataLoading ? "加载中..." : "选择成员"}
                 value={userId}
                 onChange={handleStaffMemberChange}
@@ -986,7 +990,7 @@ function ConsolePage() {
               />
             ) : (
               <Cascader
-                style={{ width: 320 }}
+                style={{ width: isMobile ? "100%" : 320 }}
                 dropdownClassName="console-scope-cascader"
                 placeholder={dataLoading ? "加载中..." : "选择查询范围"}
                 value={cascaderValue}
@@ -1001,9 +1005,10 @@ function ConsolePage() {
               />
             )}
           </Col>
-          <Col style={{ flex: "0 0 auto" }}>
+          <Col style={{ flex: isMobile ? "0 0 100%" : "0 0 auto" }}>
             <DatePicker
               type="dateRange"
+              style={isMobile ? { width: "100%" } : undefined}
               value={[dayjs.tz(dateRange[0]).toDate(), dayjs.tz(dateRange[1]).toDate()]}
               onChange={(dates) => handleDateRangeChange(dates as Date[] | null)}
               disabledDate={(current) =>
@@ -1015,7 +1020,7 @@ function ConsolePage() {
           </Col>
           <Col
             style={{
-              flex: "1",
+              flex: isMobile ? "0 0 100%" : "1",
               minWidth: 0,
               display: "flex",
               justifyContent: "flex-end",
@@ -1087,15 +1092,15 @@ function ConsolePage() {
 
       {scope === "person" && dateRange[0] === dateRange[1] && selectedDate && (
         <>
-          {/* 统计卡片 */}
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={6}>
+          {/* 统计卡片：移动端 2×2，需纵向间距 */}
+          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>拜访点数</span>
                 <span style={statValueStyle}>{overviewGroup.visits.filter((v) => !v.exclude_from_visit_count).length}</span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <div
                   style={{
@@ -1150,13 +1155,13 @@ function ConsolePage() {
                 </span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>Segment 数</span>
                 <span style={statValueStyle}>{overviewGroup.mileage.segmentCount}</span>
               </div>
             </Col>
-            <Col span={6}>
+            <Col span={isMobile ? 12 : 6}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>估算油费 (元)</span>
                 <span style={statValueStyle}>
@@ -1171,9 +1176,9 @@ function ConsolePage() {
             </Col>
           </Row>
 
-          {/* Anomalies + Map */}
+          {/* Anomalies + Map：移动端纵向流——地图整宽在上，轨迹/异常面板整宽在下 */}
           <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={8}>
+            <Col span={isMobile ? 24 : 8} style={isMobile ? { order: 2 } : undefined}>
               <div
                 style={{
                   padding: 20,
@@ -1307,13 +1312,13 @@ function ConsolePage() {
                 </div>
               </div>
             </Col>
-            <Col span={16}>
+            <Col span={isMobile ? 24 : 16} style={isMobile ? { order: 1, marginBottom: 16 } : undefined}>
               <div
                 style={{
                   padding: 20,
                   backgroundColor: "#fff",
                   borderRadius: 16,
-                  height: "500px",
+                  height: isMobile ? "320px" : "500px",
                   display: "flex",
                   flexDirection: "column",
                 }}
@@ -1450,6 +1455,8 @@ function OverviewPanel({
   heatMapPoints,
   approvalGroups,
 }: OverviewPanelProps) {
+  // 移动端（<768px）：统计卡与图表全部整宽纵向排列
+  const isMobile = useIsMobile();
   const filled = useMemo(
     () => fillDailyRange(data?.daily ?? [], range[0], range[1]),
     [data, range]
@@ -1494,8 +1501,8 @@ function OverviewPanel({
         <div style={{ color: "#999" }}>选择时间范围加载数据</div>
       ) : (
         <>
-          <Row gutter={16} style={{ marginBottom: 16 }}>
-            <Col span={8}>
+          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+            <Col span={isMobile ? 24 : 8}>
               <div style={statStyle}>
                 <div
                   style={{
@@ -1537,7 +1544,7 @@ function OverviewPanel({
                 </span>
               </div>
             </Col>
-            <Col span={8}>
+            <Col span={isMobile ? 24 : 8}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>预估油费</span>
                 <span style={statValueStyle}>
@@ -1546,7 +1553,7 @@ function OverviewPanel({
                 </span>
               </div>
             </Col>
-            <Col span={8}>
+            <Col span={isMobile ? 24 : 8}>
               <div style={statStyle}>
                 <span style={statLabelStyle}>拜访频率</span>
                 <span style={statValueStyle}>
@@ -1559,23 +1566,23 @@ function OverviewPanel({
 
           <Row
             gutter={16}
-            style={{ marginBottom: 16, display: "flex", alignItems: "stretch" }}
+            style={{ marginBottom: 16, display: "flex", alignItems: "stretch", ...(isMobile ? { rowGap: 16 } : {}) }}
           >
             {hasAnomalies && (
-              <Col span={8}>
+              <Col span={isMobile ? 24 : 8}>
                 <RiskTagsAlert
                   anomalies={data?.anomalies ?? []}
                   approvalGroups={approvalGroups}
                 />
               </Col>
             )}
-            <Col span={hasAnomalies ? 16 : 24}>
+            <Col span={isMobile ? 24 : hasAnomalies ? 16 : 24}>
               <div
                 style={{
                   padding: 20,
                   backgroundColor: "#fff",
                   borderRadius: 16,
-                  height: 400,
+                  height: isMobile ? 300 : 400,
                   display: "flex",
                   flexDirection: "column",
                 }}
@@ -1606,7 +1613,7 @@ function OverviewPanel({
                   padding: 20,
                   backgroundColor: "#fff",
                   borderRadius: 16,
-                  height: 460,
+                  height: isMobile ? 320 : 460,
                   display: "flex",
                   flexDirection: "column",
                 }}

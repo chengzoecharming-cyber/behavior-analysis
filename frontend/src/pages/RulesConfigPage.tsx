@@ -175,6 +175,7 @@ function RulesConfigPage() {
           pagination={false}
           rowKey="rule_key"
           style={{ backgroundColor: "#fff", borderRadius: 12, padding: 16 }}
+          scroll={{ x: 800 }}
         />
       )}
 

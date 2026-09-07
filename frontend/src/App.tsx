@@ -32,6 +32,7 @@ const DataSyncCenterPage = lazy(() => import("./pages/DataSyncCenterPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 import { fetchCurrentUser, logoutApi, AuthUser } from "./api";
 import { Dropdown } from "@douyinfe/semi-ui";
+import { useIsMobile } from "./hooks/useIsMobile";
 
 // 懒加载页面切换时的占位
 const pageFallback = (
@@ -63,6 +64,8 @@ function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [checking, setChecking] = useState(true);
+  // 移动端（<768px）：主内容区减小内边距
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadCurrentUser();
@@ -315,13 +318,51 @@ function App() {
                   </Link>
                 );
               })}
+
+              {/* 桌面端头像 Dropdown 里的入口，移动端在抽屉中按相同权限补充 */}
+              <div className="my-2 border-t border-stone-100" />
+              {currentUser?.role === "admin" && (
+                <Link
+                  to="/sync-center"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-stone-50"
+                >
+                  <History className="size-4" />
+                  <span>数据同步中心</span>
+                </Link>
+              )}
+              {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
+                <Link
+                  to="/users"
+                  onClick={() => setMobileNavOpen(false)}
+                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-stone-50"
+                >
+                  <Users className="size-4" />
+                  <span>用户管理</span>
+                </Link>
+              )}
+              <Link
+                to="/feedback"
+                onClick={() => setMobileNavOpen(false)}
+                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-stone-50"
+              >
+                <MessageSquareText className="size-4" />
+                <span>反馈与申诉</span>
+              </Link>
+              <button
+                onClick={logout}
+                className="flex items-center gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left text-sm text-red-600 transition hover:bg-stone-50"
+              >
+                <LogOut className="size-4" />
+                <span>退出登录</span>
+              </button>
             </nav>
           </div>
         </div>
       )}
 
       {/* Content */}
-      <main className="flex-1 min-h-0" style={{ padding: 24 }}>
+      <main className="flex-1 min-h-0" style={{ padding: isMobile ? 12 : 24 }}>
         <Suspense fallback={pageFallback}>
           <Routes>
             <Route path="/" element={<DecisionPage />} />

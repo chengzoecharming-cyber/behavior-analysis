@@ -223,6 +223,7 @@ export default function FeedbackPage() {
           loading={loading}
           pagination={{ pageSize: 10 }}
           style={{ padding: 16 }}
+          scroll={{ x: 800 }}
         />
       </Card>
 
