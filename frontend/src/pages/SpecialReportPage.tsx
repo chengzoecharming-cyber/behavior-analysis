@@ -6,6 +6,13 @@ import AMapLoader from "@amap/amap-jsapi-loader";
 import html2canvas from "html2canvas";
 import { Lottie } from "lottie-react";
 import { AmbientAudio } from "../components/report/ambientAudio";
+import { ReportImage } from "../components/report/ReportImage";
+import { RunnerSvg } from "../components/report/RunnerSvg";
+import { CustomerMatrix } from "../components/report/CustomerMatrix";
+import { WeeklyWave } from "../components/report/WeeklyWave";
+import { CalendarDots, longestStreak } from "../components/report/CalendarDots";
+import { WeekdayEmoji } from "../components/report/WeekdayEmoji";
+import { EarliestWindows } from "../components/report/EarliestWindows";
 // ============ 类型（与后端契约一致） ============
 interface SpecialReport {
   scope: "staff" | "manager" | "admin";
@@ -24,6 +31,10 @@ interface SpecialReport {
     anomaly_count: number;
     points: { lat: number; lng: number; date: string }[]; // date 用于足迹动画排序
     monthly: { month: string; visit_count: number }[]; // 'YYYY-MM'，含 0 月份
+    daily?: { date: string; visit_count: number }[]; // 逐日拜访（含 0）
+    weekly?: { week_start: string; visit_count: number }[]; // 逐周（周一开头）
+    earliest_days?: { date: string; time: string }[]; // 最早签到的前 5 天，time=HH:MM 北京时间
+    customer_tiles?: { name: string; count: number }[]; // 全量客户计数降序，最多 40
     weekday: { counts: number[]; top_weekday: number; top_count: number }; // counts[0]=周一
     longest_day: { date: string; distance_km: number } | null;
     percentile: number | null; // 超过全公司 X% 的人（0-100）
@@ -108,9 +119,20 @@ function BigNumber({ value, decimals = 0, active }: { value: number; decimals?: 
 }
 
 // ============ Lottie 动画（/lottie 下的静态 JSON，仅在 slide 激活时渲染） ============
+// progressiveLoad：按需分段加载矢量数据，降低首帧开销；非 loop 动画播完即卸载，不再占渲染资源
 function LottieAnim({ src, loop, active, size }: { src: string; loop: boolean; active: boolean; size: number }) {
-  if (!active) return null;
-  return <Lottie src={src} autoplay loop={loop} style={{ width: size, height: size }} />;
+  const [done, setDone] = useState(false);
+  if (!active || done) return null;
+  return (
+    <Lottie
+      src={src}
+      autoplay
+      loop={loop}
+      rendererSettings={{ progressiveLoad: true }}
+      subscriptions={loop ? undefined : { complete: () => setDone(true) }}
+      style={{ width: size, height: size }}
+    />
+  );
 }
 
 function PageShell({ children, center = true }: { children: React.ReactNode; center?: boolean }) {
@@ -135,48 +157,56 @@ function Sub({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ============ 迷你柱状图（纯 div + framer-motion 生长动画） ============
-function BarChart({
-  values,
-  labels,
-  highlightIndex,
-  active,
-  height = 140,
-}: {
-  values: number[];
-  labels: string[];
-  highlightIndex: number;
-  active: boolean;
-  height?: number;
-}) {
-  const max = Math.max(...values, 1);
+// ============ 上半屏插画（底部渐变遮罩融入背景，加载失败静默降级） ============
+function TopIllustration({ src }: { src: string }) {
   return (
-    <motion.div variants={fadeUp} className="mt-8 flex w-full max-w-[320px] items-end justify-center gap-3" style={{ height }}>
-      {values.map((v, i) => {
-        const hot = i === highlightIndex;
-        const barH = Math.max((v / max) * (height - 34), 3);
-        return (
-          <div key={i} className="flex flex-1 flex-col items-center justify-end gap-2" style={{ height: "100%" }}>
-            <span className="tabular-nums" style={{ fontSize: 11, color: hot ? "#ffb37e" : "rgba(255,255,255,0.4)" }}>
-              {v > 0 ? v : ""}
-            </span>
-            <motion.div
-              className="w-full rounded-t-md"
-              style={{
-                background: hot ? ORANGE_GRADIENT : "rgba(255,255,255,0.16)",
-                boxShadow: hot ? "0 0 18px rgba(255,154,90,0.4)" : "none",
-              }}
-              initial={{ height: 0 }}
-              animate={active ? { height: barH } : { height: 0 }}
-              transition={{ duration: 0.8, delay: 0.4 + i * 0.12, ease: "easeOut" }}
-            />
-            <span className="text-white/60" style={{ fontSize: "clamp(11px, 3.2vw, 13px)" }}>
-              {labels[i]}
-            </span>
-          </div>
-        );
-      })}
-    </motion.div>
+    <div className="pointer-events-none absolute inset-x-0 top-0" style={{ height: "42%" }} aria-hidden>
+      <ReportImage src={src} className="h-full w-full" style={{ opacity: 0.85 }} />
+      <div
+        className="absolute inset-0"
+        style={{ background: "linear-gradient(180deg, rgba(26,26,46,0.15) 0%, rgba(26,26,46,0.25) 55%, #1a1a2e 100%)" }}
+      />
+    </div>
+  );
+}
+
+// ============ 封面大标题：/report/cover-title.png 存在则用书法字（mix-blend screen），否则用文字标题 ============
+function CoverTitle({ name }: { name: string }) {
+  const [imgOk, setImgOk] = useState(false);
+  useEffect(() => {
+    const img = new Image();
+    img.onload = () => setImgOk(true);
+    img.src = "/report/cover-title.png";
+    return () => {
+      img.onload = null;
+    };
+  }, []);
+  if (imgOk) {
+    return (
+      <motion.img
+        variants={fadeUp}
+        src="/report/cover-title.png"
+        alt="盛夏战报"
+        className="mt-6 w-full max-w-[320px]"
+        style={{ mixBlendMode: "screen" }}
+      />
+    );
+  }
+  return (
+    <motion.h1
+      variants={fadeUp}
+      className="mt-6 font-bold"
+      style={{
+        fontSize: "clamp(40px, 12vw, 64px)",
+        lineHeight: 1.25,
+        background: "linear-gradient(135deg, #fff, #ffd194)",
+        WebkitBackgroundClip: "text",
+        backgroundClip: "text",
+        color: "transparent",
+      }}
+    >
+      {name}
+    </motion.h1>
   );
 }
 
@@ -425,49 +455,56 @@ export default function SpecialReportPage() {
       ),
     });
 
-    // 1. 封面
+    // 1. 封面（cover.webp 整页背景 + 底部渐变融入；书法字图存在则替换文字标题；底部静态站姿 Runner）
     list.push({
       key: "cover",
       node: () => (
-        <PageShell>
-          <motion.div variants={fadeUp} className="text-white/50 tracking-[0.4em]" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
-            2026 · 盛夏战报
-          </motion.div>
-          <motion.h1
-            variants={fadeUp}
-            className="mt-6 font-bold"
-            style={{
-              fontSize: "clamp(40px, 12vw, 64px)",
-              lineHeight: 1.25,
-              background: "linear-gradient(135deg, #fff, #ffd194)",
-              WebkitBackgroundClip: "text",
-              backgroundClip: "text",
-              color: "transparent",
-            }}
-          >
-            {report.user.user_name}
-          </motion.h1>
-          <Sub>{report.user.department}</Sub>
-          <motion.div variants={fadeUp} className="mt-10 rounded-full border border-white/20 px-6 py-2 text-white/70" style={{ fontSize: "clamp(13px, 3.6vw, 16px)" }}>
-            {fmtPeriod(report.period.start)} — {fmtPeriod(report.period.end)}
-          </motion.div>
-        </PageShell>
+        <>
+          <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+            <ReportImage src="/report/cover.webp" className="h-full w-full" style={{ opacity: 0.9 }} />
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(180deg, rgba(26,26,46,0.45) 0%, rgba(26,26,46,0.35) 45%, rgba(26,26,46,0.85) 78%, #1a1a2e 100%)",
+              }}
+            />
+          </div>
+          <PageShell>
+            <motion.div variants={fadeUp} className="text-white/50 tracking-[0.4em]" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
+              2026 · 盛夏战报
+            </motion.div>
+            <CoverTitle name={report.user.user_name} />
+            <Sub>{report.user.department}</Sub>
+            <motion.div variants={fadeUp} className="mt-10 rounded-full border border-white/20 px-6 py-2 text-white/70" style={{ fontSize: "clamp(13px, 3.6vw, 16px)", background: "rgba(26,26,46,0.35)" }}>
+              {fmtPeriod(report.period.start)} — {fmtPeriod(report.period.end)}
+            </motion.div>
+            <motion.div variants={fadeUp} className="mt-12">
+              <RunnerSvg size={72} />
+            </motion.div>
+          </PageShell>
+        </>
       ),
     });
 
     // 个人分镜（个人 0 拜访但有团队榜时，只展示封面 + 团队 + 结尾）
     if (p.visit_count > 0) {
-    // 2. 拜访数
+    // 2. 拜访数（visits.webp 上半屏插画，底部渐变融入背景）
     list.push({
       key: "visits",
       node: (a) => (
-        <PageShell>
-          <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
-          <motion.div variants={fadeUp}>
-            <BigNumber value={p.visit_count} active={a} />
-          </motion.div>
-          <Sub>次客户的门</Sub>
-        </PageShell>
+        <>
+          <TopIllustration src="/report/visits.webp" />
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-end pb-[16vh] text-center">
+              <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
+              <motion.div variants={fadeUp}>
+                <BigNumber value={p.visit_count} active={a} />
+              </motion.div>
+              <Sub>次客户的门</Sub>
+            </div>
+          </PageShell>
+        </>
       ),
     });
 
@@ -498,90 +535,90 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 4. 客户
+    // 4. 客户（customer.webp 上半屏插画）
     list.push({
       key: "customers",
       node: (a) => (
-        <PageShell>
-          <motion.div variants={fadeUp}>
-            <BigNumber value={p.customer_count} active={a} />
-          </motion.div>
-          <Sub>家客户，记住了你的名字</Sub>
-          {p.top_customers.length > 0 && (
-            <div className="mt-8 w-full max-w-[320px] space-y-3">
-              {p.top_customers.slice(0, 5).map((c, i) => (
-                <motion.div
-                  key={c.name + i}
-                  variants={fadeUp}
-                  className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-3 border border-white/10"
-                >
-                  <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
-                    <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
-                    <span className="truncate max-w-[180px]">{c.name}</span>
-                  </span>
-                  <span className="text-white/50 text-sm">{c.count} 次</span>
-                </motion.div>
-              ))}
+        <>
+          <TopIllustration src="/report/customer.webp" />
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-end pb-[6vh] text-center">
+              <motion.div variants={fadeUp}>
+                <BigNumber value={p.customer_count} active={a} />
+              </motion.div>
+              <Sub>家客户，记住了你的名字</Sub>
+              {p.top_customers.length > 0 && (
+                <div className="mt-6 w-full max-w-[320px] space-y-2.5">
+                  {p.top_customers.slice(0, 5).map((c, i) => (
+                    <motion.div
+                      key={c.name + i}
+                      variants={fadeUp}
+                      className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-2.5 border border-white/10"
+                    >
+                      <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                        <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
+                        <span className="truncate max-w-[180px]">{c.name}</span>
+                      </span>
+                      <span className="text-white/50 text-sm">{c.count} 次</span>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
             </div>
-          )}
-        </PageShell>
+          </PageShell>
+        </>
       ),
     });
 
-    // 5. 最常拜访客户
-    if (p.top_customers.length > 0) {
-      const top = p.top_customers[0];
+    // 5. 客户矩阵墙（等距 3D 斜排彩色方块，替代原"最常拜访客户"单文案页）
+    if (p.customer_tiles && p.customer_tiles.length > 0) {
       list.push({
-        key: "top-customer",
-        node: () => (
-          <PageShell>
-            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>最常拜访的客户是</motion.div>
-            <motion.div
-              variants={fadeUp}
-              className="mt-6 font-bold"
-              style={{
-                fontSize: "clamp(28px, 8.5vw, 44px)",
-                lineHeight: 1.35,
-                background: ORANGE_GRADIENT,
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                color: "transparent",
-                maxWidth: "100%",
-                wordBreak: "break-all",
-              }}
-            >
-              {top.name}
-            </motion.div>
-            <Sub>
-              {top.count === 1 ? (
-                "你们的故事才刚刚开始"
-              ) : (
-                <>这家客户，你去了 <span className="text-[#ff9a5a] font-semibold">{top.count}</span> 次，比回家还勤</>
-              )}
-            </Sub>
+        key: "customer-matrix",
+        node: (a) => (
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                你的客户版图
+              </motion.h2>
+              <CustomerMatrix tiles={p.customer_tiles!} active={a} />
+              <Sub>{p.customer_count} 家客户，各有各的故事</Sub>
+            </div>
           </PageShell>
         ),
       });
     }
 
-    // 6. 里程
+    // 6. 里程（Runner 从左侧跑入横穿过屏）
     const roundTrips = p.distance_km / 2200;
     list.push({
       key: "distance",
       node: (a) => (
-        <PageShell>
-          <motion.div variants={fadeUp} className="flex items-baseline gap-2">
-            <BigNumber value={p.distance_km} decimals={p.distance_km < 100 ? 1 : 0} active={a} />
-            <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
-          </motion.div>
-          <Sub>
-            {roundTrips >= 0.5 ? (
-              <>相当于从深圳到北京，{roundTrips.toFixed(1)} 个来回</>
-            ) : (
-              <>相当于绕标准操场 {Math.round(p.distance_km / 0.4)} 圈</>
-            )}
-          </Sub>
-        </PageShell>
+        <>
+          {a && (
+            <motion.div
+              className="pointer-events-none absolute bottom-[12vh] left-0 z-10"
+              initial={{ x: -90, opacity: 0 }}
+              animate={{ x: 500, opacity: [0, 1, 1, 0] }}
+              transition={{ duration: 2.8, delay: 0.5, ease: "linear", times: [0, 0.08, 0.9, 1] }}
+              aria-hidden
+            >
+              <RunnerSvg size={56} running />
+            </motion.div>
+          )}
+          <PageShell>
+            <motion.div variants={fadeUp} className="flex items-baseline gap-2">
+              <BigNumber value={p.distance_km} decimals={p.distance_km < 100 ? 1 : 0} active={a} />
+              <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
+            </motion.div>
+            <Sub>
+              {roundTrips >= 0.5 ? (
+                <>相当于从深圳到北京，{roundTrips.toFixed(1)} 个来回</>
+              ) : (
+                <>相当于绕标准操场 {Math.round(p.distance_km / 0.4)} 圈</>
+              )}
+            </Sub>
+          </PageShell>
+        </>
       ),
     });
 
@@ -628,50 +665,66 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 9. 月度节奏
-    if (p.monthly.length > 0) {
-      const maxIdx = p.monthly.reduce((mi, m, i, arr) => (m.visit_count > arr[mi].visit_count ? i : mi), 0);
-      const topMonth = Number(p.monthly[maxIdx].month.split("-")[1]);
+    // 9. 拜访节奏波形（逐周，替代原月度柱状）
+    if (p.weekly && p.weekly.length > 1) {
+      const peakIdx = p.weekly.reduce((mi, w, i, arr) => (w.visit_count > arr[mi].visit_count ? i : mi), 0);
+      const peak = p.weekly[peakIdx];
+      const peakDate = new Date(peak.week_start);
+      const peakText = isNaN(peakDate.getTime())
+        ? null
+        : `${peakDate.getMonth() + 1} 月第 ${Math.ceil(peakDate.getDate() / 7)} 周是你的高峰（${peak.visit_count} 次）`;
       list.push({
-        key: "monthly",
+        key: "rhythm",
         node: (a) => (
-          <PageShell>
-            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天的每个月，你都没闲着</motion.div>
-            <BarChart
-              values={p.monthly.map((m) => m.visit_count)}
-              labels={p.monthly.map((m) => `${Number(m.month.split("-")[1])}月`)}
-              highlightIndex={maxIdx}
-              active={a}
-            />
-            <Sub>{topMonth} 月的你，最上头</Sub>
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                你的拜访节奏
+              </motion.h2>
+              <motion.div variants={fadeUp} className="mt-6 w-full">
+                <WeeklyWave weekly={p.weekly!} active={a} />
+              </motion.div>
+              {peakText && <Sub>{peakText}</Sub>}
+            </div>
           </PageShell>
         ),
       });
     }
 
-    // 10. 星期人格
+    // 10. 外勤日历点阵（逐日，含最长连续天数）
+    if (p.daily && p.daily.length > 0) {
+      const streak = longestStreak(p.daily);
+      list.push({
+        key: "calendar",
+        node: (a) => (
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(20px, 5.6vw, 28px)", lineHeight: 1.5 }}>
+                这个夏天，你有 <span className="text-[#ff9a5a]">{p.active_days}</span> 天在外奔波
+              </motion.h2>
+              <motion.div variants={fadeUp} className="mt-6 w-full">
+                <CalendarDots daily={p.daily!} active={a} />
+              </motion.div>
+              {streak > 1 && <Sub>最长连续 {streak} 天，脚步没有停</Sub>}
+            </div>
+          </PageShell>
+        ),
+      });
+    }
+
+    // 11. 一周作战风格（emoji 谱，替代原星期柱状）
     if (p.weekday && p.weekday.counts.length === 7 && p.weekday.top_count > 0) {
       const wdNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
       list.push({
         key: "weekday",
         node: (a) => (
-          <PageShell>
-            <motion.div
-              variants={fadeUp}
-              className="font-bold"
-              style={{
-                fontSize: "clamp(44px, 13vw, 68px)",
-                lineHeight: 1.2,
-                background: ORANGE_GRADIENT,
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                color: "transparent",
-              }}
-            >
-              {wdNames[p.weekday.top_weekday - 1] ?? ""}
-            </motion.div>
-            <Sub>是你最爱的工作日</Sub>
-            <BarChart values={p.weekday.counts} labels={["一", "二", "三", "四", "五", "六", "日"]} highlightIndex={p.weekday.top_weekday - 1} active={a} height={110} />
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                你最爱在<span style={{ background: ORANGE_GRADIENT, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{wdNames[p.weekday.top_weekday - 1] ?? ""}</span>打仗
+              </motion.h2>
+              <WeekdayEmoji counts={p.weekday.counts} active={a} />
+            </div>
           </PageShell>
         ),
       });
@@ -696,30 +749,21 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 12. 最早的一天
-    if (p.earliest_visit) {
+    // 12. 最早出发·窗户画框（earliest_days 前 5 天，兜底 earliest_visit 单窗）
+    const earliestDays = p.earliest_days && p.earliest_days.length > 0 ? p.earliest_days : p.earliest_visit ? [p.earliest_visit] : [];
+    if (earliestDays.length > 0) {
       list.push({
         key: "earliest",
-        node: () => (
-          <PageShell>
-            <motion.div
-              variants={fadeUp}
-              className="font-bold tabular-nums"
-              style={{
-                fontSize: "clamp(52px, 16vw, 84px)",
-                background: "linear-gradient(135deg, #ffd194, #ff9a5a)",
-                WebkitBackgroundClip: "text",
-                backgroundClip: "text",
-                color: "transparent",
-              }}
-            >
-              {p.earliest_visit!.time}
-            </motion.div>
-            <Sub>
-              城市还没醒，
-              <br />
-              你已经出发了
-            </Sub>
+        node: (a) => (
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
+                这些天，城市还没醒
+                <br />
+                你就出发了
+              </motion.h2>
+              <EarliestWindows days={earliestDays} active={a} />
+            </div>
           </PageShell>
         ),
       });
@@ -765,8 +809,8 @@ export default function SpecialReportPage() {
         key: "title",
         node: (a) => (
           <PageShell>
-            <motion.div variants={fadeUp} aria-hidden style={{ width: 150, height: 150 }}>
-              <LottieAnim src="/lottie/trophy.json" loop active={a} size={150} />
+            <motion.div variants={fadeUp} aria-hidden style={{ width: 120, height: 120 }}>
+              <LottieAnim src="/lottie/trophy.json" loop active={a} size={120} />
             </motion.div>
             <motion.div variants={fadeUp} className="mt-2 text-white/60 tracking-[0.3em]" style={{ fontSize: "clamp(13px, 3.6vw, 16px)" }}>
               这个夏天，{report.user.user_name} 的称号是
@@ -1003,7 +1047,10 @@ export default function SpecialReportPage() {
               </>
             )}
           </Sub>
-          <motion.div variants={fadeUp} className="mt-10 flex flex-col items-center gap-3">
+          <motion.div variants={fadeUp} className="mt-8" aria-hidden>
+            <RunnerSvg size={68} />
+          </motion.div>
+          <motion.div variants={fadeUp} className="mt-8 flex flex-col items-center gap-3">
             <button
               className="cursor-pointer rounded-full border border-[#ff9a5a]/60 bg-transparent px-8 py-2.5 text-[#ffb37e] transition hover:bg-[#ff9a5a]/10"
               style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}
@@ -1116,19 +1163,20 @@ export default function SpecialReportPage() {
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: "linear-gradient(160deg, #1a1a2e 0%, #16213e 55%, #1f1a33 100%)" }}>
-      {/* 漂移光斑：3 层纵深（远层慢而模糊），叠加陀螺仪视差 */}
+      {/* 漂移光斑：3 层纵深（远层慢而淡），叠加陀螺仪视差。
+          用 radial-gradient 软圆代替 filter: blur，动画只动 transform，移动端 GPU 友好 */}
       <div className="pointer-events-none absolute inset-0 overflow-hidden">
         <div className="absolute inset-0" style={{ transform: `translate(${tilt.x * 0.4}px, ${tilt.y * 0.4}px)` }}>
-          <div className="absolute left-[8%] top-[12%] h-56 w-56 rounded-full opacity-15" style={{ background: "#4a6fa5", filter: "blur(72px)", animation: "sr-drift2 34s ease-in-out infinite alternate" }} />
-          <div className="absolute bottom-[8%] right-[4%] h-64 w-64 rounded-full opacity-[0.13]" style={{ background: "#7a5cff", filter: "blur(80px)", animation: "sr-drift1 38s ease-in-out infinite alternate-reverse" }} />
+          <div className="absolute left-[8%] top-[12%] h-56 w-56 rounded-full opacity-15" style={{ background: "radial-gradient(circle, rgba(74,111,165,1) 0%, rgba(74,111,165,0) 70%)", willChange: "transform", animation: "sr-drift2 34s ease-in-out infinite alternate" }} />
+          <div className="absolute bottom-[8%] right-[4%] h-64 w-64 rounded-full opacity-[0.13]" style={{ background: "radial-gradient(circle, rgba(122,92,255,1) 0%, rgba(122,92,255,0) 70%)", willChange: "transform", animation: "sr-drift1 38s ease-in-out infinite alternate-reverse" }} />
         </div>
         <div className="absolute inset-0" style={{ transform: `translate(${tilt.x * 0.7}px, ${tilt.y * 0.7}px)` }}>
-          <div className="absolute -right-28 top-1/3 h-96 w-96 rounded-full opacity-25 blur-3xl" style={{ background: "#4a6fa5", animation: "sr-drift2 22s ease-in-out infinite alternate" }} />
-          <div className="absolute bottom-[-80px] left-1/4 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: "#ffd194", animation: "sr-drift1 26s ease-in-out infinite alternate-reverse" }} />
+          <div className="absolute -right-28 top-1/3 h-96 w-96 rounded-full opacity-25" style={{ background: "radial-gradient(circle, rgba(74,111,165,1) 0%, rgba(74,111,165,0) 70%)", willChange: "transform", animation: "sr-drift2 22s ease-in-out infinite alternate" }} />
+          <div className="absolute bottom-[-80px] left-1/4 h-72 w-72 rounded-full opacity-20" style={{ background: "radial-gradient(circle, rgba(255,209,148,1) 0%, rgba(255,209,148,0) 70%)", willChange: "transform", animation: "sr-drift1 26s ease-in-out infinite alternate-reverse" }} />
         </div>
         <div className="absolute inset-0" style={{ transform: `translate(${tilt.x}px, ${tilt.y}px)` }}>
-          <div className="absolute -left-24 -top-24 h-80 w-80 rounded-full opacity-30 blur-3xl" style={{ background: "#ff7e3f", animation: "sr-drift1 18s ease-in-out infinite alternate" }} />
-          <div className="absolute right-[8%] bottom-[28%] h-60 w-60 rounded-full opacity-20 blur-2xl" style={{ background: "#ff9a5a", animation: "sr-drift2 16s ease-in-out infinite alternate-reverse" }} />
+          <div className="absolute -left-24 -top-24 h-80 w-80 rounded-full opacity-30" style={{ background: "radial-gradient(circle, rgba(255,126,63,1) 0%, rgba(255,126,63,0) 70%)", willChange: "transform", animation: "sr-drift1 18s ease-in-out infinite alternate" }} />
+          <div className="absolute right-[8%] bottom-[28%] h-60 w-60 rounded-full opacity-20" style={{ background: "radial-gradient(circle, rgba(255,154,90,1) 0%, rgba(255,154,90,0) 70%)", willChange: "transform", animation: "sr-drift2 16s ease-in-out infinite alternate-reverse" }} />
         </div>
       </div>
       <style>{`

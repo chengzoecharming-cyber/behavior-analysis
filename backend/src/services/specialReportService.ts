@@ -86,6 +86,14 @@ interface SpecialReportPersonal {
   percentile: number | null;
   title: { name: string; desc: string } | null;
   zero_anomaly: boolean;
+  /** 区间内每一天的拜访数（无拜访补 0），日历点阵用 */
+  daily: { date: string; visit_count: number }[];
+  /** 按周聚合（周一开头），波形图用 */
+  weekly: { week_start: string; visit_count: number }[];
+  /** 每天最早签到中时间最早的 5 天（升序），「窗户画框」页用 */
+  earliest_days: { date: string; time: string }[];
+  /** 全量真实客户拜访计数（降序，最多 40 个），「客户矩阵墙」用 */
+  customer_tiles: TopCustomer[];
 }
 
 interface MemberHighlight {
@@ -195,7 +203,7 @@ async function aggregateCustomers(
   userId: string,
   start: string,
   end: string
-): Promise<{ customerCount: number; topCustomers: TopCustomer[] }> {
+): Promise<{ customerCount: number; topCustomers: TopCustomer[]; customerTiles: TopCustomer[] }> {
   const res = await pool.query<{ customer_name: string | null }>(
     `SELECT customer_name FROM visits
      WHERE user_id = $1 AND business_date BETWEEN $2 AND $3
@@ -213,6 +221,7 @@ async function aggregateCustomers(
   return {
     customerCount: counter.size,
     topCustomers: sorted.slice(0, 5).map(([name, count]) => ({ name, count })),
+    customerTiles: sorted.slice(0, 40).map(([name, count]) => ({ name, count })),
   };
 }
 
@@ -313,6 +322,61 @@ export async function computeSpecialReport(
     month: r.month,
     visit_count: Number(r.visit_count),
   }));
+
+  // 按天聚合（区间内每一天一条，无拜访补 0），日历点阵用
+  const dailyRes = await pool.query<{ date: string; visit_count: string }>(
+    `SELECT d.day::date::text AS date,
+            COALESCE(SUM(v.customer_count), 0)::int AS visit_count
+     FROM generate_series($2::date, $3::date, INTERVAL '1 day') AS d(day)
+     LEFT JOIN visits v
+       ON v.user_id = $1::text
+      AND v.business_date = d.day
+      AND NOT v.exclude_from_visit_count
+     GROUP BY d.day
+     ORDER BY d.day`,
+    [userId, start, end]
+  );
+  const daily = dailyRes.rows.map((r) => ({
+    date: r.date,
+    visit_count: Number(r.visit_count),
+  }));
+
+  // 按周聚合（date_trunc('week') 周一开头，覆盖区间涉及的所有周，无拜访补 0），波形图用
+  const weeklyRes = await pool.query<{ week_start: string; visit_count: string }>(
+    `SELECT w.week_start::date::text AS week_start,
+            COALESCE(SUM(v.customer_count), 0)::int AS visit_count
+     FROM generate_series(
+            date_trunc('week', $2::date),
+            date_trunc('week', $3::date),
+            INTERVAL '1 week'
+          ) AS w(week_start)
+     LEFT JOIN visits v
+       ON v.user_id = $1::text
+      AND v.business_date >= w.week_start
+      AND v.business_date < w.week_start + INTERVAL '1 week'
+      AND v.business_date BETWEEN $2::date AND $3::date
+      AND NOT v.exclude_from_visit_count
+     GROUP BY w.week_start
+     ORDER BY w.week_start`,
+    [userId, start, end]
+  );
+  const weekly = weeklyRes.rows.map((r) => ({
+    week_start: r.week_start,
+    visit_count: Number(r.visit_count),
+  }));
+
+  // 每天最早一次签到的北京时间 HH:MM，取最早的 5 天（升序），「窗户画框」页用
+  const earliestDaysRes = await pool.query<{ date: string; time: string }>(
+    `SELECT business_date::text AS date,
+            to_char(MIN(timestamp) AT TIME ZONE 'Asia/Shanghai', 'HH24:MI') AS time
+     FROM visits
+     WHERE user_id = $1 AND business_date BETWEEN $2 AND $3
+     GROUP BY business_date
+     ORDER BY time ASC
+     LIMIT 5`,
+    [userId, start, end]
+  );
+  const earliestDays = earliestDaysRes.rows.map((r) => ({ date: r.date, time: r.time }));
 
   // 按星期聚合（isodow：1=周一 … 7=周日）
   const weekdayRes = await pool.query<{ dow: number; visit_count: string }>(
@@ -424,7 +488,7 @@ export async function computeSpecialReport(
     }
   }
 
-  const { customerCount, topCustomers } = await aggregateCustomers(userId, start, end);
+  const { customerCount, topCustomers, customerTiles } = await aggregateCustomers(userId, start, end);
 
   // visits 表无城市字段（只有 location_name/address），城市列表暂返回空
   const cities: string[] = [];
@@ -456,6 +520,10 @@ export async function computeSpecialReport(
     percentile,
     title,
     zero_anomaly: anomalyCount === 0 && myVisitCount > 0,
+    daily,
+    weekly,
+    earliest_days: earliestDays,
+    customer_tiles: customerTiles,
   };
 
   const report: SpecialReport = {

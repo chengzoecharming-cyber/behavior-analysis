@@ -56,14 +56,18 @@ export class AmbientAudio {
       master.gain.setTargetAtTime(this.muted ? 0 : 0.05, ctx.currentTime, 1.2);
 
       // 每 4-8 秒一个轻音符琶音
-      const scheduleArp = () => {
-        this.playNote(ARP_NOTES[Math.floor(Math.random() * ARP_NOTES.length)], 0.02, 1.8);
-        this.arpTimer = window.setTimeout(scheduleArp, 4000 + Math.random() * 4000);
-      };
-      this.arpTimer = window.setTimeout(scheduleArp, 2500);
+      this.scheduleArp(2500);
     } catch (e) {
       console.warn("ambient audio unavailable:", e);
     }
+  }
+
+  private scheduleArp(delay: number) {
+    if (this.arpTimer !== null) window.clearTimeout(this.arpTimer);
+    this.arpTimer = window.setTimeout(() => {
+      this.playNote(ARP_NOTES[Math.floor(Math.random() * ARP_NOTES.length)], 0.02, 1.8);
+      this.scheduleArp(4000 + Math.random() * 4000);
+    }, delay);
   }
 
   private playNote(freq: number, volume: number, decay: number) {
@@ -105,6 +109,15 @@ export class AmbientAudio {
     this.muted = muted;
     if (this.ctx && this.master) {
       this.master.gain.setTargetAtTime(muted ? 0 : 0.05, this.ctx.currentTime, 0.3);
+    }
+    // 静音时停掉琶音定时器，取消静音后恢复调度
+    if (muted) {
+      if (this.arpTimer !== null) {
+        window.clearTimeout(this.arpTimer);
+        this.arpTimer = null;
+      }
+    } else if (this.ctx && this.arpTimer === null) {
+      this.scheduleArp(4000 + Math.random() * 4000);
     }
   }
 
