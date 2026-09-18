@@ -34,7 +34,13 @@ interface SpecialReportPersonal {
   cities: string[];
   city_count: number;
   anomaly_count: number;
-  points: { lat: number; lng: number }[];
+  points: { lat: number; lng: number; date: string }[];
+  monthly: { month: string; visit_count: number }[];
+  weekday: { counts: number[]; top_weekday: number; top_count: number };
+  longest_day: { date: string; distance_km: number } | null;
+  percentile: number | null;
+  title: { name: string; desc: string } | null;
+  zero_anomaly: boolean;
 }
 
 interface SpecialReportTeam {
@@ -42,6 +48,8 @@ interface SpecialReportTeam {
   total_visits: number;
   total_distance_km: number;
   top_members: { user_name: string; visit_count: number; distance_km: number }[];
+  star_member: { user_name: string; visit_count: number } | null;
+  most_improved: { user_name: string; growth: number } | null;
 }
 
 export interface SpecialReport {
@@ -200,21 +208,155 @@ export async function computeSpecialReport(
     [userId, start, end]
   );
 
-  // 足迹散点（去重；过多时均匀抽稀到 MAX_POINTS 个）
-  const pointsRes = await pool.query<{ lat: number; lng: number }>(
-    `SELECT DISTINCT lat, lng FROM visits
+  // 足迹散点（带 business_date，按时间升序；过多时按时间均匀抽稀到 MAX_POINTS 个）
+  const pointsRes = await pool.query<{ lat: number; lng: number; date: string }>(
+    `SELECT lat, lng, business_date::text AS date FROM visits
      WHERE user_id = $1 AND business_date BETWEEN $2 AND $3
-       AND lat IS NOT NULL AND lng IS NOT NULL`,
+       AND lat IS NOT NULL AND lng IS NOT NULL
+     ORDER BY timestamp ASC`,
     [userId, start, end]
   );
-  let points = pointsRes.rows.map((r) => ({ lat: r.lat, lng: r.lng }));
+  let points = pointsRes.rows;
   if (points.length > MAX_POINTS) {
     const step = points.length / MAX_POINTS;
-    const thinned: { lat: number; lng: number }[] = [];
+    const thinned: { lat: number; lng: number; date: string }[] = [];
     for (let i = 0; i < MAX_POINTS; i++) {
       thinned.push(points[Math.floor(i * step)]);
     }
     points = thinned;
+  }
+
+  // 按月份聚合（区间内每月一条，无拜访的月份补 0）
+  const monthlyRes = await pool.query<{ month: string; visit_count: string }>(
+    `SELECT to_char(m.month_start, 'YYYY-MM') AS month,
+            COALESCE(SUM(v.customer_count), 0)::int AS visit_count
+     FROM generate_series(
+            date_trunc('month', $2::date),
+            date_trunc('month', $3::date),
+            INTERVAL '1 month'
+          ) AS m(month_start)
+     LEFT JOIN visits v
+       ON v.user_id = $1::text
+      AND v.business_date >= m.month_start
+      AND v.business_date < m.month_start + INTERVAL '1 month'
+      AND NOT v.exclude_from_visit_count
+     GROUP BY m.month_start
+     ORDER BY m.month_start`,
+    [userId, start, end]
+  );
+  const monthly = monthlyRes.rows.map((r) => ({
+    month: r.month,
+    visit_count: Number(r.visit_count),
+  }));
+
+  // 按星期聚合（isodow：1=周一 … 7=周日）
+  const weekdayRes = await pool.query<{ dow: number; visit_count: string }>(
+    `SELECT EXTRACT(isodow FROM business_date)::int AS dow,
+            COALESCE(SUM(customer_count), 0)::int AS visit_count
+     FROM visits
+     WHERE user_id = $1 AND business_date BETWEEN $2 AND $3
+       AND NOT exclude_from_visit_count
+     GROUP BY dow`,
+    [userId, start, end]
+  );
+  const weekdayCounts = new Array(7).fill(0) as number[];
+  for (const r of weekdayRes.rows) {
+    weekdayCounts[r.dow - 1] = Number(r.visit_count);
+  }
+  let topWeekday = 1;
+  for (let i = 1; i < 7; i++) {
+    if (weekdayCounts[i] > weekdayCounts[topWeekday - 1]) topWeekday = i + 1;
+  }
+  const weekday = {
+    counts: weekdayCounts,
+    top_weekday: topWeekday,
+    top_count: weekdayCounts[topWeekday - 1],
+  };
+
+  // 里程最长的一天（routes 按 business_date 聚合）
+  const longestDayRes = await pool.query<{ date: string; distance_km: string }>(
+    `SELECT business_date::text AS date, SUM(distance_km)::float AS distance_km
+     FROM routes
+     WHERE user_id = $1 AND business_date BETWEEN $2 AND $3
+     GROUP BY business_date
+     ORDER BY distance_km DESC, business_date ASC
+     LIMIT 1`,
+    [userId, start, end]
+  );
+  const longestDay = longestDayRes.rows[0]
+    ? {
+        date: longestDayRes.rows[0].date,
+        distance_km: Math.round(Number(longestDayRes.rows[0].distance_km) * 10) / 10,
+      }
+    : null;
+
+  // 全公司同区间每人拜访数 + 里程（剔除 exclude_from_stats、剔除 0 拜访），
+  // 一趟聚合同时算拜访分位与里程分位
+  const companyRes = await pool.query<{
+    user_id: string;
+    visit_count: string;
+    distance_km: string;
+  }>(
+    `SELECT v.user_id,
+            SUM(v.customer_count)::int AS visit_count,
+            COALESCE(r.distance_km, 0)::float AS distance_km
+     FROM visits v
+     LEFT JOIN (
+       SELECT user_id, SUM(distance_km) AS distance_km
+       FROM routes
+       WHERE business_date BETWEEN $1 AND $2
+       GROUP BY user_id
+     ) r ON r.user_id = v.user_id
+     WHERE v.business_date BETWEEN $1 AND $2
+       AND NOT v.exclude_from_visit_count
+       AND NOT EXISTS (
+         SELECT 1 FROM users ux
+         WHERE ux.user_id = v.user_id AND ux.exclude_from_stats
+       )
+     GROUP BY v.user_id, r.distance_km
+     HAVING SUM(v.customer_count) > 0`,
+    [start, end]
+  );
+  const myVisitCount = Number(statsRes.rows[0]?.visit_count || 0);
+  const myDistance = Math.round(Number(distanceRes.rows[0]?.distance_km || 0) * 10) / 10;
+  let percentile: number | null = null;
+  let distancePercentile: number | null = null;
+  if (companyRes.rows.length > 0 && myVisitCount > 0) {
+    const beatenVisits = companyRes.rows.filter(
+      (r) => Number(r.visit_count) < myVisitCount
+    ).length;
+    percentile = Math.round((beatenVisits / companyRes.rows.length) * 100);
+    const beatenDistance = companyRes.rows.filter(
+      (r) => Number(r.distance_km) < myDistance
+    ).length;
+    distancePercentile = Math.round((beatenDistance / companyRes.rows.length) * 100);
+  }
+
+  // 区间天数（含首尾）
+  const periodDays =
+    Math.round(
+      (new Date(end + "T00:00:00+08:00").getTime() -
+        new Date(start + "T00:00:00+08:00").getTime()) /
+        86400000
+    ) + 1;
+
+  // 称号：按优先级取第一个命中
+  const anomalyCount = Number(anomalyRes.rows[0]?.count || 0);
+  const earliestTime = earliestRes.rows[0]?.time || null;
+  const activeDays = Number(statsRes.rows[0]?.active_days || 0);
+  let title: { name: string; desc: string } | null = null;
+  if (myVisitCount > 0) {
+    if (percentile !== null && percentile >= 90) {
+      title = { name: "卷王", desc: "拜访数跻身全公司前 10%" };
+    } else if (distancePercentile !== null && distancePercentile >= 90) {
+      title = { name: "行者", desc: "里程数跻身全公司前 10%" };
+    } else if (earliestTime !== null && earliestTime < "08:00") {
+      title = { name: "追光者", desc: "总是赶在城市醒来之前出发" };
+    } else if (activeDays >= periodDays * 0.5) {
+      title = { name: "劳模", desc: "一半以上的日子都在路上" };
+    } else {
+      title = { name: "稳步前行者", desc: "不疾不徐，日拱一卒" };
+    }
   }
 
   const { customerCount, topCustomers } = await aggregateCustomers(userId, start, end);
@@ -228,10 +370,10 @@ export async function computeSpecialReport(
   );
 
   const personal: SpecialReportPersonal = {
-    visit_count: Number(statsRes.rows[0]?.visit_count || 0),
+    visit_count: myVisitCount,
     customer_count: customerCount,
-    distance_km: Math.round(Number(distanceRes.rows[0]?.distance_km || 0) * 10) / 10,
-    active_days: Number(statsRes.rows[0]?.active_days || 0),
+    distance_km: myDistance,
+    active_days: activeDays,
     busiest_day: busiestRes.rows[0]
       ? { date: busiestRes.rows[0].date, visit_count: Number(busiestRes.rows[0].visit_count) }
       : null,
@@ -241,8 +383,14 @@ export async function computeSpecialReport(
     top_customers: topCustomers,
     cities,
     city_count: cities.length,
-    anomaly_count: Number(anomalyRes.rows[0]?.count || 0),
+    anomaly_count: anomalyCount,
     points,
+    monthly,
+    weekday,
+    longest_day: longestDay,
+    percentile,
+    title,
+    zero_anomaly: anomalyCount === 0 && myVisitCount > 0,
   };
 
   const report: SpecialReport = {
@@ -278,7 +426,14 @@ export async function computeSpecialReport(
       memberIds = res.rows.map((r) => r.user_id);
     } else {
       if (visible.length === 0) {
-        report.team = { member_count: 0, total_visits: 0, total_distance_km: 0, top_members: [] };
+        report.team = {
+          member_count: 0,
+          total_visits: 0,
+          total_distance_km: 0,
+          top_members: [],
+          star_member: null,
+          most_improved: null,
+        };
         return report;
       }
       const res = await pool.query<{ user_id: string }>(
@@ -289,7 +444,14 @@ export async function computeSpecialReport(
     }
 
     if (memberIds.length === 0) {
-      report.team = { member_count: 0, total_visits: 0, total_distance_km: 0, top_members: [] };
+      report.team = {
+        member_count: 0,
+        total_visits: 0,
+        total_distance_km: 0,
+        top_members: [],
+        star_member: null,
+        most_improved: null,
+      };
       return report;
     }
 
@@ -324,12 +486,56 @@ export async function computeSpecialReport(
     }));
     members.sort((a, b) => b.visit_count - a.visit_count);
 
+    // 进步最大：区间对半切，后半段拜访数 − 前半段拜访数，取增长最多且后半段 >0 的成员
+    let mostImproved: { user_name: string; growth: number } | null = null;
+    if (memberIds.length >= 2) {
+      const midDate = new Date(
+        new Date(start + "T00:00:00+08:00").getTime() +
+          Math.floor(periodDays / 2) * 86400000
+      );
+      const mid = `${midDate.getFullYear()}-${String(midDate.getMonth() + 1).padStart(2, "0")}-${String(midDate.getDate()).padStart(2, "0")}`;
+      const halvesRes = await pool.query<{
+        user_id: string;
+        user_name: string;
+        half: number;
+        visit_count: string;
+      }>(
+        `SELECT user_id, MAX(user_name) AS user_name,
+                CASE WHEN business_date < $4 THEN 0 ELSE 1 END AS half,
+                COALESCE(SUM(customer_count), 0)::int AS visit_count
+         FROM visits
+         WHERE user_id = ANY($1::text[]) AND business_date BETWEEN $2 AND $3
+           AND NOT exclude_from_visit_count
+         GROUP BY user_id, half`,
+        [memberIds, start, end, mid]
+      );
+      const halfMap = new Map<string, { name: string; first: number; second: number }>();
+      for (const r of halvesRes.rows) {
+        const entry = halfMap.get(r.user_id) || { name: r.user_name, first: 0, second: 0 };
+        if (r.half === 0) entry.first = Number(r.visit_count);
+        else entry.second = Number(r.visit_count);
+        halfMap.set(r.user_id, entry);
+      }
+      let bestGrowth = 0;
+      for (const { name, first, second } of halfMap.values()) {
+        const growth = second - first;
+        if (second > 0 && growth > bestGrowth) {
+          bestGrowth = growth;
+          mostImproved = { user_name: name, growth };
+        }
+      }
+    }
+
     report.team = {
       member_count: memberIds.length,
       total_visits: members.reduce((sum, m) => sum + m.visit_count, 0),
       total_distance_km:
         Math.round(members.reduce((sum, m) => sum + m.distance_km, 0) * 10) / 10,
       top_members: members.slice(0, 10),
+      star_member: members[0]
+        ? { user_name: members[0].user_name, visit_count: members[0].visit_count }
+        : null,
+      most_improved: mostImproved,
     };
   }
 

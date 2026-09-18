@@ -3,6 +3,7 @@ import { useParams } from "react-router-dom";
 import axios from "axios";
 import { AnimatePresence, motion } from "framer-motion";
 import AMapLoader from "@amap/amap-jsapi-loader";
+import html2canvas from "html2canvas";
 
 // ============ 类型（与后端契约一致） ============
 interface SpecialReport {
@@ -20,13 +21,21 @@ interface SpecialReport {
     cities: string[];
     city_count: number;
     anomaly_count: number;
-    points: { lat: number; lng: number }[];
+    points: { lat: number; lng: number; date: string }[]; // date 用于足迹动画排序
+    monthly: { month: string; visit_count: number }[]; // 'YYYY-MM'，含 0 月份
+    weekday: { counts: number[]; top_weekday: number; top_count: number }; // counts[0]=周一
+    longest_day: { date: string; distance_km: number } | null;
+    percentile: number | null; // 超过全公司 X% 的人（0-100）
+    title: { name: string; desc: string } | null;
+    zero_anomaly: boolean;
   };
   team?: {
     member_count: number;
     total_visits: number;
     total_distance_km: number;
     top_members: { user_name: string; visit_count: number; distance_km: number }[];
+    star_member: { user_name: string; visit_count: number } | null;
+    most_improved: { user_name: string; growth: number } | null;
   };
 }
 
@@ -60,6 +69,8 @@ const fadeUp = {
   show: { opacity: 1, y: 0, transition: { duration: 0.7, ease: "easeOut" as const } },
 };
 
+const ORANGE_GRADIENT = "linear-gradient(135deg, #ffd194, #ff9a5a 60%, #ff7e3f)";
+
 // ============ 小部件 ============
 function BigNumber({ value, decimals = 0, active }: { value: number; decimals?: number; active: boolean }) {
   const n = useCountUp(value, 1600, decimals, active);
@@ -69,7 +80,7 @@ function BigNumber({ value, decimals = 0, active }: { value: number; decimals?: 
       style={{
         fontSize: "clamp(64px, 22vw, 120px)",
         lineHeight: 1.05,
-        background: "linear-gradient(135deg, #ffd194, #ff9a5a 60%, #ff7e3f)",
+        background: ORANGE_GRADIENT,
         WebkitBackgroundClip: "text",
         backgroundClip: "text",
         color: "transparent",
@@ -103,8 +114,53 @@ function Sub({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ============ 足迹地图 ============
-function FootprintMap({ points, active }: { points: { lat: number; lng: number }[]; active: boolean }) {
+// ============ 迷你柱状图（纯 div + framer-motion 生长动画） ============
+function BarChart({
+  values,
+  labels,
+  highlightIndex,
+  active,
+  height = 140,
+}: {
+  values: number[];
+  labels: string[];
+  highlightIndex: number;
+  active: boolean;
+  height?: number;
+}) {
+  const max = Math.max(...values, 1);
+  return (
+    <motion.div variants={fadeUp} className="mt-8 flex w-full max-w-[320px] items-end justify-center gap-3" style={{ height }}>
+      {values.map((v, i) => {
+        const hot = i === highlightIndex;
+        const barH = Math.max((v / max) * (height - 34), 3);
+        return (
+          <div key={i} className="flex flex-1 flex-col items-center justify-end gap-2" style={{ height: "100%" }}>
+            <span className="tabular-nums" style={{ fontSize: 11, color: hot ? "#ffb37e" : "rgba(255,255,255,0.4)" }}>
+              {v > 0 ? v : ""}
+            </span>
+            <motion.div
+              className="w-full rounded-t-md"
+              style={{
+                background: hot ? ORANGE_GRADIENT : "rgba(255,255,255,0.16)",
+                boxShadow: hot ? "0 0 18px rgba(255,154,90,0.4)" : "none",
+              }}
+              initial={{ height: 0 }}
+              animate={active ? { height: barH } : { height: 0 }}
+              transition={{ duration: 0.8, delay: 0.4 + i * 0.12, ease: "easeOut" }}
+            />
+            <span className="text-white/60" style={{ fontSize: "clamp(11px, 3.2vw, 13px)" }}>
+              {labels[i]}
+            </span>
+          </div>
+        );
+      })}
+    </motion.div>
+  );
+}
+
+// ============ 足迹地图（按时间顺序点亮 + 连成橙色虚线） ============
+function FootprintMap({ points, active }: { points: { lat: number; lng: number; date: string }[]; active: boolean }) {
   const ref = useRef<HTMLDivElement>(null);
   const mapRef = useRef<any>(null);
   const [failed, setFailed] = useState(false);
@@ -112,6 +168,7 @@ function FootprintMap({ points, active }: { points: { lat: number; lng: number }
   useEffect(() => {
     if (!active || !ref.current || mapRef.current || points.length === 0) return;
     let cancelled = false;
+    const timers: number[] = [];
     AMapLoader.load({ key: AMAP_KEY, version: "2.0" })
       .then((AMap: any) => {
         if (cancelled || !ref.current) return;
@@ -121,17 +178,51 @@ function FootprintMap({ points, active }: { points: { lat: number; lng: number }
           viewMode: "2D",
         });
         mapRef.current = map;
-        points.forEach((p) => {
-          new AMap.CircleMarker({
-            center: [p.lng, p.lat],
-            radius: 6,
-            fillColor: "#ff9a5a",
-            strokeColor: "#ffd194",
-            strokeWeight: 1,
-            fillOpacity: 0.85,
-            zIndex: 50,
-          }).setMap(map);
+
+        // 按 date 排序，先布点（隐藏），再按时间顺序逐个亮起
+        const sorted = [...points].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+        const markers = sorted.map(
+          (p) =>
+            new AMap.CircleMarker({
+              center: [p.lng, p.lat],
+              radius: 6,
+              fillColor: "#ff9a5a",
+              strokeColor: "#ffd194",
+              strokeWeight: 1,
+              fillOpacity: 0,
+              strokeOpacity: 0,
+              zIndex: 50,
+            }).setMap(map)
+        );
+        // 点数多时加快节奏，保证整条动画在 ~4s 内完成
+        const interval = Math.max(18, Math.min(80, 4000 / Math.max(sorted.length, 1)));
+        markers.forEach((m: any, i: number) => {
+          timers.push(
+            window.setTimeout(() => {
+              if (cancelled) return;
+              m.setOptions({ fillOpacity: 0.85, strokeOpacity: 1 });
+            }, i * interval)
+          );
         });
+        // 全部亮起后，按时间顺序连成渐变橙色虚线
+        timers.push(
+          window.setTimeout(
+            () => {
+              if (cancelled) return;
+              new AMap.Polyline({
+                path: sorted.map((p) => [p.lng, p.lat]),
+                strokeColor: "#ff9a5a",
+                strokeWeight: 3,
+                strokeOpacity: 0.85,
+                strokeStyle: "dashed",
+                lineJoin: "round",
+                zIndex: 40,
+              }).setMap(map);
+              map.setFitView();
+            },
+            markers.length * interval + 300
+          )
+        );
         map.setFitView();
       })
       .catch((e: any) => {
@@ -140,6 +231,7 @@ function FootprintMap({ points, active }: { points: { lat: number; lng: number }
       });
     return () => {
       cancelled = true;
+      timers.forEach((t) => window.clearTimeout(t));
       mapRef.current?.destroy();
       mapRef.current = null;
     };
@@ -163,6 +255,9 @@ export default function SpecialReportPage() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(0);
   const [direction, setDirection] = useState(1);
+  const [shareImg, setShareImg] = useState<string | null>(null);
+  const [shareBusy, setShareBusy] = useState(false);
+  const shareCardRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef<number | null>(null);
   const wheelLock = useRef(false);
 
@@ -180,6 +275,20 @@ export default function SpecialReportPage() {
         setError(typeof msg === "string" ? msg : "战报加载失败");
       });
   }, [token]);
+
+  // ============ 生成分享卡片 ============
+  const onShare = useCallback(async () => {
+    if (!shareCardRef.current || shareBusy) return;
+    setShareBusy(true);
+    try {
+      const canvas = await html2canvas(shareCardRef.current, { backgroundColor: null, scale: 2, useCORS: true });
+      setShareImg(canvas.toDataURL("image/png"));
+    } catch (e) {
+      console.error("share card render failed:", e);
+    } finally {
+      setShareBusy(false);
+    }
+  }, [shareBusy]);
 
   // ============ 分镜组装 ============
   type Slide = { key: string; node: (active: boolean) => React.ReactNode };
@@ -263,7 +372,34 @@ export default function SpecialReportPage() {
       ),
     });
 
-    // 3. 客户
+    // 3. 超越分位
+    if (p.percentile != null) {
+      list.push({
+        key: "percentile",
+        node: (a) => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="flex items-baseline gap-1">
+              <BigNumber value={p.percentile!} active={a} />
+              <span
+                className="font-bold"
+                style={{
+                  fontSize: "clamp(28px, 8vw, 44px)",
+                  background: ORANGE_GRADIENT,
+                  WebkitBackgroundClip: "text",
+                  backgroundClip: "text",
+                  color: "transparent",
+                }}
+              >
+                %
+              </span>
+            </motion.div>
+            <Sub>超过了全公司 {p.percentile!}% 的同事</Sub>
+          </PageShell>
+        ),
+      });
+    }
+
+    // 4. 客户
     list.push({
       key: "customers",
       node: (a) => (
@@ -293,7 +429,43 @@ export default function SpecialReportPage() {
       ),
     });
 
-    // 4. 里程
+    // 5. 最常拜访客户
+    if (p.top_customers.length > 0) {
+      const top = p.top_customers[0];
+      list.push({
+        key: "top-customer",
+        node: () => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>最常拜访的客户是</motion.div>
+            <motion.div
+              variants={fadeUp}
+              className="mt-6 font-bold"
+              style={{
+                fontSize: "clamp(28px, 8.5vw, 44px)",
+                lineHeight: 1.35,
+                background: ORANGE_GRADIENT,
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+                maxWidth: "100%",
+                wordBreak: "break-all",
+              }}
+            >
+              {top.name}
+            </motion.div>
+            <Sub>
+              {top.count === 1 ? (
+                "你们的故事才刚刚开始"
+              ) : (
+                <>这家客户，你去了 <span className="text-[#ff9a5a] font-semibold">{top.count}</span> 次，比回家还勤</>
+              )}
+            </Sub>
+          </PageShell>
+        ),
+      });
+    }
+
+    // 6. 里程
     const roundTrips = p.distance_km / 2200;
     list.push({
       key: "distance",
@@ -314,7 +486,30 @@ export default function SpecialReportPage() {
       ),
     });
 
-    // 5. 足迹地图（无坐标点则跳过）
+    // 7. 单日最长里程
+    if (p.longest_day) {
+      list.push({
+        key: "longest-day",
+        node: (a) => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(26px, 7.5vw, 38px)" }}>
+              {fmtDate(p.longest_day!.date)}
+            </motion.div>
+            <motion.div variants={fadeUp} className="flex items-baseline gap-2">
+              <BigNumber value={p.longest_day!.distance_km} decimals={p.longest_day!.distance_km < 100 ? 1 : 0} active={a} />
+              <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
+            </motion.div>
+            <Sub>
+              你一天跑了这么远，
+              <br />
+              车轮见证了你的拼
+            </Sub>
+          </PageShell>
+        ),
+      });
+    }
+
+    // 8. 足迹地图（无坐标点则跳过）
     if (p.points.length > 0) {
       list.push({
         key: "map",
@@ -334,7 +529,56 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 6. 最忙的一天
+    // 9. 月度节奏
+    if (p.monthly.length > 0) {
+      const maxIdx = p.monthly.reduce((mi, m, i, arr) => (m.visit_count > arr[mi].visit_count ? i : mi), 0);
+      const topMonth = Number(p.monthly[maxIdx].month.split("-")[1]);
+      list.push({
+        key: "monthly",
+        node: (a) => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天的每个月，你都没闲着</motion.div>
+            <BarChart
+              values={p.monthly.map((m) => m.visit_count)}
+              labels={p.monthly.map((m) => `${Number(m.month.split("-")[1])}月`)}
+              highlightIndex={maxIdx}
+              active={a}
+            />
+            <Sub>{topMonth} 月的你，最上头</Sub>
+          </PageShell>
+        ),
+      });
+    }
+
+    // 10. 星期人格
+    if (p.weekday && p.weekday.counts.length === 7 && p.weekday.top_count > 0) {
+      const wdNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+      list.push({
+        key: "weekday",
+        node: (a) => (
+          <PageShell>
+            <motion.div
+              variants={fadeUp}
+              className="font-bold"
+              style={{
+                fontSize: "clamp(44px, 13vw, 68px)",
+                lineHeight: 1.2,
+                background: ORANGE_GRADIENT,
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+              }}
+            >
+              {wdNames[p.weekday.top_weekday] ?? ""}
+            </motion.div>
+            <Sub>是你最爱的工作日</Sub>
+            <BarChart values={p.weekday.counts} labels={["一", "二", "三", "四", "五", "六", "日"]} highlightIndex={p.weekday.top_weekday} active={a} height={110} />
+          </PageShell>
+        ),
+      });
+    }
+
+    // 11. 最忙的一天
     if (p.busiest_day) {
       list.push({
         key: "busiest",
@@ -353,7 +597,7 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 7. 最早的一天
+    // 12. 最早的一天
     if (p.earliest_visit) {
       list.push({
         key: "earliest",
@@ -382,11 +626,63 @@ export default function SpecialReportPage() {
       });
     }
 
+    // 13. 全勤彩蛋（0 异常才展示）
+    if (p.zero_anomaly) {
+      list.push({
+        key: "clean",
+        node: (a) => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="flex items-baseline gap-2">
+              <BigNumber value={0} active={a} />
+              <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>异常</span>
+            </motion.div>
+            <Sub>
+              三个月，干干净净。
+              <br />
+              稳。
+            </Sub>
+          </PageShell>
+        ),
+      });
     }
 
-    // 8. 团队榜
+    // 14. 称号页（压轴）
+    if (p.title) {
+      list.push({
+        key: "title",
+        node: () => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="text-white/60 tracking-[0.3em]" style={{ fontSize: "clamp(13px, 3.6vw, 16px)" }}>
+              这个夏天，你的称号是
+            </motion.div>
+            <motion.div
+              variants={fadeUp}
+              className="mt-8 font-bold"
+              style={{
+                fontSize: "clamp(64px, 22vw, 110px)",
+                lineHeight: 1.2,
+                letterSpacing: "0.12em",
+                background: ORANGE_GRADIENT,
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+                textShadow: "0 0 60px rgba(255,154,90,0.25)",
+              }}
+            >
+              {p.title!.name}
+            </motion.div>
+            <Sub>{p.title!.desc}</Sub>
+          </PageShell>
+        ),
+      });
+    }
+
+    }
+
+    // 15. 团队榜
     if (report.team && report.team.top_members.length > 0) {
       const medal = ["#ffd700", "#c0c0c0", "#cd7f32"];
+      const t = report.team;
       list.push({
         key: "team",
         node: () => (
@@ -396,10 +692,32 @@ export default function SpecialReportPage() {
                 你身后，还有一支队伍
               </motion.h2>
               <Sub>
-                {report.team!.member_count} 人同行 · 全队 {report.team!.total_visits} 次拜访 · {Math.round(report.team!.total_distance_km)} 公里
+                {t.member_count} 人同行 · 全队 {t.total_visits} 次拜访 · {Math.round(t.total_distance_km)} 公里
               </Sub>
-              <div className="mt-6 w-full max-w-[340px] space-y-2 overflow-hidden">
-                {report.team!.top_members.slice(0, 10).map((m, i) => (
+              {(t.star_member || t.most_improved) && (
+                <div className="mt-4 flex w-full max-w-[340px] flex-col gap-2">
+                  {t.star_member && (
+                    <motion.div variants={fadeUp} className="flex items-center justify-between rounded-xl border border-[#ff9a5a]/30 bg-[#ff9a5a]/10 px-4 py-2.5">
+                      <span className="text-[#ffb37e]" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>🏆 本区之星</span>
+                      <span className="text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                        {t.star_member.user_name}
+                        <span className="ml-2 text-white/50 text-sm">{t.star_member.visit_count} 次</span>
+                      </span>
+                    </motion.div>
+                  )}
+                  {t.most_improved && (
+                    <motion.div variants={fadeUp} className="flex items-center justify-between rounded-xl border border-[#ff9a5a]/30 bg-[#ff9a5a]/10 px-4 py-2.5">
+                      <span className="text-[#ffb37e]" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>📈 进步最大</span>
+                      <span className="text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                        {t.most_improved.user_name}
+                        <span className="ml-2 text-white/50 text-sm">+{t.most_improved.growth} 次</span>
+                      </span>
+                    </motion.div>
+                  )}
+                </div>
+              )}
+              <div className="mt-5 w-full max-w-[340px] space-y-2 overflow-hidden">
+                {t.top_members.slice(0, 10).map((m, i) => (
                   <motion.div
                     key={m.user_name + i}
                     variants={fadeUp}
@@ -425,7 +743,7 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 9. 结尾
+    // 16. 结尾 + 分享卡片
     list.push({
       key: "finale",
       node: (a) => (
@@ -449,23 +767,32 @@ export default function SpecialReportPage() {
               </>
             )}
           </Sub>
-          <motion.button
-            variants={fadeUp}
-            className="mt-10 cursor-pointer rounded-full border border-[#ff9a5a]/60 bg-transparent px-8 py-2.5 text-[#ffb37e] transition hover:bg-[#ff9a5a]/10"
-            style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}
-            onClick={() => {
-              setDirection(-1);
-              setPage(0);
-            }}
-          >
-            从头再看一遍
-          </motion.button>
+          <motion.div variants={fadeUp} className="mt-10 flex flex-col items-center gap-3">
+            <button
+              className="cursor-pointer rounded-full border border-[#ff9a5a]/60 bg-transparent px-8 py-2.5 text-[#ffb37e] transition hover:bg-[#ff9a5a]/10"
+              style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}
+              onClick={() => {
+                setDirection(-1);
+                setPage(0);
+              }}
+            >
+              从头再看一遍
+            </button>
+            <button
+              className="cursor-pointer rounded-full border-none px-8 py-2.5 font-semibold text-[#1a1a2e] transition hover:opacity-90 disabled:opacity-60"
+              style={{ fontSize: "clamp(14px, 3.8vw, 16px)", background: ORANGE_GRADIENT }}
+              onClick={onShare}
+              disabled={shareBusy}
+            >
+              {shareBusy ? "生成中…" : "生成分享卡片"}
+            </button>
+          </motion.div>
         </PageShell>
       ),
     });
 
     return list;
-  }, [report]);
+  }, [report, onShare, shareBusy]);
 
   const total = slides.length;
 
@@ -528,6 +855,13 @@ export default function SpecialReportPage() {
   }
 
   const slide = slides[page];
+  const p = report.personal;
+  const sharePeriod = `${fmtPeriodS(report.period.start)} — ${fmtPeriodS(report.period.end)}`;
+
+  function fmtPeriodS(s: string) {
+    const d = new Date(s);
+    return isNaN(d.getTime()) ? s : `${d.getMonth() + 1}.${d.getDate()}`;
+  }
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: "linear-gradient(160deg, #1a1a2e 0%, #16213e 55%, #1f1a33 100%)" }}>
@@ -586,6 +920,90 @@ export default function SpecialReportPage() {
           </div>
         )}
       </div>
+
+      {/* 隐藏的分享卡片 DOM（html2canvas 截图源） */}
+      <div style={{ position: "fixed", left: -2000, top: 0, pointerEvents: "none" }}>
+        <div
+          ref={shareCardRef}
+          style={{
+            width: 375,
+            height: 600,
+            padding: "48px 32px",
+            background: "linear-gradient(160deg, #1a1a2e 0%, #16213e 55%, #1f1a33 100%)",
+            color: "#fff",
+            display: "flex",
+            flexDirection: "column",
+            alignItems: "center",
+            fontFamily: "system-ui, -apple-system, sans-serif",
+          }}
+        >
+          <div style={{ color: "rgba(255,255,255,0.5)", letterSpacing: "0.4em", fontSize: 13 }}>2026 · 盛夏战报</div>
+          <div style={{ marginTop: 20, fontSize: 34, fontWeight: 700 }}>{report.user.user_name}</div>
+          <div style={{ marginTop: 6, color: "rgba(255,255,255,0.55)", fontSize: 14 }}>{report.user.department}</div>
+          <div style={{ marginTop: 8, color: "rgba(255,255,255,0.45)", fontSize: 13 }}>{sharePeriod}</div>
+          {p.title && (
+            <div
+              style={{
+                marginTop: 26,
+                fontSize: 40,
+                fontWeight: 700,
+                letterSpacing: "0.12em",
+                color: "#ff9a5a",
+              }}
+            >
+              {p.title.name}
+            </div>
+          )}
+          <div style={{ marginTop: p.title ? 24 : 48, width: "100%", display: "flex", justifyContent: "space-around" }}>
+            {[
+              { label: "拜访次数", value: p.visit_count, unit: "次" },
+              { label: "客户", value: p.customer_count, unit: "家" },
+              { label: "里程", value: Math.round(p.distance_km), unit: "km" },
+            ].map((it) => (
+              <div key={it.label} style={{ textAlign: "center" }}>
+                <div
+                  style={{
+                    fontSize: 34,
+                    fontWeight: 700,
+                    color: "#ff9a5a",
+                  }}
+                >
+                  {it.value.toLocaleString()}
+                </div>
+                <div style={{ marginTop: 4, color: "rgba(255,255,255,0.55)", fontSize: 13 }}>
+                  {it.label} · {it.unit}
+                </div>
+              </div>
+            ))}
+          </div>
+          <div style={{ flex: 1 }} />
+          <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 12, letterSpacing: "0.2em" }}>山海自有归期 · 下一程继续加油</div>
+        </div>
+      </div>
+
+      {/* 分享卡片预览弹层 */}
+      <AnimatePresence>
+        {shareImg && (
+          <motion.div
+            className="fixed inset-0 z-50 flex flex-col items-center justify-center bg-black/80 px-8"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setShareImg(null)}
+          >
+            <motion.img
+              src={shareImg}
+              alt="分享卡片"
+              initial={{ scale: 0.85, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              transition={{ duration: 0.35, ease: "easeOut" }}
+              className="max-h-[72vh] w-auto rounded-2xl border border-white/15 shadow-2xl"
+            />
+            <div className="mt-5 text-white/70" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>长按保存图片</div>
+            <div className="mt-1 text-white/35 text-xs">点击任意处关闭</div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
