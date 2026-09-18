@@ -4,7 +4,8 @@ import axios from "axios";
 import { AnimatePresence, motion } from "framer-motion";
 import AMapLoader from "@amap/amap-jsapi-loader";
 import html2canvas from "html2canvas";
-
+import { Lottie } from "lottie-react";
+import { AmbientAudio } from "../components/report/ambientAudio";
 // ============ 类型（与后端契约一致） ============
 interface SpecialReport {
   scope: "staff" | "manager" | "admin";
@@ -36,7 +37,18 @@ interface SpecialReport {
     top_members: { user_name: string; visit_count: number; distance_km: number }[];
     star_member: { user_name: string; visit_count: number } | null;
     most_improved: { user_name: string; growth: number } | null;
+    member_highlights?: {
+      user_name: string;
+      visit_count: number;
+      distance_km: number;
+      title_name: string | null; // 卷王/行者/追光者/劳模
+      top_customer_name: string | null;
+      top_customer_count: number;
+      longest_day_km: number;
+    }[]; // 按拜访数降序
   };
+  // 仅 admin：战报打开情况
+  open_stats?: { user_name: string; user_id: string; views: number; last_viewed: string | null }[];
 }
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "";
@@ -75,8 +87,11 @@ const ORANGE_GRADIENT = "linear-gradient(135deg, #ffd194, #ff9a5a 60%, #ff7e3f)"
 function BigNumber({ value, decimals = 0, active }: { value: number; decimals?: number; active: boolean }) {
   const n = useCountUp(value, 1600, decimals, active);
   return (
-    <div
+    <motion.div
       className="font-bold tabular-nums"
+      // 数字落地后做一次 spring 回弹（1600ms 滚动结束 → 1.06 → 1）
+      animate={active ? { scale: [1, 1, 1.06, 1] } : { scale: 1 }}
+      transition={{ duration: 2.2, times: [0, 0.73, 0.86, 1], ease: "easeOut" }}
       style={{
         fontSize: "clamp(64px, 22vw, 120px)",
         lineHeight: 1.05,
@@ -88,8 +103,14 @@ function BigNumber({ value, decimals = 0, active }: { value: number; decimals?: 
       }}
     >
       {decimals > 0 ? n.toFixed(decimals) : Math.round(n).toLocaleString()}
-    </div>
+    </motion.div>
   );
+}
+
+// ============ Lottie 动画（/lottie 下的静态 JSON，仅在 slide 激活时渲染） ============
+function LottieAnim({ src, loop, active, size }: { src: string; loop: boolean; active: boolean; size: number }) {
+  if (!active) return null;
+  return <Lottie src={src} autoplay loop={loop} style={{ width: size, height: size }} />;
 }
 
 function PageShell({ children, center = true }: { children: React.ReactNode; center?: boolean }) {
@@ -260,6 +281,49 @@ export default function SpecialReportPage() {
   const shareCardRef = useRef<HTMLDivElement>(null);
   const touchStartY = useRef<number | null>(null);
   const wheelLock = useRef(false);
+  const audioRef = useRef<AmbientAudio | null>(null);
+  const [audioStarted, setAudioStarted] = useState(false);
+  const [muted, setMuted] = useState(false);
+  const [tilt, setTilt] = useState({ x: 0, y: 0 });
+
+  // 陀螺仪视差：光斑层按 gamma/beta 小幅度平移（iOS 权限在音乐按钮点击里申请）
+  useEffect(() => {
+    const clamp1 = (v: number) => Math.max(-1, Math.min(1, v));
+    const onOrient = (e: DeviceOrientationEvent) => {
+      const nx = Math.round(clamp1((e.gamma ?? 0) / 45) * 15);
+      const ny = Math.round(clamp1(((e.beta ?? 45) - 45) / 45) * 15);
+      setTilt((prev) => (prev.x === nx && prev.y === ny ? prev : { x: nx, y: ny }));
+    };
+    window.addEventListener("deviceorientation", onOrient);
+    return () => window.removeEventListener("deviceorientation", onOrient);
+  }, []);
+
+  // 卸载时关闭 AudioContext
+  useEffect(
+    () => () => {
+      audioRef.current?.dispose();
+      audioRef.current = null;
+    },
+    []
+  );
+
+  // 音乐按钮：首次点击启动 BGM（必须用户手势），之后切换静音；顺带申请陀螺仪权限
+  const onMusicClick = useCallback(() => {
+    const doe = (window as unknown as { DeviceOrientationEvent?: { requestPermission?: () => Promise<string> } })
+      .DeviceOrientationEvent;
+    if (doe && typeof doe.requestPermission === "function") {
+      doe.requestPermission().catch(() => {});
+    }
+    if (!audioStarted) {
+      audioRef.current = new AmbientAudio();
+      audioRef.current.start();
+      setAudioStarted(true);
+      return;
+    }
+    const m = !muted;
+    audioRef.current?.setMuted(m);
+    setMuted(m);
+  }, [audioStarted, muted]);
 
   useEffect(() => {
     if (!token) {
@@ -325,6 +389,41 @@ export default function SpecialReportPage() {
     }
 
     const list: Slide[] = [];
+
+    // 0. 开场悬念页：两行字逐行淡入，~4.7s 后自动进入封面；点击/上滑可跳过
+    list.push({
+      key: "intro",
+      node: () => (
+        <div
+          className="absolute inset-0 cursor-pointer"
+          onClick={() => {
+            setDirection(1);
+            setPage(1);
+          }}
+        >
+          <div className="absolute inset-0 flex flex-col items-center justify-center px-10 text-center" style={{ background: "#0d0d17" }}>
+            <motion.p
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 0.2, duration: 0.9, ease: "easeOut" }}
+              className="text-white/85"
+              style={{ fontSize: "clamp(19px, 5.4vw, 26px)", lineHeight: 1.9, letterSpacing: "0.08em" }}
+            >
+              2026 年的夏天，就要过去了。
+            </motion.p>
+            <motion.p
+              initial={{ opacity: 0, y: 12 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ delay: 2.2, duration: 0.9, ease: "easeOut" }}
+              className="mt-5 text-white/85"
+              style={{ fontSize: "clamp(19px, 5.4vw, 26px)", lineHeight: 1.9, letterSpacing: "0.08em" }}
+            >
+              但有些数字，值得被记住。
+            </motion.p>
+          </div>
+        </div>
+      ),
+    });
 
     // 1. 封面
     list.push({
@@ -664,14 +763,17 @@ export default function SpecialReportPage() {
       })();
       list.push({
         key: "title",
-        node: () => (
+        node: (a) => (
           <PageShell>
-            <motion.div variants={fadeUp} className="text-white/60 tracking-[0.3em]" style={{ fontSize: "clamp(13px, 3.6vw, 16px)" }}>
+            <motion.div variants={fadeUp} aria-hidden style={{ width: 150, height: 150 }}>
+              <LottieAnim src="/lottie/trophy.json" loop active={a} size={150} />
+            </motion.div>
+            <motion.div variants={fadeUp} className="mt-2 text-white/60 tracking-[0.3em]" style={{ fontSize: "clamp(13px, 3.6vw, 16px)" }}>
               这个夏天，{report.user.user_name} 的称号是
             </motion.div>
             <motion.div
               variants={fadeUp}
-              className="mt-8 font-bold"
+              className="mt-4 font-bold"
               style={{
                 fontSize: "clamp(64px, 22vw, 110px)",
                 lineHeight: 1.2,
@@ -773,11 +875,115 @@ export default function SpecialReportPage() {
       });
     }
 
+    // 15b. 成员图鉴（member_highlights 为空/undefined 时整页跳过）
+    if (report.team?.member_highlights && report.team.member_highlights.length > 0) {
+      const mh = report.team.member_highlights;
+      list.push({
+        key: "member-highlights",
+        node: () => (
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                成员图鉴
+              </motion.h2>
+              <Sub>这个夏天，各有各的精彩</Sub>
+              <div className="mt-5 w-full max-w-[340px] space-y-2 overflow-hidden">
+                {mh.slice(0, 8).map((m, i) => {
+                  const fact =
+                    m.top_customer_count >= 3 && m.top_customer_name
+                      ? `最爱去 ${m.top_customer_name}，去了 ${m.top_customer_count} 次`
+                      : m.longest_day_km >= 100
+                        ? `一天跑过 ${Math.round(m.longest_day_km)} 公里`
+                        : `拜访了 ${m.visit_count} 次`;
+                  return (
+                    <motion.div
+                      key={m.user_name + i}
+                      variants={fadeUp}
+                      className="flex items-center gap-2.5 rounded-xl bg-white/5 border border-white/10 px-4 py-2.5"
+                    >
+                      <span className="w-14 shrink-0 truncate text-left text-white/90 font-medium" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                        {m.user_name}
+                      </span>
+                      {m.title_name && (
+                        <span
+                          className="shrink-0 rounded-full px-2 py-0.5 font-medium"
+                          style={{ fontSize: 11, background: "rgba(255,154,90,0.18)", color: "#ffb37e", border: "1px solid rgba(255,154,90,0.4)" }}
+                        >
+                          {m.title_name}
+                        </span>
+                      )}
+                      <span className="flex-1 truncate text-right text-white/55" style={{ fontSize: "clamp(12px, 3.4vw, 14px)" }}>
+                        {fact}
+                      </span>
+                    </motion.div>
+                  );
+                })}
+              </div>
+            </div>
+          </PageShell>
+        ),
+      });
+    }
+
+    // 15c. 战报的回响（仅 admin，open_stats 为 undefined 时整页跳过）
+    if (report.open_stats !== undefined) {
+      const fmtViewed = (s: string | null) => {
+        if (!s) return "—";
+        const d = new Date(s);
+        return isNaN(d.getTime())
+          ? s
+          : `${d.getMonth() + 1}月${d.getDate()}日 ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+      };
+      const rows = [...report.open_stats].sort((a, b) => b.views - a.views).slice(0, 10);
+      list.push({
+        key: "open-stats",
+        node: () => (
+          <PageShell center={false}>
+            <div className="flex h-full w-full flex-col items-center justify-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                战报的回响
+              </motion.h2>
+              <Sub>谁已经看过了</Sub>
+              {rows.length === 0 ? (
+                <motion.div variants={fadeUp} className="mt-10 text-white/50" style={{ fontSize: "clamp(14px, 3.8vw, 16px)", lineHeight: 1.9 }}>
+                  还没有人打开，
+                  <br />
+                  快去推送吧
+                </motion.div>
+              ) : (
+                <div className="mt-5 w-full max-w-[340px] space-y-2 overflow-hidden">
+                  {rows.map((r, i) => (
+                    <motion.div
+                      key={r.user_id + i}
+                      variants={fadeUp}
+                      className="flex items-center gap-3 rounded-xl bg-white/5 border border-white/10 px-4 py-2.5"
+                    >
+                      <span className="flex-1 truncate text-left text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                        {r.user_name}
+                      </span>
+                      <span className="shrink-0 tabular-nums text-[#ff9a5a] text-sm">{r.views} 次</span>
+                      <span className="shrink-0 tabular-nums text-white/40 text-xs">{fmtViewed(r.last_viewed)}</span>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </PageShell>
+        ),
+      });
+    }
+
     // 16. 结尾 + 分享卡片
     list.push({
       key: "finale",
       node: (a) => (
         <PageShell>
+          {/* 进入时播放一轮烟花 */}
+          {a && (
+            <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center" aria-hidden>
+              <LottieAnim src="/lottie/fireworks.json" loop={false} active={a} size={280} />
+            </div>
+          )}
           <motion.div variants={fadeUp} className="flex items-baseline gap-2">
             <BigNumber value={p.visit_count > 0 ? p.active_days : (report.team?.total_visits ?? 0)} active={a} />
             <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>{p.visit_count > 0 ? "天" : "次拜访"}</span>
@@ -863,6 +1069,21 @@ export default function SpecialReportPage() {
     };
   }, [page, goTo]);
 
+  // ============ 开场页自动进入封面 / 翻页音效 ============
+  const currentKey = slides[page]?.key;
+  useEffect(() => {
+    if (currentKey !== "intro") return;
+    const t = window.setTimeout(() => {
+      setDirection(1);
+      setPage(1);
+    }, 4700);
+    return () => window.clearTimeout(t);
+  }, [currentKey]);
+
+  useEffect(() => {
+    if (page > 0) audioRef.current?.playWhoosh();
+  }, [page]);
+
   // ============ 错误态 ============
   if (error) {
     return (
@@ -895,10 +1116,21 @@ export default function SpecialReportPage() {
 
   return (
     <div className="fixed inset-0 overflow-hidden" style={{ background: "linear-gradient(160deg, #1a1a2e 0%, #16213e 55%, #1f1a33 100%)" }}>
-      {/* 漂移光斑 */}
-      <div className="pointer-events-none absolute -left-24 -top-24 h-80 w-80 rounded-full opacity-30 blur-3xl" style={{ background: "#ff7e3f", animation: "sr-drift1 18s ease-in-out infinite alternate" }} />
-      <div className="pointer-events-none absolute -right-28 top-1/3 h-96 w-96 rounded-full opacity-25 blur-3xl" style={{ background: "#4a6fa5", animation: "sr-drift2 22s ease-in-out infinite alternate" }} />
-      <div className="pointer-events-none absolute bottom-[-80px] left-1/4 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: "#ffd194", animation: "sr-drift1 26s ease-in-out infinite alternate-reverse" }} />
+      {/* 漂移光斑：3 层纵深（远层慢而模糊），叠加陀螺仪视差 */}
+      <div className="pointer-events-none absolute inset-0 overflow-hidden">
+        <div className="absolute inset-0" style={{ transform: `translate(${tilt.x * 0.4}px, ${tilt.y * 0.4}px)` }}>
+          <div className="absolute left-[8%] top-[12%] h-56 w-56 rounded-full opacity-15" style={{ background: "#4a6fa5", filter: "blur(72px)", animation: "sr-drift2 34s ease-in-out infinite alternate" }} />
+          <div className="absolute bottom-[8%] right-[4%] h-64 w-64 rounded-full opacity-[0.13]" style={{ background: "#7a5cff", filter: "blur(80px)", animation: "sr-drift1 38s ease-in-out infinite alternate-reverse" }} />
+        </div>
+        <div className="absolute inset-0" style={{ transform: `translate(${tilt.x * 0.7}px, ${tilt.y * 0.7}px)` }}>
+          <div className="absolute -right-28 top-1/3 h-96 w-96 rounded-full opacity-25 blur-3xl" style={{ background: "#4a6fa5", animation: "sr-drift2 22s ease-in-out infinite alternate" }} />
+          <div className="absolute bottom-[-80px] left-1/4 h-72 w-72 rounded-full opacity-20 blur-3xl" style={{ background: "#ffd194", animation: "sr-drift1 26s ease-in-out infinite alternate-reverse" }} />
+        </div>
+        <div className="absolute inset-0" style={{ transform: `translate(${tilt.x}px, ${tilt.y}px)` }}>
+          <div className="absolute -left-24 -top-24 h-80 w-80 rounded-full opacity-30 blur-3xl" style={{ background: "#ff7e3f", animation: "sr-drift1 18s ease-in-out infinite alternate" }} />
+          <div className="absolute right-[8%] bottom-[28%] h-60 w-60 rounded-full opacity-20 blur-2xl" style={{ background: "#ff9a5a", animation: "sr-drift2 16s ease-in-out infinite alternate-reverse" }} />
+        </div>
+      </div>
       <style>{`
         @keyframes sr-drift1 { from { transform: translate(0,0) scale(1); } to { transform: translate(60px,40px) scale(1.15); } }
         @keyframes sr-drift2 { from { transform: translate(0,0) scale(1); } to { transform: translate(-50px,60px) scale(0.9); } }
@@ -912,17 +1144,17 @@ export default function SpecialReportPage() {
             key={slide.key}
             className="absolute inset-0"
             custom={direction}
-            initial={{ y: direction > 0 ? "100%" : "-100%", opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: direction > 0 ? "-60%" : "60%", opacity: 0 }}
+            initial={{ y: direction > 0 ? "100%" : "-100%", opacity: 0, scale: 1.04 }}
+            animate={{ y: 0, opacity: 1, scale: 1 }}
+            exit={{ y: direction > 0 ? "-60%" : "60%", opacity: 0, scale: 0.96 }}
             transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
           >
             {slide.node(true)}
           </motion.div>
         </AnimatePresence>
 
-        {/* 页码指示器 */}
-        {total > 1 && (
+        {/* 页码指示器（开场页不显示） */}
+        {total > 1 && slide.key !== "intro" && (
           <div className="absolute bottom-6 right-4 z-10 flex flex-col gap-1.5">
             {slides.map((s, i) => (
               <button
@@ -940,14 +1172,26 @@ export default function SpecialReportPage() {
           </div>
         )}
 
-        {/* 首屏上滑提示 */}
-        {page === 0 && total > 1 && (
+        {/* 封面上滑提示 */}
+        {slide.key === "cover" && total > 1 && (
           <div className="absolute bottom-6 left-0 right-0 z-10 flex flex-col items-center gap-1 text-white/60 pointer-events-none">
             <svg width="22" height="22" viewBox="0 0 24 24" fill="none" style={{ animation: "sr-bounce 1.6s ease-in-out infinite" }}>
               <path d="M6 14l6-6 6 6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
             <span className="text-xs tracking-widest">上滑开启</span>
           </div>
+        )}
+
+        {/* 封面页音乐开关（用户手势触发，规避自动播放限制） */}
+        {slide.key === "cover" && (
+          <button
+            onClick={onMusicClick}
+            className="absolute bottom-6 right-10 z-20 flex cursor-pointer items-center gap-1.5 rounded-full border border-white/15 bg-white/5 px-4 py-2 text-white/70 backdrop-blur-sm transition hover:bg-white/10"
+            style={{ fontSize: "clamp(12px, 3.2vw, 14px)" }}
+          >
+            <span>{audioStarted && !muted ? "🔊" : "🔇"}</span>
+            <span>{audioStarted ? (muted ? "开启音乐" : "音乐中") : "开启音乐"}</span>
+          </button>
         )}
       </div>
 

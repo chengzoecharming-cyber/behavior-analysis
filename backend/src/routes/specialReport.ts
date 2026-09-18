@@ -5,6 +5,7 @@ import {
   computeSpecialReport,
   getSpecialReportTokenStatus,
   issueSpecialReportTokens,
+  recordSpecialReportView,
   resolveSpecialReportToken,
 } from "../services/specialReportService";
 
@@ -32,6 +33,9 @@ router.get("/:token", async (req: Request, res: Response) => {
       }
       return;
     }
+    // 打开埋点：fire-and-forget，失败不影响返回
+    const ua = req.headers["user-agent"];
+    void recordSpecialReportView(token, info.user_id, typeof ua === "string" ? ua : null);
     const report = await computeSpecialReport(
       info.user_id,
       info.role,

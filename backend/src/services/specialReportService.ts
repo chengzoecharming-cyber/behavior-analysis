@@ -18,6 +18,51 @@ export interface SpecialReportTokenInfo {
   period_end: string;
 }
 
+/**
+ * 打开埋点表 DDL 不放 db.ts（避免与其他改动纠缠），模块内幂等建一次。
+ */
+let tablesReady: Promise<void> | null = null;
+export function ensureTables(): Promise<void> {
+  if (!tablesReady) {
+    tablesReady = (async () => {
+      await pool.query(`
+        CREATE TABLE IF NOT EXISTS special_report_views (
+          id SERIAL PRIMARY KEY,
+          token VARCHAR(64) NOT NULL,
+          user_id VARCHAR(64) NOT NULL,
+          viewed_at TIMESTAMPTZ DEFAULT NOW(),
+          user_agent TEXT
+        )
+      `);
+      await pool.query(`
+        CREATE INDEX IF NOT EXISTS idx_special_report_views_user
+          ON special_report_views(user_id)
+      `);
+    })().catch((err) => {
+      tablesReady = null;
+      throw err;
+    });
+  }
+  return tablesReady;
+}
+
+/** 记录一次打开（fire-and-forget 由调用方保证），失败仅记日志 */
+export async function recordSpecialReportView(
+  token: string,
+  userId: string,
+  userAgent: string | null
+): Promise<void> {
+  try {
+    await ensureTables();
+    await pool.query(
+      `INSERT INTO special_report_views (token, user_id, user_agent) VALUES ($1, $2, $3)`,
+      [token, userId, userAgent ? userAgent.slice(0, 500) : null]
+    );
+  } catch (err) {
+    console.warn("[SpecialReport] 打开埋点写入失败:", err);
+  }
+}
+
 interface TopCustomer {
   name: string;
   count: number;
@@ -43,6 +88,16 @@ interface SpecialReportPersonal {
   zero_anomaly: boolean;
 }
 
+interface MemberHighlight {
+  user_name: string;
+  visit_count: number;
+  distance_km: number;
+  title_name: string | null;
+  top_customer_name: string | null;
+  top_customer_count: number;
+  longest_day_km: number;
+}
+
 interface SpecialReportTeam {
   member_count: number;
   total_visits: number;
@@ -50,6 +105,14 @@ interface SpecialReportTeam {
   top_members: { user_name: string; visit_count: number; distance_km: number }[];
   star_member: { user_name: string; visit_count: number } | null;
   most_improved: { user_name: string; growth: number } | null;
+  member_highlights: MemberHighlight[];
+}
+
+export interface SpecialReportOpenStat {
+  user_name: string;
+  user_id: string;
+  views: number;
+  last_viewed: string | null;
 }
 
 export interface SpecialReport {
@@ -58,6 +121,8 @@ export interface SpecialReport {
   period: { start: string; end: string };
   personal: SpecialReportPersonal;
   team?: SpecialReportTeam;
+  /** 仅 admin：本期战报各人打开统计 */
+  open_stats?: SpecialReportOpenStat[];
 }
 
 /** 足迹散点上限：超出后均匀抽稀 */
@@ -433,6 +498,7 @@ export async function computeSpecialReport(
           top_members: [],
           star_member: null,
           most_improved: null,
+          member_highlights: [],
         };
         return report;
       }
@@ -451,21 +517,34 @@ export async function computeSpecialReport(
         top_members: [],
         star_member: null,
         most_improved: null,
+        member_highlights: [],
       };
       return report;
     }
 
-    // 每人拜访次数
+    // 每人拜访次数 / 活跃天数 / 最早签到（一趟聚合，避免 N+1）；
+    // 从 users LEFT JOIN，保证区间内无拜访的成员也出现在 member_highlights（visit_count=0）
     const visitsRes = await pool.query<{
       user_id: string;
       user_name: string;
       visit_count: string;
+      active_days: string;
+      earliest_ts: Date | null;
     }>(
-      `SELECT user_id, MAX(user_name) AS user_name, COALESCE(SUM(customer_count), 0)::int AS visit_count
-       FROM visits
-       WHERE user_id = ANY($1::text[]) AND business_date BETWEEN $2 AND $3
-         AND NOT exclude_from_visit_count
-       GROUP BY user_id`,
+      `SELECT u.user_id, u.user_name, COALESCE(v.visit_count, 0)::int AS visit_count,
+              COALESCE(v.active_days, 0)::int AS active_days,
+              v.earliest_ts
+       FROM users u
+       LEFT JOIN (
+         SELECT user_id, COALESCE(SUM(customer_count), 0)::int AS visit_count,
+                COUNT(DISTINCT business_date)::int AS active_days,
+                MIN(timestamp) AS earliest_ts
+         FROM visits
+         WHERE user_id = ANY($1::text[]) AND business_date BETWEEN $2 AND $3
+           AND NOT exclude_from_visit_count
+         GROUP BY user_id
+       ) v ON v.user_id = u.user_id
+       WHERE u.user_id = ANY($1::text[])`,
       [memberIds, start, end]
     );
 
@@ -479,12 +558,105 @@ export async function computeSpecialReport(
     );
     const distMap = new Map(routesRes.rows.map((r) => [r.user_id, Number(r.distance_km)]));
 
+    // 每人单日里程（一趟查回，JS 侧取最大）→ longest_day_km
+    const dailyDistRes = await pool.query<{
+      user_id: string;
+      day_km: string;
+    }>(
+      `SELECT user_id, SUM(distance_km)::float AS day_km
+       FROM routes
+       WHERE user_id = ANY($1::text[]) AND business_date BETWEEN $2 AND $3
+       GROUP BY user_id, business_date`,
+      [memberIds, start, end]
+    );
+    const longestDayMap = new Map<string, number>();
+    for (const r of dailyDistRes.rows) {
+      const km = Number(r.day_km);
+      longestDayMap.set(r.user_id, Math.max(longestDayMap.get(r.user_id) || 0, km));
+    }
+
+    // 每人客户明细（一趟查回，JS 侧按 splitRealCustomerNames 口径计 top1）
+    const custRes = await pool.query<{ user_id: string; customer_name: string | null }>(
+      `SELECT user_id, customer_name FROM visits
+       WHERE user_id = ANY($1::text[]) AND business_date BETWEEN $2 AND $3
+         AND NOT exclude_from_visit_count`,
+      [memberIds, start, end]
+    );
+    const custCounterByUser = new Map<string, Map<string, number>>();
+    for (const r of custRes.rows) {
+      let counter = custCounterByUser.get(r.user_id);
+      if (!counter) {
+        counter = new Map();
+        custCounterByUser.set(r.user_id, counter);
+      }
+      for (const name of splitRealCustomerNames(r.customer_name)) {
+        counter.set(name, (counter.get(name) || 0) + 1);
+      }
+    }
+    const topCustMap = new Map<string, { name: string; count: number }>();
+    for (const [uid, counter] of custCounterByUser) {
+      let best: { name: string; count: number } | null = null;
+      for (const [name, count] of counter) {
+        if (!best || count > best.count) best = { name, count };
+      }
+      if (best) topCustMap.set(uid, best);
+    }
+
+    const memberStats = new Map(
+      visitsRes.rows.map((r) => [
+        r.user_id,
+        { active_days: Number(r.active_days), earliest_ts: r.earliest_ts },
+      ])
+    );
+
     const members = visitsRes.rows.map((r) => ({
+      user_id: r.user_id,
       user_name: r.user_name,
       visit_count: Number(r.visit_count),
       distance_km: Math.round((distMap.get(r.user_id) || 0) * 10) / 10,
     }));
     members.sort((a, b) => b.visit_count - a.visit_count);
+
+    // 队内称号归属：拜访第1 → 卷王；里程第1 → 行者；最早签到 → 追光者；
+    // 活跃天数 ≥ 区间一半 → 劳模（个人口径）；都不中 → null
+    const topVisitUser = members[0]?.user_id ?? null;
+    let topDistUser: string | null = null;
+    let topDist = -1;
+    let earliestUser: string | null = null;
+    let earliestTs: number | null = null;
+    for (const m of members) {
+      if (m.distance_km > topDist) {
+        topDist = m.distance_km;
+        topDistUser = m.user_id;
+      }
+      const ts = memberStats.get(m.user_id)?.earliest_ts;
+      if (ts && (earliestTs === null || ts.getTime() < earliestTs)) {
+        earliestTs = ts.getTime();
+        earliestUser = m.user_id;
+      }
+    }
+
+    const memberHighlights: MemberHighlight[] = members.map((m) => {
+      const stats = memberStats.get(m.user_id);
+      const activeDays = stats?.active_days || 0;
+      let titleName: string | null = null;
+      if (m.visit_count > 0) {
+        if (m.user_id === topVisitUser) titleName = "卷王";
+        else if (m.user_id === topDistUser && topDist > 0) titleName = "行者";
+        else if (m.user_id === earliestUser) titleName = "追光者";
+        else if (activeDays >= periodDays * 0.5) titleName = "劳模";
+      }
+      const topCust = topCustMap.get(m.user_id) || null;
+      return {
+        user_name: m.user_name,
+        visit_count: m.visit_count,
+        distance_km: m.distance_km,
+        title_name: titleName,
+        top_customer_name: topCust?.name ?? null,
+        top_customer_count: topCust?.count ?? 0,
+        longest_day_km: Math.round((longestDayMap.get(m.user_id) || 0) * 10) / 10,
+      };
+    });
 
     // 进步最大：区间对半切，后半段拜访数 − 前半段拜访数，取增长最多且后半段 >0 的成员
     let mostImproved: { user_name: string; growth: number } | null = null;
@@ -531,12 +703,52 @@ export async function computeSpecialReport(
       total_visits: members.reduce((sum, m) => sum + m.visit_count, 0),
       total_distance_km:
         Math.round(members.reduce((sum, m) => sum + m.distance_km, 0) * 10) / 10,
-      top_members: members.slice(0, 10),
+      top_members: members
+        .slice(0, 10)
+        .map(({ user_name, visit_count, distance_km }) => ({
+          user_name,
+          visit_count,
+          distance_km,
+        })),
       star_member: members[0]
         ? { user_name: members[0].user_name, visit_count: members[0].visit_count }
         : null,
       most_improved: mostImproved,
+      member_highlights: memberHighlights,
     };
+  }
+
+  // 仅 admin：本期战报各人打开统计（同周期 token 的浏览记录）
+  if (role === "admin") {
+    try {
+      await ensureTables();
+      const openRes = await pool.query<{
+        user_id: string;
+        user_name: string;
+        views: string;
+        last_viewed: Date | null;
+      }>(
+        `SELECT v.user_id, MAX(u.user_name) AS user_name,
+                COUNT(*)::int AS views,
+                MAX(v.viewed_at) AS last_viewed
+         FROM special_report_views v
+         JOIN special_report_tokens t ON t.token = v.token
+         JOIN users u ON u.user_id = v.user_id
+         WHERE t.period_start = $1 AND t.period_end = $2
+         GROUP BY v.user_id
+         ORDER BY views DESC, v.user_id`,
+        [start, end]
+      );
+      report.open_stats = openRes.rows.map((r) => ({
+        user_name: r.user_name,
+        user_id: r.user_id,
+        views: Number(r.views),
+        last_viewed: r.last_viewed ? r.last_viewed.toISOString() : null,
+      }));
+    } catch (err) {
+      console.warn("[SpecialReport] 打开统计查询失败:", err);
+      report.open_stats = [];
+    }
   }
 
   return report;
