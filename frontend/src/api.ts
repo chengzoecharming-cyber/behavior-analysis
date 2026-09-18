@@ -40,7 +40,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401) {
       localStorage.removeItem("auth_token");
       localStorage.removeItem("user_id");
-      if (!window.location.pathname.startsWith("/login")) {
+      if (!window.location.pathname.startsWith("/login") && !window.location.pathname.startsWith("/report")) {
         window.location.href = "/login";
       }
     } else if (error.response?.status === 403) {

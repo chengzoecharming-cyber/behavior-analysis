@@ -28,6 +28,7 @@ const DataSyncPage = lazy(() => import("./pages/DataSyncPage"));
 const FeedbackPage = lazy(() => import("./pages/FeedbackPage"));
 const LoginPage = lazy(() => import("./pages/LoginPage"));
 const LoginCallbackPage = lazy(() => import("./pages/LoginCallbackPage"));
+const SpecialReportPage = lazy(() => import("./pages/SpecialReportPage"));
 const DataSyncCenterPage = lazy(() => import("./pages/DataSyncCenterPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
 import { fetchCurrentUser, logoutApi, AuthUser } from "./api";
@@ -119,6 +120,8 @@ function App() {
       <Suspense fallback={pageFallback}>
         <Routes>
           <Route path="/login/callback" element={<LoginCallbackPage />} />
+          {/* 盛夏战报 H5：免登录白名单，按 token 访问 */}
+          <Route path="/report/:token" element={<SpecialReportPage />} />
           <Route path="*" element={<LoginPage />} />
         </Routes>
       </Suspense>
@@ -145,6 +148,17 @@ function App() {
     currentUser.role === "admin"
       ? navItems
       : navItems.filter((item) => item.path === "/" || item.path === "/console");
+
+  // 盛夏战报 H5：全屏独立页面，已登录访问也不渲染顶部导航
+  if (location.pathname.startsWith("/report/")) {
+    return (
+      <Suspense fallback={pageFallback}>
+        <Routes>
+          <Route path="/report/:token" element={<SpecialReportPage />} />
+        </Routes>
+      </Suspense>
+    );
+  }
 
   return (
     <div

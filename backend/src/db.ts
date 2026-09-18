@@ -277,6 +277,19 @@ export async function initDB(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_auth_sessions_user
         ON auth_sessions(user_id);
 
+      -- 「盛夏战报」特别推送的免登录分享 token（30 天有效，过期后 410）
+      CREATE TABLE IF NOT EXISTS special_report_tokens (
+        token VARCHAR(64) PRIMARY KEY,
+        user_id VARCHAR(64) NOT NULL REFERENCES users(user_id),
+        period_start DATE NOT NULL,
+        period_end DATE NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW(),
+        expires_at TIMESTAMPTZ NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_special_report_tokens_user
+        ON special_report_tokens(user_id);
+
       -- 公司地址白名单：命中以下地址的签到不计入报告客户统计（对全体员工生效）
       CREATE TABLE IF NOT EXISTS company_addresses (
         id SERIAL PRIMARY KEY,
