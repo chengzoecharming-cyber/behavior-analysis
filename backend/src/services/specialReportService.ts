@@ -233,6 +233,13 @@ export async function computeSpecialReport(
   start: string,
   end: string
 ): Promise<SpecialReport> {
+  // 结束日截断到「今天」（北京时间）：战报周期可能写死到未来（如 9.30），
+  // 截断后聚合与 period 返回都不含未来日期，日历点阵不会出现大片未来暗点。
+  // rawEnd 保留原周期末日，供 open_stats 按 token 原始周期匹配
+  const rawEnd = end;
+  const todayCN = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
+  if (end > todayCN) end = todayCN;
+
   // 个人聚合：拜访次数（SUM(customer_count)，排除住址/公司打卡）、活跃天数
   const statsRes = await pool.query<{ visit_count: string; active_days: string }>(
     `SELECT COALESCE(SUM(customer_count), 0)::int AS visit_count,
@@ -805,7 +812,7 @@ export async function computeSpecialReport(
          WHERE t.period_start = $1 AND t.period_end = $2
          GROUP BY v.user_id
          ORDER BY views DESC, v.user_id`,
-        [start, end]
+        [start, rawEnd]
       );
       report.open_stats = openRes.rows.map((r) => ({
         user_name: r.user_name,

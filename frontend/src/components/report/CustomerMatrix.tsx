@@ -14,7 +14,7 @@ function hexToRgba(hex: string, alpha: number): string {
 export function CustomerMatrix({
   tiles,
   active,
-  maxTiles = 24,
+  maxTiles = 14,
 }: {
   tiles: { name: string; count: number }[];
   active: boolean;
@@ -24,7 +24,7 @@ export function CustomerMatrix({
   if (items.length === 0) return null;
   const max = Math.max(...items.map((t) => t.count), 1);
   const cols = 4;
-  const cell = 88;
+  const cell = 110;
   const rows = Math.ceil(items.length / cols);
   const w = cols * cell;
   const h = rows * cell;
@@ -35,7 +35,7 @@ export function CustomerMatrix({
   const cosX = 0.643;
   const rotW = w * cosZ + h * sinZ;
   const rotH = (w * sinZ + h * cosZ) * cosX;
-  const scale = Math.min(1, 360 / rotW, 330 / rotH);
+  const scale = Math.min(1, 380 / rotW, 360 / rotH);
 
   return (
     <div className="flex w-full items-center justify-center" style={{ perspective: 1000, height: Math.ceil(rotH * scale) + 16 }}>
@@ -51,7 +51,7 @@ export function CustomerMatrix({
       >
         {items.map((t, i) => {
           const ratio = t.count / max;
-          const size = 46 + 40 * Math.sqrt(ratio);
+          const size = 62 + 44 * Math.sqrt(ratio);
           const col = i % cols;
           const row = Math.floor(i / cols);
           return (
@@ -81,16 +81,16 @@ export function CustomerMatrix({
                   transform: "rotateZ(38deg) rotateX(-50deg)",
                   color: "#fff",
                   textShadow: "0 1px 4px rgba(0,0,0,0.5)",
-                  fontSize: 10,
+                  fontSize: 13,
                   lineHeight: 1.3,
                   textAlign: "center",
-                  maxWidth: 100,
+                  maxWidth: 128,
                   overflow: "hidden",
                   whiteSpace: "nowrap",
                   textOverflow: "ellipsis",
                 }}
               >
-                {t.name.length > 5 ? t.name.slice(0, 5) + "…" : t.name}
+                {t.name.length > 7 ? t.name.slice(0, 7) + "…" : t.name}
                 <span style={{ opacity: 0.85, marginLeft: 3 }}>{t.count}</span>
               </span>
             </motion.div>

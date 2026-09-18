@@ -432,12 +432,17 @@ export default function SpecialReportPage() {
           }}
         >
           <div className="absolute inset-0 flex flex-col items-center justify-center px-10 text-center" style={{ background: "#0d0d17" }}>
+            {/* 与封面同款背景，压暗到 ~25% 亮度：intro→封面是同一张图由暗到亮的连续过程 */}
+            <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+              <ReportImage src="/report/cover.webp" breathe={false} className="h-full w-full" style={{ opacity: 0.9 }} />
+              <div className="absolute inset-0" style={{ background: "rgba(13,13,23,0.75)" }} />
+            </div>
             <motion.p
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2, duration: 0.9, ease: "easeOut" }}
-              className="text-white/85"
-              style={{ fontSize: "clamp(19px, 5.4vw, 26px)", lineHeight: 1.9, letterSpacing: "0.08em" }}
+              className="relative text-white/85"
+              style={{ fontSize: "clamp(19px, 5.4vw, 26px)", lineHeight: 1.9, letterSpacing: "0.08em", textShadow: "0 2px 14px rgba(0,0,0,0.85)" }}
             >
               2026 年的夏天，就要过去了。
             </motion.p>
@@ -445,8 +450,8 @@ export default function SpecialReportPage() {
               initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 2.2, duration: 0.9, ease: "easeOut" }}
-              className="mt-5 text-white/85"
-              style={{ fontSize: "clamp(19px, 5.4vw, 26px)", lineHeight: 1.9, letterSpacing: "0.08em" }}
+              className="relative mt-5 text-white/85"
+              style={{ fontSize: "clamp(19px, 5.4vw, 26px)", lineHeight: 1.9, letterSpacing: "0.08em", textShadow: "0 2px 14px rgba(0,0,0,0.85)" }}
             >
               但有些数字，值得被记住。
             </motion.p>
@@ -496,12 +501,15 @@ export default function SpecialReportPage() {
         <>
           <TopIllustration src="/report/visits.webp" />
           <PageShell center={false}>
-            <div className="flex h-full w-full flex-col items-center justify-end pb-[16vh] text-center">
-              <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
-              <motion.div variants={fadeUp}>
-                <BigNumber value={p.visit_count} active={a} />
-              </motion.div>
-              <Sub>次客户的门</Sub>
+            {/* 上半屏留给插画（paddingTop 46%），文字区在剩余空间垂直居中 */}
+            <div className="flex h-full w-full flex-col items-center text-center" style={{ paddingTop: "46%" }}>
+              <div className="flex flex-1 flex-col items-center justify-center">
+                <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
+                <motion.div variants={fadeUp}>
+                  <BigNumber value={p.visit_count} active={a} />
+                </motion.div>
+                <Sub>次客户的门</Sub>
+              </div>
             </div>
           </PageShell>
         </>
@@ -542,33 +550,72 @@ export default function SpecialReportPage() {
         <>
           <TopIllustration src="/report/customer.webp" />
           <PageShell center={false}>
-            <div className="flex h-full w-full flex-col items-center justify-end pb-[6vh] text-center">
-              <motion.div variants={fadeUp}>
-                <BigNumber value={p.customer_count} active={a} />
-              </motion.div>
-              <Sub>家客户，记住了你的名字</Sub>
-              {p.top_customers.length > 0 && (
-                <div className="mt-6 w-full max-w-[320px] space-y-2.5">
-                  {p.top_customers.slice(0, 5).map((c, i) => (
-                    <motion.div
-                      key={c.name + i}
-                      variants={fadeUp}
-                      className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-2.5 border border-white/10"
-                    >
-                      <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
-                        <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
-                        <span className="truncate max-w-[180px]">{c.name}</span>
-                      </span>
-                      <span className="text-white/50 text-sm">{c.count} 次</span>
-                    </motion.div>
-                  ))}
-                </div>
-              )}
+            {/* 上半屏留给插画，文字区在剩余空间垂直居中 */}
+            <div className="flex h-full w-full flex-col items-center text-center" style={{ paddingTop: "40%" }}>
+              <div className="flex flex-1 flex-col items-center justify-center">
+                <motion.div variants={fadeUp}>
+                  <BigNumber value={p.customer_count} active={a} />
+                </motion.div>
+                <Sub>家客户，记住了你的名字</Sub>
+                {p.top_customers.length > 0 && (
+                  <div className="mt-5 w-full max-w-[320px] space-y-2">
+                    {p.top_customers.slice(0, 5).map((c, i) => (
+                      <motion.div
+                        key={c.name + i}
+                        variants={fadeUp}
+                        className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-2 border border-white/10"
+                      >
+                        <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                          <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
+                          <span className="truncate max-w-[180px]">{c.name}</span>
+                        </span>
+                        <span className="text-white/50 text-sm">{c.count} 次</span>
+                      </motion.div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </div>
           </PageShell>
         </>
       ),
     });
+
+    // 4b. 最常拜访客户（单客户页，文案不变）
+    if (p.top_customers.length > 0) {
+      const top = p.top_customers[0];
+      list.push({
+        key: "top-customer",
+        node: () => (
+          <PageShell>
+            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>最常拜访的客户是</motion.div>
+            <motion.div
+              variants={fadeUp}
+              className="mt-6 font-bold"
+              style={{
+                fontSize: "clamp(28px, 8.5vw, 44px)",
+                lineHeight: 1.35,
+                background: ORANGE_GRADIENT,
+                WebkitBackgroundClip: "text",
+                backgroundClip: "text",
+                color: "transparent",
+                maxWidth: "100%",
+                wordBreak: "break-all",
+              }}
+            >
+              {top.name}
+            </motion.div>
+            <Sub>
+              {top.count === 1 ? (
+                "你们的故事才刚刚开始"
+              ) : (
+                <>这家客户，你去了 <span className="text-[#ff9a5a] font-semibold">{top.count}</span> 次，比回家还勤</>
+              )}
+            </Sub>
+          </PageShell>
+        ),
+      });
+    }
 
     // 5. 客户矩阵墙（等距 3D 斜排彩色方块，替代原"最常拜访客户"单文案页）
     if (p.customer_tiles && p.customer_tiles.length > 0) {
@@ -605,7 +652,9 @@ export default function SpecialReportPage() {
               <RunnerSvg size={56} running />
             </motion.div>
           )}
-          <PageShell>
+          <PageShell center={false}>
+            {/* 垂直居中并整体上移 ~8vh */}
+            <div className="flex h-full w-full flex-col items-center justify-center pb-[8vh] text-center">
             <motion.div variants={fadeUp} className="flex items-baseline gap-2">
               <BigNumber value={p.distance_km} decimals={p.distance_km < 100 ? 1 : 0} active={a} />
               <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
@@ -617,6 +666,7 @@ export default function SpecialReportPage() {
                 <>相当于绕标准操场 {Math.round(p.distance_km / 0.4)} 圈</>
               )}
             </Sub>
+            </div>
           </PageShell>
         </>
       ),
@@ -808,7 +858,9 @@ export default function SpecialReportPage() {
       list.push({
         key: "title",
         node: (a) => (
-          <PageShell>
+          <PageShell center={false}>
+            {/* 垂直居中并整体上移 ~6vh */}
+            <div className="flex h-full w-full flex-col items-center justify-center pb-[6vh] text-center">
             <motion.div variants={fadeUp} aria-hidden style={{ width: 120, height: 120 }}>
               <LottieAnim src="/lottie/trophy.json" loop active={a} size={120} />
             </motion.div>
@@ -835,6 +887,7 @@ export default function SpecialReportPage() {
             <motion.div variants={fadeUp} className="mt-6 rounded-full border border-white/15 bg-white/5 px-5 py-2 text-white/70" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
               {titleEvidence}
             </motion.div>
+            </div>
           </PageShell>
         ),
       });
@@ -1203,7 +1256,7 @@ export default function SpecialReportPage() {
 
         {/* 页码指示器（开场页不显示） */}
         {total > 1 && slide.key !== "intro" && (
-          <div className="absolute bottom-6 right-4 z-10 flex flex-col gap-1.5">
+          <div className="absolute bottom-5 right-3 z-10 flex flex-col items-center gap-1 opacity-80">
             {slides.map((s, i) => (
               <button
                 key={s.key}
@@ -1211,9 +1264,9 @@ export default function SpecialReportPage() {
                 onClick={() => goTo(i)}
                 className="cursor-pointer rounded-full border-none transition-all"
                 style={{
-                  width: 6,
-                  height: i === page ? 18 : 6,
-                  background: i === page ? "#ff9a5a" : "rgba(255,255,255,0.25)",
+                  width: 4,
+                  height: i === page ? 12 : 4,
+                  background: i === page ? "#ff9a5a" : "rgba(255,255,255,0.18)",
                 }}
               />
             ))}
