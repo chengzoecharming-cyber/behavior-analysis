@@ -57,6 +57,11 @@ interface SpecialReport {
       top_customer_count: number;
       longest_day_km: number;
     }[]; // 按拜访数降序
+    frequent_pairs?: { user_name: string; customer_name: string; count: number }[]; // 单人单客户 >10 次，降序
+    daily?: { date: string; visit_count: number }[]; // 团队逐日拜访
+    weekly?: { week_start: string; visit_count: number }[]; // 团队逐周（周一开头）
+    weekday?: { counts: number[]; top_weekday: number; top_count: number }; // counts[0]=周一
+    earliest_days?: { user_name: string; date: string; time: string }[]; // 全团队最早 5 次签到，带人名
   };
   // 仅 admin：战报打开情况
   open_stats?: { user_name: string; user_id: string; views: number; last_viewed: string | null }[];
@@ -1022,7 +1027,143 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 15c. 战报的回响（仅 admin，open_stats 为 undefined 时整页跳过）
+    // 15c. 团队视角分镜（manager/admin 且有 team 时；字段 undefined/空则逐页跳过，staff 不出现）
+    if (report.team) {
+      const t = report.team;
+
+      // 高频搭档榜：单人单客户 >10 次的组合
+      if (t.frequent_pairs && t.frequent_pairs.length > 0) {
+        list.push({
+          key: "team-pairs",
+          node: () => (
+            <PageShell center={false}>
+              <div className="flex h-full w-full flex-col items-center justify-center">
+                <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                  最铁的组合
+                </motion.h2>
+                <Sub>这些搭档，一个夏天见了十几次</Sub>
+                <div className="mt-5 w-full max-w-[340px] space-y-2 overflow-hidden">
+                  {t.frequent_pairs!.slice(0, 8).map((fp, i) => (
+                    <motion.div
+                      key={fp.user_name + fp.customer_name + i}
+                      variants={fadeUp}
+                      className="flex items-center gap-2.5 rounded-xl bg-white/5 border border-white/10 px-4 py-2.5"
+                    >
+                      <span className="flex-1 truncate text-left text-white/90" style={{ fontSize: "clamp(13px, 3.6vw, 15px)" }}>
+                        {fp.user_name} <span className="text-white/40">×</span> {fp.customer_name}
+                      </span>
+                      <span
+                        className="shrink-0 font-bold tabular-nums"
+                        style={{
+                          fontSize: "clamp(16px, 4.5vw, 20px)",
+                          background: ORANGE_GRADIENT,
+                          WebkitBackgroundClip: "text",
+                          backgroundClip: "text",
+                          color: "transparent",
+                        }}
+                      >
+                        {fp.count} 次
+                      </span>
+                    </motion.div>
+                  ))}
+                </div>
+              </div>
+            </PageShell>
+          ),
+        });
+      }
+
+      // 团队日历点阵
+      if (t.daily && t.daily.length > 0) {
+        const teamActiveDays = t.daily.filter((d) => d.visit_count > 0).length;
+        const hottest = t.daily.reduce((m, d) => (d.visit_count > m.visit_count ? d : m), t.daily[0]);
+        list.push({
+          key: "team-calendar",
+          node: (a) => (
+            <PageShell center={false}>
+              <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(20px, 5.6vw, 28px)", lineHeight: 1.5 }}>
+                  这个夏天，团队 <span className="text-[#ff9a5a]">{teamActiveDays}</span> 天有人在路上
+                </motion.h2>
+                <motion.div variants={fadeUp} className="mt-6 w-full">
+                  <CalendarDots daily={t.daily!} active={a} />
+                </motion.div>
+                {hottest.visit_count > 0 && (
+                  <Sub>
+                    最热的一天是 {fmtDate(hottest.date)}，全队 {hottest.visit_count} 次拜访
+                  </Sub>
+                )}
+              </div>
+            </PageShell>
+          ),
+        });
+      }
+
+      // 团队拜访波形
+      if (t.weekly && t.weekly.length > 1) {
+        const peakIdx = t.weekly.reduce((mi, w, i, arr) => (w.visit_count > arr[mi].visit_count ? i : mi), 0);
+        const peak = t.weekly[peakIdx];
+        const peakDate = new Date(peak.week_start);
+        const peakText = isNaN(peakDate.getTime())
+          ? null
+          : `${peakDate.getMonth() + 1} 月第 ${Math.ceil(peakDate.getDate() / 7)} 周，全队一起冲到了 ${peak.visit_count} 次`;
+        list.push({
+          key: "team-rhythm",
+          node: (a) => (
+            <PageShell center={false}>
+              <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                  团队的拜访节奏
+                </motion.h2>
+                <motion.div variants={fadeUp} className="mt-6 w-full">
+                  <WeeklyWave weekly={t.weekly!} active={a} />
+                </motion.div>
+                {peakText && <Sub>{peakText}</Sub>}
+              </div>
+            </PageShell>
+          ),
+        });
+      }
+
+      // 团队星期谱
+      if (t.weekday && t.weekday.counts.length === 7 && t.weekday.top_count > 0) {
+        const wdNames = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"];
+        list.push({
+          key: "team-weekday",
+          node: (a) => (
+            <PageShell center={false}>
+              <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+                  团队最爱在<span style={{ background: ORANGE_GRADIENT, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{wdNames[t.weekday!.top_weekday - 1] ?? ""}</span>打仗
+                </motion.h2>
+                <WeekdayEmoji counts={t.weekday!.counts} active={a} />
+              </div>
+            </PageShell>
+          ),
+        });
+      }
+
+      // 全公司最早出发（带人名的窗户画框）
+      if (t.earliest_days && t.earliest_days.length > 0) {
+        list.push({
+          key: "team-earliest",
+          node: (a) => (
+            <PageShell center={false}>
+              <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
+                  这些天，总有人
+                  <br />
+                  比城市先醒
+                </motion.h2>
+                <EarliestWindows days={t.earliest_days!} active={a} />
+              </div>
+            </PageShell>
+          ),
+        });
+      }
+    }
+
+    // 15d. 战报的回响（仅 admin，open_stats 为 undefined 时整页跳过）
     if (report.open_stats !== undefined) {
       const fmtViewed = (s: string | null) => {
         if (!s) return "—";

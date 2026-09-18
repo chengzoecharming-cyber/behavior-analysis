@@ -8,7 +8,7 @@ export function EarliestWindows({
   days,
   active,
 }: {
-  days: { date: string; time: string }[];
+  days: { date: string; time: string; user_name?: string }[]; // user_name 存在时在窗下小字显示人名（团队视角）
   active: boolean;
 }) {
   const items = days.slice(0, 5);
@@ -67,6 +67,11 @@ export function EarliestWindows({
               >
                 <span style={{ fontSize: 14, fontWeight: 700, color: "#4a2c12", fontVariantNumeric: "tabular-nums" }}>{d.time}</span>
                 <span style={{ fontSize: 9, color: "rgba(74,44,18,0.75)" }}>{fmtDate(d.date)}</span>
+                {d.user_name && (
+                  <span style={{ fontSize: 9, fontWeight: 600, color: "rgba(74,44,18,0.9)", maxWidth: 40, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                    {d.user_name}
+                  </span>
+                )}
               </div>
               {/* 楼体上的暗窗点缀 */}
               <div className="mt-3 grid grid-cols-2 gap-1.5" style={{ opacity: 0.5 }}>

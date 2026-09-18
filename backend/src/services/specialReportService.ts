@@ -114,6 +114,34 @@ interface SpecialReportTeam {
   star_member: { user_name: string; visit_count: number } | null;
   most_improved: { user_name: string; growth: number } | null;
   member_highlights: MemberHighlight[];
+  /** 单人单客户拜访 > 10 次的组合，按 count 降序 */
+  frequent_pairs: { user_name: string; customer_name: string; count: number }[];
+  /** 团队逐日总拜访（区间内每天一条，补 0） */
+  daily: { date: string; visit_count: number }[];
+  /** 团队逐周总拜访（周一开头，补 0），口径同 personal */
+  weekly: { week_start: string; visit_count: number }[];
+  /** 团队按星期聚合（counts[0]=周一） */
+  weekday: { counts: number[]; top_weekday: number; top_count: number };
+  /** 全公司出发时刻最早的 5 名成员（每人取区间内最早的一次，按时刻升序） */
+  earliest_days: { user_name: string; date: string; time: string }[];
+}
+
+/** 空团队聚合占位（成员集合为空时返回） */
+function emptyTeam(): SpecialReportTeam {
+  return {
+    member_count: 0,
+    total_visits: 0,
+    total_distance_km: 0,
+    top_members: [],
+    star_member: null,
+    most_improved: null,
+    member_highlights: [],
+    frequent_pairs: [],
+    daily: [],
+    weekly: [],
+    weekday: { counts: [0, 0, 0, 0, 0, 0, 0], top_weekday: 1, top_count: 0 },
+    earliest_days: [],
+  };
 }
 
 export interface SpecialReportOpenStat {
@@ -566,15 +594,7 @@ export async function computeSpecialReport(
       memberIds = res.rows.map((r) => r.user_id);
     } else {
       if (visible.length === 0) {
-        report.team = {
-          member_count: 0,
-          total_visits: 0,
-          total_distance_km: 0,
-          top_members: [],
-          star_member: null,
-          most_improved: null,
-          member_highlights: [],
-        };
+        report.team = emptyTeam();
         return report;
       }
       const res = await pool.query<{ user_id: string }>(
@@ -585,15 +605,7 @@ export async function computeSpecialReport(
     }
 
     if (memberIds.length === 0) {
-      report.team = {
-        member_count: 0,
-        total_visits: 0,
-        total_distance_km: 0,
-        top_members: [],
-        star_member: null,
-        most_improved: null,
-        member_highlights: [],
-      };
+      report.team = emptyTeam();
       return report;
     }
 
@@ -773,6 +785,115 @@ export async function computeSpecialReport(
       }
     }
 
+    // 高频「人 × 客户」组合：单人单客户拜访 > 10 次，按 count 降序
+    const userNameById = new Map(visitsRes.rows.map((r) => [r.user_id, r.user_name]));
+    const frequentPairs: { user_name: string; customer_name: string; count: number }[] = [];
+    for (const [uid, counter] of custCounterByUser) {
+      const userName = userNameById.get(uid) || uid;
+      for (const [name, count] of counter) {
+        if (count > 10) {
+          frequentPairs.push({ user_name: userName, customer_name: name, count });
+        }
+      }
+    }
+    frequentPairs.sort((a, b) => b.count - a.count);
+
+    // 团队逐日总拜访（区间内每天一条，补 0），口径同 personal.daily
+    const teamDailyRes = await pool.query<{ date: string; visit_count: string }>(
+      `SELECT d.day::date::text AS date,
+              COALESCE(SUM(v.customer_count), 0)::int AS visit_count
+       FROM generate_series($2::date, $3::date, INTERVAL '1 day') AS d(day)
+       LEFT JOIN visits v
+         ON v.user_id = ANY($1::text[])
+        AND v.business_date = d.day
+        AND NOT v.exclude_from_visit_count
+       GROUP BY d.day
+       ORDER BY d.day`,
+      [memberIds, start, end]
+    );
+    const teamDaily = teamDailyRes.rows.map((r) => ({
+      date: r.date,
+      visit_count: Number(r.visit_count),
+    }));
+
+    // 团队逐周总拜访（date_trunc('week') 周一开头，补 0），口径同 personal.weekly
+    const teamWeeklyRes = await pool.query<{ week_start: string; visit_count: string }>(
+      `SELECT w.week_start::date::text AS week_start,
+              COALESCE(SUM(v.customer_count), 0)::int AS visit_count
+       FROM generate_series(
+              date_trunc('week', $2::date),
+              date_trunc('week', $3::date),
+              INTERVAL '1 week'
+            ) AS w(week_start)
+       LEFT JOIN visits v
+         ON v.user_id = ANY($1::text[])
+        AND v.business_date >= w.week_start
+        AND v.business_date < w.week_start + INTERVAL '1 week'
+        AND v.business_date BETWEEN $2::date AND $3::date
+        AND NOT v.exclude_from_visit_count
+       GROUP BY w.week_start
+       ORDER BY w.week_start`,
+      [memberIds, start, end]
+    );
+    const teamWeekly = teamWeeklyRes.rows.map((r) => ({
+      week_start: r.week_start,
+      visit_count: Number(r.visit_count),
+    }));
+
+    // 团队按星期聚合（isodow：1=周一 … 7=周日）
+    const teamWeekdayRes = await pool.query<{ dow: number; visit_count: string }>(
+      `SELECT EXTRACT(isodow FROM business_date)::int AS dow,
+              COALESCE(SUM(customer_count), 0)::int AS visit_count
+       FROM visits
+       WHERE user_id = ANY($1::text[]) AND business_date BETWEEN $2 AND $3
+         AND NOT exclude_from_visit_count
+       GROUP BY dow`,
+      [memberIds, start, end]
+    );
+    const teamWeekdayCounts = new Array(7).fill(0) as number[];
+    for (const r of teamWeekdayRes.rows) {
+      teamWeekdayCounts[r.dow - 1] = Number(r.visit_count);
+    }
+    let teamTopWeekday = 1;
+    for (let i = 1; i < 7; i++) {
+      if (teamWeekdayCounts[i] > teamWeekdayCounts[teamTopWeekday - 1]) teamTopWeekday = i + 1;
+    }
+    const teamWeekday = {
+      counts: teamWeekdayCounts,
+      top_weekday: teamTopWeekday,
+      top_count: teamWeekdayCounts[teamTopWeekday - 1],
+    };
+
+    // 全公司出发时刻最早的 5 名成员：先取每人每天最早签到，再取每人历史上时刻最早的那次，按时刻升序取前 5（每人一条）
+    const teamEarliestRes = await pool.query<{
+      user_name: string;
+      date: string;
+      time: string;
+    }>(
+      `SELECT user_name, date, time FROM (
+         SELECT DISTINCT ON (user_id) user_id, user_name, date, time
+         FROM (
+           SELECT v.user_id, u.user_name,
+                  v.business_date::text AS date,
+                  to_char(MIN(v.timestamp) AT TIME ZONE 'Asia/Shanghai', 'HH24:MI') AS time,
+                  (MIN(v.timestamp) AT TIME ZONE 'Asia/Shanghai')::time AS tod
+           FROM visits v
+           JOIN users u ON u.user_id = v.user_id
+           WHERE v.user_id = ANY($1::text[]) AND v.business_date BETWEEN $2 AND $3
+           GROUP BY v.user_id, u.user_name, v.business_date
+         ) per_day
+         ORDER BY user_id, tod ASC, date ASC
+       ) per_user
+       ORDER BY time ASC, user_name ASC
+       LIMIT 5`,
+      [memberIds, start, end]
+    );
+    const teamEarliestDays = teamEarliestRes.rows.map((r) => ({
+      user_name: r.user_name,
+      date: r.date,
+      time: r.time,
+    }));
+
     report.team = {
       member_count: memberIds.length,
       total_visits: members.reduce((sum, m) => sum + m.visit_count, 0),
@@ -790,6 +911,11 @@ export async function computeSpecialReport(
         : null,
       most_improved: mostImproved,
       member_highlights: memberHighlights,
+      frequent_pairs: frequentPairs,
+      daily: teamDaily,
+      weekly: teamWeekly,
+      weekday: teamWeekday,
+      earliest_days: teamEarliestDays,
     };
   }
 
