@@ -569,10 +569,10 @@ export default function SpecialReportPage() {
                 color: "transparent",
               }}
             >
-              {wdNames[p.weekday.top_weekday] ?? ""}
+              {wdNames[p.weekday.top_weekday - 1] ?? ""}
             </motion.div>
             <Sub>是你最爱的工作日</Sub>
-            <BarChart values={p.weekday.counts} labels={["一", "二", "三", "四", "五", "六", "日"]} highlightIndex={p.weekday.top_weekday} active={a} height={110} />
+            <BarChart values={p.weekday.counts} labels={["一", "二", "三", "四", "五", "六", "日"]} highlightIndex={p.weekday.top_weekday - 1} active={a} height={110} />
           </PageShell>
         ),
       });
@@ -646,14 +646,28 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 14. 称号页（压轴）
+    // 14. 称号页（压轴）：名字 + 称号 + 数据证据
     if (p.title) {
+      const titleEvidence = (() => {
+        switch (p.title!.name) {
+          case "卷王":
+            return `拜访 ${p.visit_count} 次，超过全公司 ${p.percentile ?? 90}% 的同事`;
+          case "行者":
+            return `三个月跑了 ${Math.round(p.distance_km)} 公里，跻身全公司前 10%`;
+          case "追光者":
+            return p.earliest_visit ? `最早一次出发，是 ${p.earliest_visit.time}` : p.title!.desc;
+          case "劳模":
+            return `${p.active_days} 个活跃工作日，一半以上的日子都在路上`;
+          default:
+            return p.title!.desc;
+        }
+      })();
       list.push({
         key: "title",
         node: () => (
           <PageShell>
             <motion.div variants={fadeUp} className="text-white/60 tracking-[0.3em]" style={{ fontSize: "clamp(13px, 3.6vw, 16px)" }}>
-              这个夏天，你的称号是
+              这个夏天，{report.user.user_name} 的称号是
             </motion.div>
             <motion.div
               variants={fadeUp}
@@ -672,6 +686,9 @@ export default function SpecialReportPage() {
               {p.title!.name}
             </motion.div>
             <Sub>{p.title!.desc}</Sub>
+            <motion.div variants={fadeUp} className="mt-6 rounded-full border border-white/15 bg-white/5 px-5 py-2 text-white/70" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
+              {titleEvidence}
+            </motion.div>
           </PageShell>
         ),
       });
@@ -679,43 +696,56 @@ export default function SpecialReportPage() {
 
     }
 
-    // 15. 团队榜
+    // 15. 团队：总览+奖项一页，排行榜单独一页
     if (report.team && report.team.top_members.length > 0) {
       const medal = ["#ffd700", "#c0c0c0", "#cd7f32"];
       const t = report.team;
+      list.push({
+        key: "team-overview",
+        node: (a) => (
+          <PageShell>
+            <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
+              你身后，还有一支队伍
+            </motion.h2>
+            <Sub>
+              {t.member_count} 人同行 · 全队 {t.total_visits} 次拜访 · {Math.round(t.total_distance_km)} 公里
+            </Sub>
+            <div className="mt-6 flex w-full max-w-[340px] flex-col items-center gap-2">
+              <motion.div variants={fadeUp} className="flex items-baseline gap-2">
+                <BigNumber value={t.total_visits} active={a} />
+                <span className="whitespace-nowrap text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>次团队拜访</span>
+              </motion.div>
+              {t.star_member && (
+                <motion.div variants={fadeUp} className="mt-4 flex w-full items-center justify-between rounded-xl border border-[#ff9a5a]/30 bg-[#ff9a5a]/10 px-4 py-2.5">
+                  <span className="text-[#ffb37e]" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>🏆 本区之星</span>
+                  <span className="text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                    {t.star_member.user_name}
+                    <span className="ml-2 text-white/50 text-sm">{t.star_member.visit_count} 次</span>
+                  </span>
+                </motion.div>
+              )}
+              {t.most_improved && (
+                <motion.div variants={fadeUp} className="flex w-full items-center justify-between rounded-xl border border-[#ff9a5a]/30 bg-[#ff9a5a]/10 px-4 py-2.5">
+                  <span className="text-[#ffb37e]" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>📈 进步最大</span>
+                  <span className="text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                    {t.most_improved.user_name}
+                    <span className="ml-2 text-white/50 text-sm">+{t.most_improved.growth} 次</span>
+                  </span>
+                </motion.div>
+              )}
+            </div>
+          </PageShell>
+        ),
+      });
       list.push({
         key: "team",
         node: () => (
           <PageShell center={false}>
             <div className="flex h-full w-full flex-col items-center justify-center">
               <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
-                你身后，还有一支队伍
+                团队排行榜
               </motion.h2>
-              <Sub>
-                {t.member_count} 人同行 · 全队 {t.total_visits} 次拜访 · {Math.round(t.total_distance_km)} 公里
-              </Sub>
-              {(t.star_member || t.most_improved) && (
-                <div className="mt-4 flex w-full max-w-[340px] flex-col gap-2">
-                  {t.star_member && (
-                    <motion.div variants={fadeUp} className="flex items-center justify-between rounded-xl border border-[#ff9a5a]/30 bg-[#ff9a5a]/10 px-4 py-2.5">
-                      <span className="text-[#ffb37e]" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>🏆 本区之星</span>
-                      <span className="text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
-                        {t.star_member.user_name}
-                        <span className="ml-2 text-white/50 text-sm">{t.star_member.visit_count} 次</span>
-                      </span>
-                    </motion.div>
-                  )}
-                  {t.most_improved && (
-                    <motion.div variants={fadeUp} className="flex items-center justify-between rounded-xl border border-[#ff9a5a]/30 bg-[#ff9a5a]/10 px-4 py-2.5">
-                      <span className="text-[#ffb37e]" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>📈 进步最大</span>
-                      <span className="text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
-                        {t.most_improved.user_name}
-                        <span className="ml-2 text-white/50 text-sm">+{t.most_improved.growth} 次</span>
-                      </span>
-                    </motion.div>
-                  )}
-                </div>
-              )}
+              <Sub>这个夏天，跑得最勤的他们</Sub>
               <div className="mt-5 w-full max-w-[340px] space-y-2 overflow-hidden">
                 {t.top_members.slice(0, 10).map((m, i) => (
                   <motion.div
@@ -755,7 +785,7 @@ export default function SpecialReportPage() {
           <Sub>
             {p.visit_count > 0 ? (
               <>
-                天奔波，山海自有归期，风雨自有相逢。
+                山海自有归期，风雨自有相逢。
                 <br />
                 下一程，继续加油。
               </>
@@ -955,11 +985,18 @@ export default function SpecialReportPage() {
             </div>
           )}
           <div style={{ marginTop: p.title ? 24 : 48, width: "100%", display: "flex", justifyContent: "space-around" }}>
-            {[
-              { label: "拜访次数", value: p.visit_count, unit: "次" },
-              { label: "客户", value: p.customer_count, unit: "家" },
-              { label: "里程", value: Math.round(p.distance_km), unit: "km" },
-            ].map((it) => (
+            {(p.visit_count > 0 || !report.team
+              ? [
+                  { label: "拜访次数", value: p.visit_count, unit: "次" },
+                  { label: "客户", value: p.customer_count, unit: "家" },
+                  { label: "里程", value: Math.round(p.distance_km), unit: "km" },
+                ]
+              : [
+                  { label: "团队人数", value: report.team.member_count, unit: "人" },
+                  { label: "团队拜访", value: report.team.total_visits, unit: "次" },
+                  { label: "团队里程", value: Math.round(report.team.total_distance_km), unit: "km" },
+                ]
+            ).map((it) => (
               <div key={it.label} style={{ textAlign: "center" }}>
                 <div
                   style={{
