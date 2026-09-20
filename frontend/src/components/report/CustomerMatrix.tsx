@@ -1,7 +1,7 @@
 import { motion } from "framer-motion";
 
 // ============ 客户矩阵墙：等距 3D 斜排彩色方块（网易云"曲风方块矩阵墙"风格） ============
-// 每个方块一家客户，拜访越多方块越大、颜色越亮；文字反向旋转保持可读
+// 每个方块一家客户，拜访越多方块越大、颜色越亮；文字作为「贴纸」跟随方块做同样的等距变换
 const PALETTE = ["#e8845c", "#9a7bd0", "#5cb8b2", "#7fb069", "#d98bb0", "#d9b45c", "#6a8fd0"];
 
 function hexToRgba(hex: string, alpha: number): string {
@@ -14,7 +14,7 @@ function hexToRgba(hex: string, alpha: number): string {
 export function CustomerMatrix({
   tiles,
   active,
-  maxTiles = 14,
+  maxTiles = 12,
 }: {
   tiles: { name: string; count: number }[];
   active: boolean;
@@ -24,7 +24,7 @@ export function CustomerMatrix({
   if (items.length === 0) return null;
   const max = Math.max(...items.map((t) => t.count), 1);
   const cols = 4;
-  const cell = 110;
+  const cell = 128;
   const rows = Math.ceil(items.length / cols);
   const w = cols * cell;
   const h = rows * cell;
@@ -35,7 +35,7 @@ export function CustomerMatrix({
   const cosX = 0.643;
   const rotW = w * cosZ + h * sinZ;
   const rotH = (w * sinZ + h * cosZ) * cosX;
-  const scale = Math.min(1, 380 / rotW, 360 / rotH);
+  const scale = Math.min(1, 390 / rotW, 380 / rotH);
 
   return (
     <div className="flex w-full items-center justify-center" style={{ perspective: 1000, height: Math.ceil(rotH * scale) + 16 }}>
@@ -51,7 +51,7 @@ export function CustomerMatrix({
       >
         {items.map((t, i) => {
           const ratio = t.count / max;
-          const size = 62 + 44 * Math.sqrt(ratio);
+          const size = 78 + 46 * Math.sqrt(ratio);
           const col = i % cols;
           const row = Math.floor(i / cols);
           return (
@@ -59,40 +59,44 @@ export function CustomerMatrix({
               key={t.name + i}
               initial={{ opacity: 0, scale: 0 }}
               animate={active ? { opacity: 1, scale: 1 } : { opacity: 0, scale: 0 }}
-              transition={{ delay: 0.35 + i * 0.06, type: "spring", stiffness: 260, damping: 18 }}
+              transition={{ delay: 0.35 + i * 0.07, type: "spring", stiffness: 260, damping: 18 }}
               style={{
                 position: "absolute",
                 left: col * cell + (cell - size) / 2,
                 top: row * cell + (cell - size) / 2,
                 width: size,
                 height: size,
-                borderRadius: 10,
+                borderRadius: 14,
                 // 亮度用背景 alpha 表达（motion 会接管元素 opacity，不能放 style.opacity）
                 background: hexToRgba(PALETTE[i % PALETTE.length], 0.45 + 0.55 * ratio),
-                boxShadow: "0 6px 18px rgba(0,0,0,0.35)",
+                boxShadow: "0 8px 22px rgba(0,0,0,0.35)",
                 display: "flex",
+                flexDirection: "column",
                 alignItems: "center",
                 justifyContent: "center",
+                gap: 2,
+                padding: 6,
                 transformStyle: "preserve-3d",
               }}
             >
+              {/* 文字不做反旋，直接贴在方块平面上 */}
               <span
                 style={{
-                  transform: "rotateZ(38deg) rotateX(-50deg)",
                   color: "#fff",
                   textShadow: "0 1px 4px rgba(0,0,0,0.5)",
                   fontSize: 13,
-                  lineHeight: 1.3,
+                  fontWeight: 600,
+                  lineHeight: 1.25,
                   textAlign: "center",
-                  maxWidth: 128,
+                  maxWidth: "100%",
                   overflow: "hidden",
                   whiteSpace: "nowrap",
                   textOverflow: "ellipsis",
                 }}
               >
-                {t.name.length > 7 ? t.name.slice(0, 7) + "…" : t.name}
-                <span style={{ opacity: 0.85, marginLeft: 3 }}>{t.count}</span>
+                {t.name.length > 6 ? t.name.slice(0, 6) + "…" : t.name}
               </span>
+              <span style={{ color: "rgba(255,255,255,0.9)", fontSize: 11, fontVariantNumeric: "tabular-nums" }}>{t.count} 次</span>
             </motion.div>
           );
         })}

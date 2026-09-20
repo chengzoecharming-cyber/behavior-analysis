@@ -140,7 +140,20 @@ function LottieAnim({ src, loop, active, size }: { src: string; loop: boolean; a
   );
 }
 
-function PageShell({ children, center = true }: { children: React.ReactNode; center?: boolean }) {
+// ============ 页面外壳：插画背景（bg）作为同容器第一层，与内容一起滑入滑出 ============
+// bg 用非 motion 的普通 div：不参与 stagger、不延迟，页面出现第一时间就位；
+// 内容子元素仍走 fadeUp stagger 浮入。整页只有这一个滑动容器，翻页感知为「一页纸」。
+function PageShell({
+  children,
+  center = true,
+  bg,
+  bgOverlay,
+}: {
+  children: React.ReactNode;
+  center?: boolean;
+  bg?: string;
+  bgOverlay?: string;
+}) {
   return (
     <motion.div
       className={`absolute inset-0 flex flex-col px-8 py-12 ${center ? "items-center justify-center text-center" : ""}`}
@@ -149,6 +162,16 @@ function PageShell({ children, center = true }: { children: React.ReactNode; cen
       animate="show"
       exit="hidden"
     >
+      {bg && (
+        // zIndex:-1 压在 PageShell 静态内容之下、全局渐变底之上，避免绝对定位背景盖住文字
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" style={{ zIndex: -1 }} aria-hidden>
+          <ReportImage src={bg} className="h-full w-full" />
+          <div
+            className="absolute inset-0"
+            style={{ background: bgOverlay ?? "linear-gradient(180deg, rgba(26,26,46,0.35) 0%, rgba(26,26,46,0.75) 100%)" }}
+          />
+        </div>
+      )}
       {children}
     </motion.div>
   );
@@ -159,19 +182,6 @@ function Sub({ children }: { children: React.ReactNode }) {
     <motion.p variants={fadeUp} className="mt-4 text-white/70" style={{ fontSize: "clamp(15px, 4.2vw, 19px)", lineHeight: 1.8 }}>
       {children}
     </motion.p>
-  );
-}
-
-// ============ 全屏背景插画（深色遮罩保证文字可读，加载失败静默降级回渐变背景） ============
-function FullBgImage({ src }: { src: string }) {
-  return (
-    <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-      <ReportImage src={src} className="h-full w-full" />
-      <div
-        className="absolute inset-0"
-        style={{ background: "linear-gradient(180deg, rgba(26,26,46,0.35) 0%, rgba(26,26,46,0.75) 100%)" }}
-      />
-    </div>
   );
 }
 
@@ -380,6 +390,15 @@ export default function SpecialReportPage() {
       });
   }, [token]);
 
+  // 预载本报告会用到的插画：进入页面即拉取，保证各页背景与内容同时出现
+  useEffect(() => {
+    if (!report) return;
+    ["cover", "visits", "customer", "distance", "busiest", "earliest", "finale"].forEach((name) => {
+      const img = new Image();
+      img.src = `/report/${name}.webp`;
+    });
+  }, [report]);
+
   // ============ 生成分享卡片 ============
   const onShare = useCallback(async () => {
     if (!shareCardRef.current || shareBusy) return;
@@ -474,19 +493,11 @@ export default function SpecialReportPage() {
     list.push({
       key: "cover",
       node: () => (
-        <>
-          <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-            <ReportImage src="/report/cover.webp" className="h-full w-full" style={{ opacity: 0.9 }} />
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(180deg, rgba(26,26,46,0.45) 0%, rgba(26,26,46,0.35) 45%, rgba(26,26,46,0.85) 78%, #1a1a2e 100%)",
-              }}
-            />
-          </div>
-          <PageShell>
-            <motion.div variants={fadeUp} className="text-white/50 tracking-[0.4em]" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
+        <PageShell
+          bg="/report/cover.webp"
+          bgOverlay="linear-gradient(180deg, rgba(26,26,46,0.45) 0%, rgba(26,26,46,0.35) 45%, rgba(26,26,46,0.85) 78%, #1a1a2e 100%)"
+        >
+          <motion.div variants={fadeUp} className="text-white/50 tracking-[0.4em]" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
               2026 · 盛夏战报
             </motion.div>
             <CoverTitle name={report.user.user_name} />
@@ -497,8 +508,7 @@ export default function SpecialReportPage() {
             <motion.div variants={fadeUp} className="mt-12">
               <RunnerSvg size={72} />
             </motion.div>
-          </PageShell>
-        </>
+        </PageShell>
       ),
     });
 
@@ -508,16 +518,13 @@ export default function SpecialReportPage() {
     list.push({
       key: "visits",
       node: (a) => (
-        <>
-          <FullBgImage src="/report/visits.webp" />
-          <PageShell>
-            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
-            <motion.div variants={fadeUp}>
-              <BigNumber value={p.visit_count} active={a} />
-            </motion.div>
-            <Sub>次客户的门</Sub>
-          </PageShell>
-        </>
+        <PageShell bg="/report/visits.webp">
+          <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
+          <motion.div variants={fadeUp}>
+            <BigNumber value={p.visit_count} active={a} />
+          </motion.div>
+          <Sub>次客户的门</Sub>
+        </PageShell>
       ),
     });
 
@@ -552,33 +559,30 @@ export default function SpecialReportPage() {
     list.push({
       key: "customers",
       node: (a) => (
-        <>
-          <FullBgImage src="/report/customer.webp" />
-          <PageShell>
-            <motion.div variants={fadeUp}>
-              <BigNumber value={p.customer_count} active={a} />
-            </motion.div>
-            <Sub>家客户，记住了你的名字</Sub>
-            {p.top_customers.length > 0 && (
-              <div className="mt-6 w-full max-w-[320px] space-y-2.5">
-                {p.top_customers.slice(0, 5).map((c, i) => (
-                  <motion.div
-                    key={c.name + i}
-                    variants={fadeUp}
-                    className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-2.5"
-                    style={{ background: "rgba(13,13,23,0.45)" }}
-                  >
-                    <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
-                      <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
-                      <span className="truncate max-w-[180px]">{c.name}</span>
-                    </span>
-                    <span className="text-white/50 text-sm">{c.count} 次</span>
-                  </motion.div>
-                ))}
-              </div>
-            )}
-          </PageShell>
-        </>
+        <PageShell bg="/report/customer.webp">
+          <motion.div variants={fadeUp}>
+            <BigNumber value={p.customer_count} active={a} />
+          </motion.div>
+          <Sub>家客户，记住了你的名字</Sub>
+          {p.top_customers.length > 0 && (
+            <div className="mt-6 w-full max-w-[320px] space-y-2.5">
+              {p.top_customers.slice(0, 5).map((c, i) => (
+                <motion.div
+                  key={c.name + i}
+                  variants={fadeUp}
+                  className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-2.5"
+                  style={{ background: "rgba(13,13,23,0.45)" }}
+                >
+                  <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                    <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
+                    <span className="truncate max-w-[180px]">{c.name}</span>
+                  </span>
+                  <span className="text-white/50 text-sm">{c.count} 次</span>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </PageShell>
       ),
     });
 
@@ -642,7 +646,6 @@ export default function SpecialReportPage() {
       key: "distance",
       node: (a) => (
         <>
-          <FullBgImage src="/report/distance.webp" />
           {a && (
             <motion.div
               className="pointer-events-none absolute bottom-[12vh] left-0 z-10"
@@ -654,7 +657,7 @@ export default function SpecialReportPage() {
               <RunnerSvg size={56} running />
             </motion.div>
           )}
-          <PageShell>
+          <PageShell bg="/report/distance.webp">
             <motion.div variants={fadeUp} className="flex items-baseline gap-2">
               <BigNumber value={p.distance_km} decimals={p.distance_km < 100 ? 1 : 0} active={a} />
               <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
@@ -784,19 +787,16 @@ export default function SpecialReportPage() {
       list.push({
         key: "busiest",
         node: () => (
-          <>
-            <FullBgImage src="/report/busiest.webp" />
-            <PageShell>
-              <motion.div variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(30px, 8.5vw, 46px)" }}>
-                {fmtDate(p.busiest_day!.date)}
-              </motion.div>
-              <Sub>
-                是你最拼的一天，
-                <br />
-                一天跑了 <span className="text-[#ff9a5a] font-semibold">{p.busiest_day!.visit_count}</span> 家
-              </Sub>
-            </PageShell>
-          </>
+          <PageShell bg="/report/busiest.webp">
+            <motion.div variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(30px, 8.5vw, 46px)" }}>
+              {fmtDate(p.busiest_day!.date)}
+            </motion.div>
+            <Sub>
+              是你最拼的一天，
+              <br />
+              一天跑了 <span className="text-[#ff9a5a] font-semibold">{p.busiest_day!.visit_count}</span> 家
+            </Sub>
+          </PageShell>
         ),
       });
     }
@@ -807,19 +807,16 @@ export default function SpecialReportPage() {
       list.push({
         key: "earliest",
         node: (a) => (
-          <>
-            <FullBgImage src="/report/earliest.webp" />
-            <PageShell center={false}>
-              <div className="flex h-full w-full flex-col items-center justify-center text-center">
-                <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
-                  这些天，城市还没醒
-                  <br />
-                  你就出发了
-                </motion.h2>
-                <EarliestWindows days={earliestDays} active={a} />
-              </div>
-            </PageShell>
-          </>
+          <PageShell center={false} bg="/report/earliest.webp">
+            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
+                这些天，城市还没醒
+                <br />
+                你就出发了
+              </motion.h2>
+              <EarliestWindows days={earliestDays} active={a} />
+            </div>
+          </PageShell>
         ),
       });
     }
@@ -1036,7 +1033,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-pairs",
           node: () => (
-            <PageShell center={false}>
+            <PageShell center={false} bg="/report/customer.webp">
               <div className="flex h-full w-full flex-col items-center justify-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                   最铁的组合
@@ -1080,7 +1077,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-calendar",
           node: (a) => (
-            <PageShell center={false}>
+            <PageShell center={false} bg="/report/cover.webp">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(20px, 5.6vw, 28px)", lineHeight: 1.5 }}>
                   这个夏天，团队 <span className="text-[#ff9a5a]">{teamActiveDays}</span> 天有人在路上
@@ -1110,7 +1107,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-rhythm",
           node: (a) => (
-            <PageShell center={false}>
+            <PageShell center={false} bg="/report/distance.webp">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                   团队的拜访节奏
@@ -1131,7 +1128,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-weekday",
           node: (a) => (
-            <PageShell center={false}>
+            <PageShell center={false} bg="/report/busiest.webp">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                   团队最爱在<span style={{ background: ORANGE_GRADIENT, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{wdNames[t.weekday!.top_weekday - 1] ?? ""}</span>打仗
@@ -1148,7 +1145,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-earliest",
           node: (a) => (
-            <PageShell center={false}>
+            <PageShell center={false} bg="/report/earliest.webp">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
                   这些天，总有人
@@ -1215,9 +1212,7 @@ export default function SpecialReportPage() {
     list.push({
       key: "finale",
       node: (a) => (
-        <>
-          <FullBgImage src="/report/finale.webp" />
-          <PageShell>
+        <PageShell bg="/report/finale.webp">
           {/* 进入时播放一轮烟花 */}
           {a && (
             <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center" aria-hidden>
@@ -1266,8 +1261,7 @@ export default function SpecialReportPage() {
               {shareBusy ? "生成中…" : "生成分享卡片"}
             </button>
           </motion.div>
-          </PageShell>
-        </>
+        </PageShell>
       ),
     });
 
