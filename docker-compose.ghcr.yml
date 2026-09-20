@@ -62,6 +62,7 @@ services:
       AUTH_USERNAME: ${AUTH_USERNAME:-admin}
       AUTH_PASSWORD: ${AUTH_PASSWORD:-admin123}
       PORT: 3000
+      FRONTEND_BASE_URL: ${FRONTEND_BASE_URL:-}
       NODE_ENV: production
     ports:
       - "3000:3000"
