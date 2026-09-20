@@ -62,7 +62,17 @@ router.post(
       const end: string = req.body?.end || DEFAULT_END;
       const dryRun: boolean = req.body?.dryRun === true;
 
-      const issued = await issueSpecialReportTokens(start, end);
+      // 推送排除名单：李杰/陈列（exclude_from_stats 人员）、系统管理员账号、尹功荣的闲置旧账号（0 签到）
+      const PUSH_EXCLUDE_USER_IDS = new Set([
+        "011426475246846306", // 李杰
+        "0115001229181213647", // 陈列
+        "admin", // 系统管理员
+        "尹功荣", // 尹功荣旧账号（无签到记录）
+      ]);
+
+      const issued = (await issueSpecialReportTokens(start, end)).filter(
+        (u) => !PUSH_EXCLUDE_USER_IDS.has(u.user_id)
+      );
 
       if (dryRun) {
         res.json({
@@ -91,7 +101,7 @@ router.post(
             ? `📊 你团队的盛夏战报也好了\n\n` +
               `看看这个夏天，大家跑了多少、谁最拼。\n\n` +
               `👉 [开启团队战报](${link})`
-            : `🏆 你的盛夏战报已生成\n\n` +
+            : `🏆 这是一条特别推送：你的盛夏战报已生成\n\n` +
               `${days} 个日夜，你走过的每一步都算数。\n\n` +
               `👉 [开启我的战报](${link})`;
         try {
