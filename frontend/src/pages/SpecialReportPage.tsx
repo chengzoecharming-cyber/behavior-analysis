@@ -192,12 +192,14 @@ function Sub({ children }: { children: React.ReactNode }) {
 }
 
 // ============ 封面大标题：/report/cover-title.png 存在则用书法字（透明底 PNG），否则用文字标题 ============
+// 注意：URL 带版本号防 nginx/浏览器 7 天缓存住旧图（换图时递增）
+const COVER_TITLE_URL = "/report/cover-title.png?v=2";
 function CoverTitle({ name }: { name: string }) {
   const [imgOk, setImgOk] = useState(false);
   useEffect(() => {
     const img = new Image();
     img.onload = () => setImgOk(true);
-    img.src = "/report/cover-title.png";
+    img.src = COVER_TITLE_URL;
     return () => {
       img.onload = null;
     };
@@ -207,7 +209,7 @@ function CoverTitle({ name }: { name: string }) {
       <>
         <motion.img
           variants={fadeUp}
-          src="/report/cover-title.png"
+          src={COVER_TITLE_URL}
           alt="盛夏战报"
           className="mt-6 w-full max-w-[320px]"
           style={{}}
@@ -406,7 +408,7 @@ export default function SpecialReportPage() {
     if (!report) return;
     ["cover", "visits", "customer", "distance", "busiest", "earliest", "finale"].forEach((name) => {
       const img = new Image();
-      img.src = `/report/${name}.webp`;
+      img.src = `/report/${name}.webp?v=2`;
     });
   }, [report]);
 
@@ -481,7 +483,7 @@ export default function SpecialReportPage() {
           <div className="absolute inset-0 flex flex-col items-center justify-center px-10 text-center" style={{ background: "#0d0d17" }}>
             {/* 与封面同款背景，压暗到 ~25% 亮度：intro→封面是同一张图由暗到亮的连续过程 */}
             <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
-              <ReportImage src="/report/cover.webp" breathe={false} className="h-full w-full" style={{ opacity: 0.9 }} />
+              <ReportImage src="/report/cover.webp?v=2" breathe={false} className="h-full w-full" style={{ opacity: 0.9 }} />
               <div className="absolute inset-0" style={{ background: "rgba(13,13,23,0.75)" }} />
             </div>
             <motion.p
@@ -512,7 +514,7 @@ export default function SpecialReportPage() {
       key: "cover",
       node: () => (
         <PageShell
-          bg="/report/cover.webp"
+          bg="/report/cover.webp?v=2"
           bgOverlay="linear-gradient(180deg, rgba(26,26,46,0.45) 0%, rgba(26,26,46,0.35) 45%, rgba(26,26,46,0.85) 78%, #1a1a2e 100%)"
         >
           <motion.div variants={fadeUp} className="text-white/50 tracking-[0.4em]" style={{ fontSize: "clamp(12px, 3.4vw, 15px)" }}>
@@ -547,7 +549,7 @@ export default function SpecialReportPage() {
     list.push({
       key: "visits",
       node: (a) => (
-        <PageShell bg="/report/visits.webp">
+        <PageShell bg="/report/visits.webp?v=2">
           <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
           <motion.div variants={fadeUp}>
             <BigNumber value={p.visit_count} active={a} />
@@ -588,7 +590,7 @@ export default function SpecialReportPage() {
     list.push({
       key: "customers",
       node: (a) => (
-        <PageShell bg="/report/customer.webp">
+        <PageShell bg="/report/customer.webp?v=2">
           <motion.div variants={fadeUp}>
             <BigNumber value={p.customer_count} active={a} />
           </motion.div>
@@ -689,7 +691,7 @@ export default function SpecialReportPage() {
               <RunnerSvg size={56} running />
             </motion.div>
           )}
-          <PageShell bg="/report/distance.webp">
+          <PageShell bg="/report/distance.webp?v=2">
             <motion.div variants={fadeUp} className="flex items-baseline gap-2">
               <BigNumber value={p.distance_km} decimals={p.distance_km < 100 ? 1 : 0} active={a} />
               <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
@@ -819,7 +821,7 @@ export default function SpecialReportPage() {
       list.push({
         key: "busiest",
         node: () => (
-          <PageShell bg="/report/busiest.webp">
+          <PageShell bg="/report/busiest.webp?v=2">
             <motion.div variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(30px, 8.5vw, 46px)" }}>
               {fmtDate(p.busiest_day!.date)}
             </motion.div>
@@ -839,7 +841,7 @@ export default function SpecialReportPage() {
       list.push({
         key: "earliest",
         node: (a) => (
-          <PageShell center={false} bg="/report/earliest.webp">
+          <PageShell center={false} bg="/report/earliest.webp?v=2">
             <div className="flex h-full w-full flex-col items-center justify-center text-center">
               <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
                 这些天，城市还没醒
@@ -1065,7 +1067,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-pairs",
           node: () => (
-            <PageShell center={false} bg="/report/customer.webp">
+            <PageShell center={false} bg="/report/customer.webp?v=2">
               <div className="flex h-full w-full flex-col items-center justify-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white text-center" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                   最铁的组合
@@ -1109,7 +1111,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-calendar",
           node: (a) => (
-            <PageShell center={false} bg="/report/cover.webp">
+            <PageShell center={false} bg="/report/cover.webp?v=2">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(20px, 5.6vw, 28px)", lineHeight: 1.5 }}>
                   这个夏天，团队 <span className="text-[#ff9a5a]">{teamActiveDays}</span> 天有人在路上
@@ -1139,7 +1141,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-rhythm",
           node: (a) => (
-            <PageShell center={false} bg="/report/distance.webp">
+            <PageShell center={false} bg="/report/distance.webp?v=2">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                   团队的拜访节奏
@@ -1160,7 +1162,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-weekday",
           node: (a) => (
-            <PageShell center={false} bg="/report/busiest.webp">
+            <PageShell center={false} bg="/report/busiest.webp?v=2">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                   团队最爱在<span style={{ background: ORANGE_GRADIENT, WebkitBackgroundClip: "text", backgroundClip: "text", color: "transparent" }}>{wdNames[t.weekday!.top_weekday - 1] ?? ""}</span>打仗
@@ -1177,7 +1179,7 @@ export default function SpecialReportPage() {
         list.push({
           key: "team-earliest",
           node: (a) => (
-            <PageShell center={false} bg="/report/earliest.webp">
+            <PageShell center={false} bg="/report/earliest.webp?v=2">
               <div className="flex h-full w-full flex-col items-center justify-center text-center">
                 <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
                   这些天，总有人
@@ -1244,7 +1246,7 @@ export default function SpecialReportPage() {
     list.push({
       key: "finale",
       node: (a) => (
-        <PageShell bg="/report/finale.webp">
+        <PageShell bg="/report/finale.webp?v=2">
           {/* 进入时播放一轮烟花 */}
           {a && (
             <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center" aria-hidden>
@@ -1427,8 +1429,8 @@ export default function SpecialReportPage() {
                 onClick={() => goTo(i)}
                 className="cursor-pointer rounded-full border-none transition-all"
                 style={{
-                  width: 2,
-                  height: i === page ? 10 : 2,
+                  width: 1.5,
+                  height: i === page ? 10 : 1.5,
                   background: i === page ? "#ff9a5a" : "rgba(255,255,255,0.18)",
                 }}
               />
