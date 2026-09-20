@@ -143,6 +143,10 @@ function LottieAnim({ src, loop, active, size }: { src: string; loop: boolean; a
 // ============ 页面外壳：插画背景（bg）作为同容器第一层，与内容一起滑入滑出 ============
 // bg 用非 motion 的普通 div：不参与 stagger、不延迟，页面出现第一时间就位；
 // 内容子元素仍走 fadeUp stagger 浮入。整页只有这一个滑动容器，翻页感知为「一页纸」。
+// 有 bg 的页面自包含且不透明：背景层自带 #1a1a2e 底色铺满整页（含图片未加载/加载失败时），
+// 翻页时底下的全局渐变完全不可见。
+const DEFAULT_BG_OVERLAY = "linear-gradient(180deg, rgba(26,26,46,0.2) 0%, rgba(26,26,46,0.22) 45%, rgba(26,26,46,0.6) 100%)";
+
 function PageShell({
   children,
   center = true,
@@ -163,12 +167,12 @@ function PageShell({
       exit="hidden"
     >
       {bg && (
-        // zIndex:-1 压在 PageShell 静态内容之下、全局渐变底之上，避免绝对定位背景盖住文字
-        <div className="pointer-events-none absolute inset-0 overflow-hidden" style={{ zIndex: -1 }} aria-hidden>
+        // zIndex:-1 压在 PageShell 静态内容之下；自身不透明（底色+插画），盖住全局渐变底
+        <div className="pointer-events-none absolute inset-0 overflow-hidden" style={{ zIndex: -1, background: "#1a1a2e" }} aria-hidden>
           <ReportImage src={bg} className="h-full w-full" />
           <div
             className="absolute inset-0"
-            style={{ background: bgOverlay ?? "linear-gradient(180deg, rgba(26,26,46,0.35) 0%, rgba(26,26,46,0.75) 100%)" }}
+            style={{ background: bgOverlay ?? DEFAULT_BG_OVERLAY }}
           />
         </div>
       )}
