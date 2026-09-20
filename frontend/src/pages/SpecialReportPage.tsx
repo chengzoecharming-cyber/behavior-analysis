@@ -191,7 +191,7 @@ function Sub({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ============ 封面大标题：/report/cover-title.png 存在则用书法字（mix-blend screen），否则用文字标题 ============
+// ============ 封面大标题：/report/cover-title.png 存在则用书法字（透明底 PNG），否则用文字标题 ============
 function CoverTitle({ name }: { name: string }) {
   const [imgOk, setImgOk] = useState(false);
   useEffect(() => {
@@ -210,7 +210,7 @@ function CoverTitle({ name }: { name: string }) {
           src="/report/cover-title.png"
           alt="盛夏战报"
           className="mt-6 w-full max-w-[320px]"
-          style={{ mixBlendMode: "screen" }}
+          style={{}}
         />
         <motion.div variants={fadeUp} className="mt-5 font-semibold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", letterSpacing: "0.1em" }}>
           {name}
@@ -1427,8 +1427,8 @@ export default function SpecialReportPage() {
                 onClick={() => goTo(i)}
                 className="cursor-pointer rounded-full border-none transition-all"
                 style={{
-                  width: 3,
-                  height: i === page ? 10 : 3,
+                  width: 2,
+                  height: i === page ? 10 : 2,
                   background: i === page ? "#ff9a5a" : "rgba(255,255,255,0.18)",
                 }}
               />
@@ -1492,35 +1492,56 @@ export default function SpecialReportPage() {
               {p.title.name}
             </div>
           )}
-          <div style={{ marginTop: p.title ? 24 : 48, width: "100%", display: "flex", justifyContent: "space-around" }}>
-            {(p.visit_count > 0 && kind !== "team" || !report.team
+          {(() => {
+            const isTeamCard = !(p.visit_count > 0 && kind !== "team" || !report.team);
+            const items = !isTeamCard
               ? [
                   { label: "拜访次数", value: p.visit_count, unit: "次" },
                   { label: "客户", value: p.customer_count, unit: "家" },
                   { label: "里程", value: Math.round(p.distance_km), unit: "km" },
                 ]
               : [
-                  { label: "团队人数", value: report.team.member_count, unit: "人" },
-                  { label: "团队拜访", value: report.team.total_visits, unit: "次" },
-                  { label: "团队里程", value: Math.round(report.team.total_distance_km), unit: "km" },
-                ]
-            ).map((it) => (
-              <div key={it.label} style={{ textAlign: "center" }}>
-                <div
-                  style={{
-                    fontSize: 34,
-                    fontWeight: 700,
-                    color: "#ff9a5a",
-                  }}
-                >
-                  {it.value.toLocaleString()}
-                </div>
-                <div style={{ marginTop: 4, color: "rgba(255,255,255,0.55)", fontSize: 13 }}>
-                  {it.label} · {it.unit}
-                </div>
+                  { label: "团队人数", value: report.team!.member_count, unit: "人" },
+                  { label: "团队拜访", value: report.team!.total_visits, unit: "次" },
+                  { label: "团队里程", value: Math.round(report.team!.total_distance_km), unit: "km" },
+                ];
+            return (
+              <div
+                style={
+                  isTeamCard
+                    ? { marginTop: p.title ? 24 : 48, width: "100%", display: "flex", flexDirection: "column", gap: 14 }
+                    : { marginTop: p.title ? 24 : 48, width: "100%", display: "flex", justifyContent: "space-around" }
+                }
+              >
+                {items.map((it) =>
+                  isTeamCard ? (
+                    <div key={it.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 12px" }}>
+                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 14 }}>{it.label}</div>
+                      <div style={{ fontSize: 28, fontWeight: 700, color: "#ff9a5a" }}>
+                        {it.value.toLocaleString()}
+                        <span style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", marginLeft: 4 }}>{it.unit}</span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div key={it.label} style={{ textAlign: "center" }}>
+                      <div
+                        style={{
+                          fontSize: 34,
+                          fontWeight: 700,
+                          color: "#ff9a5a",
+                        }}
+                      >
+                        {it.value.toLocaleString()}
+                      </div>
+                      <div style={{ marginTop: 4, color: "rgba(255,255,255,0.55)", fontSize: 13 }}>
+                        {it.label} · {it.unit}
+                      </div>
+                    </div>
+                  )
+                )}
               </div>
-            ))}
-          </div>
+            );
+          })()}
           <div style={{ flex: 1 }} />
           <div style={{ color: "rgba(255,255,255,0.35)", fontSize: 12, letterSpacing: "0.2em" }}>山海自有归期 · 下一程继续加油</div>
         </div>
