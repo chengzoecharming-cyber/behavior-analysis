@@ -162,14 +162,14 @@ function Sub({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ============ 上半屏插画（底部渐变遮罩融入背景，加载失败静默降级） ============
-function TopIllustration({ src }: { src: string }) {
+// ============ 全屏背景插画（深色遮罩保证文字可读，加载失败静默降级回渐变背景） ============
+function FullBgImage({ src }: { src: string }) {
   return (
-    <div className="pointer-events-none absolute inset-x-0 top-0" style={{ height: "42%" }} aria-hidden>
-      <ReportImage src={src} className="h-full w-full" style={{ opacity: 0.85 }} />
+    <div className="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden>
+      <ReportImage src={src} className="h-full w-full" />
       <div
         className="absolute inset-0"
-        style={{ background: "linear-gradient(180deg, rgba(26,26,46,0.15) 0%, rgba(26,26,46,0.25) 55%, #1a1a2e 100%)" }}
+        style={{ background: "linear-gradient(180deg, rgba(26,26,46,0.35) 0%, rgba(26,26,46,0.75) 100%)" }}
       />
     </div>
   );
@@ -188,13 +188,18 @@ function CoverTitle({ name }: { name: string }) {
   }, []);
   if (imgOk) {
     return (
-      <motion.img
-        variants={fadeUp}
-        src="/report/cover-title.png"
-        alt="盛夏战报"
-        className="mt-6 w-full max-w-[320px]"
-        style={{ mixBlendMode: "screen" }}
-      />
+      <>
+        <motion.img
+          variants={fadeUp}
+          src="/report/cover-title.png"
+          alt="盛夏战报"
+          className="mt-6 w-full max-w-[320px]"
+          style={{ mixBlendMode: "screen" }}
+        />
+        <motion.div variants={fadeUp} className="mt-5 font-semibold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", letterSpacing: "0.1em" }}>
+          {name}
+        </motion.div>
+      </>
     );
   }
   return (
@@ -499,23 +504,18 @@ export default function SpecialReportPage() {
 
     // 个人分镜（个人 0 拜访但有团队榜时，只展示封面 + 团队 + 结尾）
     if (p.visit_count > 0) {
-    // 2. 拜访数（visits.webp 上半屏插画，底部渐变融入背景）
+    // 2. 拜访数（visits.webp 全屏背景，文字垂直居中）
     list.push({
       key: "visits",
       node: (a) => (
         <>
-          <TopIllustration src="/report/visits.webp" />
-          <PageShell center={false}>
-            {/* 上半屏留给插画（paddingTop 46%），文字区在剩余空间垂直居中 */}
-            <div className="flex h-full w-full flex-col items-center text-center" style={{ paddingTop: "46%" }}>
-              <div className="flex flex-1 flex-col items-center justify-center">
-                <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
-                <motion.div variants={fadeUp}>
-                  <BigNumber value={p.visit_count} active={a} />
-                </motion.div>
-                <Sub>次客户的门</Sub>
-              </div>
-            </div>
+          <FullBgImage src="/report/visits.webp" />
+          <PageShell>
+            <motion.div variants={fadeUp} className="text-white/60" style={{ fontSize: "clamp(15px, 4vw, 18px)" }}>这个夏天，你敲开了</motion.div>
+            <motion.div variants={fadeUp}>
+              <BigNumber value={p.visit_count} active={a} />
+            </motion.div>
+            <Sub>次客户的门</Sub>
           </PageShell>
         </>
       ),
@@ -548,39 +548,35 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 4. 客户（customer.webp 上半屏插画）
+    // 4. 客户（customer.webp 全屏背景，文字垂直居中）
     list.push({
       key: "customers",
       node: (a) => (
         <>
-          <TopIllustration src="/report/customer.webp" />
-          <PageShell center={false}>
-            {/* 上半屏留给插画，文字区在剩余空间垂直居中 */}
-            <div className="flex h-full w-full flex-col items-center text-center" style={{ paddingTop: "40%" }}>
-              <div className="flex flex-1 flex-col items-center justify-center">
-                <motion.div variants={fadeUp}>
-                  <BigNumber value={p.customer_count} active={a} />
-                </motion.div>
-                <Sub>家客户，记住了你的名字</Sub>
-                {p.top_customers.length > 0 && (
-                  <div className="mt-5 w-full max-w-[320px] space-y-2">
-                    {p.top_customers.slice(0, 5).map((c, i) => (
-                      <motion.div
-                        key={c.name + i}
-                        variants={fadeUp}
-                        className="flex items-center justify-between rounded-xl bg-white/5 px-4 py-2 border border-white/10"
-                      >
-                        <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
-                          <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
-                          <span className="truncate max-w-[180px]">{c.name}</span>
-                        </span>
-                        <span className="text-white/50 text-sm">{c.count} 次</span>
-                      </motion.div>
-                    ))}
-                  </div>
-                )}
+          <FullBgImage src="/report/customer.webp" />
+          <PageShell>
+            <motion.div variants={fadeUp}>
+              <BigNumber value={p.customer_count} active={a} />
+            </motion.div>
+            <Sub>家客户，记住了你的名字</Sub>
+            {p.top_customers.length > 0 && (
+              <div className="mt-6 w-full max-w-[320px] space-y-2.5">
+                {p.top_customers.slice(0, 5).map((c, i) => (
+                  <motion.div
+                    key={c.name + i}
+                    variants={fadeUp}
+                    className="flex items-center justify-between rounded-xl border border-white/10 px-4 py-2.5"
+                    style={{ background: "rgba(13,13,23,0.45)" }}
+                  >
+                    <span className="flex items-center gap-3 text-white/90" style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}>
+                      <span className="text-[#ff9a5a] font-semibold w-5">{i + 1}</span>
+                      <span className="truncate max-w-[180px]">{c.name}</span>
+                    </span>
+                    <span className="text-white/50 text-sm">{c.count} 次</span>
+                  </motion.div>
+                ))}
               </div>
-            </div>
+            )}
           </PageShell>
         </>
       ),
@@ -640,12 +636,13 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 6. 里程（Runner 从左侧跑入横穿过屏）
+    // 6. 里程（distance.webp 全屏背景，Runner 从左侧跑入横穿过屏）
     const roundTrips = p.distance_km / 2200;
     list.push({
       key: "distance",
       node: (a) => (
         <>
+          <FullBgImage src="/report/distance.webp" />
           {a && (
             <motion.div
               className="pointer-events-none absolute bottom-[12vh] left-0 z-10"
@@ -657,9 +654,7 @@ export default function SpecialReportPage() {
               <RunnerSvg size={56} running />
             </motion.div>
           )}
-          <PageShell center={false}>
-            {/* 垂直居中并整体上移 ~8vh */}
-            <div className="flex h-full w-full flex-col items-center justify-center pb-[8vh] text-center">
+          <PageShell>
             <motion.div variants={fadeUp} className="flex items-baseline gap-2">
               <BigNumber value={p.distance_km} decimals={p.distance_km < 100 ? 1 : 0} active={a} />
               <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>公里</span>
@@ -671,7 +666,6 @@ export default function SpecialReportPage() {
                 <>相当于绕标准操场 {Math.round(p.distance_km / 0.4)} 圈</>
               )}
             </Sub>
-            </div>
           </PageShell>
         </>
       ),
@@ -785,41 +779,47 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 11. 最忙的一天
+    // 11. 最忙的一天（busiest.webp 全屏背景）
     if (p.busiest_day) {
       list.push({
         key: "busiest",
         node: () => (
-          <PageShell>
-            <motion.div variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(30px, 8.5vw, 46px)" }}>
-              {fmtDate(p.busiest_day!.date)}
-            </motion.div>
-            <Sub>
-              是你最拼的一天，
-              <br />
-              一天跑了 <span className="text-[#ff9a5a] font-semibold">{p.busiest_day!.visit_count}</span> 家
-            </Sub>
-          </PageShell>
+          <>
+            <FullBgImage src="/report/busiest.webp" />
+            <PageShell>
+              <motion.div variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(30px, 8.5vw, 46px)" }}>
+                {fmtDate(p.busiest_day!.date)}
+              </motion.div>
+              <Sub>
+                是你最拼的一天，
+                <br />
+                一天跑了 <span className="text-[#ff9a5a] font-semibold">{p.busiest_day!.visit_count}</span> 家
+              </Sub>
+            </PageShell>
+          </>
         ),
       });
     }
 
-    // 12. 最早出发·窗户画框（earliest_days 前 5 天，兜底 earliest_visit 单窗）
+    // 12. 最早出发·窗户画框（earliest.webp 全屏背景压暗，earliest_days 前 5 天，兜底 earliest_visit 单窗）
     const earliestDays = p.earliest_days && p.earliest_days.length > 0 ? p.earliest_days : p.earliest_visit ? [p.earliest_visit] : [];
     if (earliestDays.length > 0) {
       list.push({
         key: "earliest",
         node: (a) => (
-          <PageShell center={false}>
-            <div className="flex h-full w-full flex-col items-center justify-center text-center">
-              <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
-                这些天，城市还没醒
-                <br />
-                你就出发了
-              </motion.h2>
-              <EarliestWindows days={earliestDays} active={a} />
-            </div>
-          </PageShell>
+          <>
+            <FullBgImage src="/report/earliest.webp" />
+            <PageShell center={false}>
+              <div className="flex h-full w-full flex-col items-center justify-center text-center">
+                <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(22px, 6vw, 30px)", lineHeight: 1.6 }}>
+                  这些天，城市还没醒
+                  <br />
+                  你就出发了
+                </motion.h2>
+                <EarliestWindows days={earliestDays} active={a} />
+              </div>
+            </PageShell>
+          </>
         ),
       });
     }
@@ -1211,11 +1211,13 @@ export default function SpecialReportPage() {
       });
     }
 
-    // 16. 结尾 + 分享卡片
+    // 16. 结尾 + 分享卡片（finale.webp 全屏背景）
     list.push({
       key: "finale",
       node: (a) => (
-        <PageShell>
+        <>
+          <FullBgImage src="/report/finale.webp" />
+          <PageShell>
           {/* 进入时播放一轮烟花 */}
           {a && (
             <div className="pointer-events-none absolute inset-x-0 top-4 flex justify-center" aria-hidden>
@@ -1264,7 +1266,8 @@ export default function SpecialReportPage() {
               {shareBusy ? "生成中…" : "生成分享卡片"}
             </button>
           </motion.div>
-        </PageShell>
+          </PageShell>
+        </>
       ),
     });
 
