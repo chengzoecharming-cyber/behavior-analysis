@@ -1509,38 +1509,17 @@ export default function SpecialReportPage() {
                 ];
             return (
               <div
-                style={
-                  isTeamCard
-                    ? { marginTop: p.title ? 24 : 48, width: "100%", display: "flex", flexDirection: "column", gap: 14 }
-                    : { marginTop: p.title ? 24 : 48, width: "100%", display: "flex", justifyContent: "space-around" }
-                }
+                style={{ marginTop: p.title ? 24 : 48, width: "100%", display: "flex", flexDirection: "column", gap: 14 }}
               >
-                {items.map((it) =>
-                  isTeamCard ? (
-                    <div key={it.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 12px" }}>
-                      <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 14 }}>{it.label}</div>
-                      <div style={{ fontSize: 28, fontWeight: 700, color: "#ff9a5a" }}>
-                        {it.value.toLocaleString()}
-                        <span style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", marginLeft: 4 }}>{it.unit}</span>
-                      </div>
+                {items.map((it) => (
+                  <div key={it.label} style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", padding: "0 12px" }}>
+                    <div style={{ color: "rgba(255,255,255,0.55)", fontSize: 14 }}>{it.label}</div>
+                    <div style={{ fontSize: 28, fontWeight: 700, color: "#ff9a5a" }}>
+                      {it.value.toLocaleString()}
+                      <span style={{ fontSize: 13, color: "rgba(255,255,255,0.55)", marginLeft: 4 }}>{it.unit}</span>
                     </div>
-                  ) : (
-                    <div key={it.label} style={{ textAlign: "center" }}>
-                      <div
-                        style={{
-                          fontSize: 34,
-                          fontWeight: 700,
-                          color: "#ff9a5a",
-                        }}
-                      >
-                        {it.value.toLocaleString()}
-                      </div>
-                      <div style={{ marginTop: 4, color: "rgba(255,255,255,0.55)", fontSize: 13 }}>
-                        {it.label} · {it.unit}
-                      </div>
-                    </div>
-                  )
-                )}
+                  </div>
+                ))}
               </div>
             );
           })()}
