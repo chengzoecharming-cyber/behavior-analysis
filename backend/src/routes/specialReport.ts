@@ -1,6 +1,6 @@
 import { Router, Request, Response } from "express";
 import { authMiddleware, requireRole, AuthRequest } from "../services/auth";
-import { sendReportMessageToUsers } from "../services/dingtalkFile";
+import { sendWorkNotificationActionCard } from "../services/dingtalkFile";
 import {
   computeSpecialReport,
   getSpecialReportTokenStatus,
@@ -93,19 +93,22 @@ router.post(
       let sent = 0;
       let failed = 0;
       // 逐人发送（每人链接不同），单个失败不中断整体推送；
-      // manager/admin 有 personal + team 两条 token，分别发两条消息
+      // manager/admin 有 personal + team 两条 token，分别发两条消息。
+      // 用 ActionCard 卡片按钮：钉钉内点按钮可直接打开链接（机器人 markdown 裸链常打不开）
       for (const u of issued) {
         const link = `${FRONTEND_BASE_URL}/report/${u.token}`;
-        const text =
-          u.kind === "team"
-            ? `📊 你团队的盛夏战报也好了\n\n` +
-              `看看这个夏天，大家跑了多少、谁最拼。\n\n` +
-              `👉 [开启团队战报](${link})`
-            : `🏆 这是一条特别推送：你的盛夏战报已生成\n\n` +
-              `${days} 个日夜，你走过的每一步都算数。\n\n` +
-              `👉 [开启我的战报](${link})`;
+        const isTeam = u.kind === "team";
+        const markdown = isTeam
+          ? `### 📊 你团队的盛夏战报也好了\n\n看看这个夏天，大家跑了多少、谁最拼。`
+          : `### 🏆 这是一条特别推送：你的盛夏战报已生成\n\n${days} 个日夜，你走过的每一步都算数。`;
         try {
-          await sendReportMessageToUsers([u.user_id], "盛夏战报", text);
+          await sendWorkNotificationActionCard(
+            [u.user_id],
+            "盛夏战报",
+            markdown,
+            isTeam ? "开启团队战报" : "开启我的战报",
+            link
+          );
           sent++;
         } catch (err) {
           console.error(`[SpecialReport] 推送失败 user=${u.user_id} kind=${u.kind}:`, err);

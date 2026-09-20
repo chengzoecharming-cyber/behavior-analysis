@@ -233,6 +233,31 @@ export async function sendWorkNotificationMarkdown(
 }
 
 /**
+ * 以应用身份发送 ActionCard 卡片工作通知（单按钮跳转链接）。
+ * 钉钉内点击按钮可直接打开 https 链接（机器人 markdown 里的裸链接常打不开，卡片按钮可以）。
+ */
+export async function sendWorkNotificationActionCard(
+  userIds: string[],
+  title: string,
+  markdown: string,
+  btnTitle: string,
+  btnUrl: string
+): Promise<void> {
+  if (userIds.length === 0) {
+    throw new Error("接收用户列表为空");
+  }
+  await sendWorkNotificationToUsers(userIds, {
+    msgtype: "action_card",
+    action_card: {
+      title,
+      markdown,
+      single_title: btnTitle,
+      single_url: btnUrl,
+    },
+  });
+}
+
+/**
  * 以应用机器人身份发送 Markdown 单聊消息（/v1.0/robot/oToMessages/batchSend）。
  * 消息以机器人 1 对 1 会话出现在消息列表，比「工作通知」会话更显眼。
  * robotCode 默认取 DINGTALK_APP_KEY（企业内部应用的机器人 code 即 AppKey），
