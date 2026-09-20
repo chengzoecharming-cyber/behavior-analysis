@@ -16,6 +16,8 @@ export interface SpecialReportTokenInfo {
   department: string | null;
   period_start: string;
   period_end: string;
+  /** 'personal' | 'team'；NULL = 存量兼容链接（个人+团队都显示） */
+  kind: "personal" | "team" | null;
 }
 
 /**
@@ -37,6 +39,10 @@ export function ensureTables(): Promise<void> {
       await pool.query(`
         CREATE INDEX IF NOT EXISTS idx_special_report_views_user
           ON special_report_views(user_id)
+      `);
+      // token 拆分个人/团队两份独立链接；存量 token kind 为 NULL = 兼容模式
+      await pool.query(`
+        ALTER TABLE special_report_tokens ADD COLUMN IF NOT EXISTS kind VARCHAR(16)
       `);
     })().catch((err) => {
       tablesReady = null;
@@ -155,6 +161,8 @@ export interface SpecialReport {
   scope: "staff" | "manager" | "admin";
   user: { user_id: string; user_name: string; department: string | null };
   period: { start: string; end: string };
+  /** 来自 token：'personal' 只显示个人分镜，'team' 只显示团队分镜，null 全显示 */
+  kind: "personal" | "team" | null;
   personal: SpecialReportPersonal;
   team?: SpecialReportTeam;
   /** 仅 admin：本期战报各人打开统计 */
@@ -164,11 +172,11 @@ export interface SpecialReport {
 /** 足迹散点上限：超出后均匀抽稀 */
 const MAX_POINTS = 200;
 
-/** 为全体在职有效用户签发战报 token（30 天有效），返回签发清单 */
+/** 为全体在职有效用户签发战报 token（30 天有效）：staff 只签个人版，manager/admin 签个人+团队两条 */
 export async function issueSpecialReportTokens(
   periodStart: string,
   periodEnd: string
-): Promise<{ user_id: string; user_name: string; role: string; token: string }[]> {
+): Promise<{ user_id: string; user_name: string; role: string; kind: "personal" | "team"; token: string }[]> {
   const users = await pool.query<{
     user_id: string;
     user_name: string;
@@ -179,15 +187,18 @@ export async function issueSpecialReportTokens(
      ORDER BY user_id`
   );
 
-  const issued: { user_id: string; user_name: string; role: string; token: string }[] = [];
+  const issued: { user_id: string; user_name: string; role: string; kind: "personal" | "team"; token: string }[] = [];
   for (const u of users.rows) {
-    const token = crypto.randomBytes(32).toString("hex");
-    await pool.query(
-      `INSERT INTO special_report_tokens (token, user_id, period_start, period_end, expires_at)
-       VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 days')`,
-      [token, u.user_id, periodStart, periodEnd]
-    );
-    issued.push({ user_id: u.user_id, user_name: u.user_name, role: u.role, token });
+    const kinds: ("personal" | "team")[] = u.role === "staff" ? ["personal"] : ["personal", "team"];
+    for (const kind of kinds) {
+      const token = crypto.randomBytes(32).toString("hex");
+      await pool.query(
+        `INSERT INTO special_report_tokens (token, user_id, period_start, period_end, expires_at, kind)
+         VALUES ($1, $2, $3, $4, NOW() + INTERVAL '30 days', $5)`,
+        [token, u.user_id, periodStart, periodEnd, kind]
+      );
+      issued.push({ user_id: u.user_id, user_name: u.user_name, role: u.role, kind, token });
+    }
   }
   return issued;
 }
@@ -196,6 +207,8 @@ export async function issueSpecialReportTokens(
 export async function resolveSpecialReportToken(
   token: string
 ): Promise<SpecialReportTokenInfo | null> {
+  // kind 列由 ensureTables 幂等添加，查询前先确保就位
+  await ensureTables();
   const res = await pool.query<{
     user_id: string;
     user_name: string;
@@ -203,9 +216,11 @@ export async function resolveSpecialReportToken(
     department: string | null;
     period_start: string;
     period_end: string;
+    kind: "personal" | "team" | null;
   }>(
     `SELECT t.user_id, u.user_name, u.role, u.department,
-            t.period_start::text AS period_start, t.period_end::text AS period_end
+            t.period_start::text AS period_start, t.period_end::text AS period_end,
+            t.kind
      FROM special_report_tokens t
      JOIN users u ON u.user_id = t.user_id
      WHERE t.token = $1 AND t.expires_at > NOW()`,
@@ -259,7 +274,8 @@ export async function computeSpecialReport(
   role: User["role"],
   department: string | null,
   start: string,
-  end: string
+  end: string,
+  kind: "personal" | "team" | null = null
 ): Promise<SpecialReport> {
   // 结束日截断到「今天」（北京时间）：战报周期可能写死到未来（如 9.30），
   // 截断后聚合与 period 返回都不含未来日期，日历点阵不会出现大片未来暗点。
@@ -569,6 +585,7 @@ export async function computeSpecialReport(
       department,
     },
     period: { start, end },
+    kind,
     personal,
   };
 

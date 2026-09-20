@@ -18,6 +18,8 @@ interface SpecialReport {
   scope: "staff" | "manager" | "admin";
   user: { user_id: string; user_name: string; department: string };
   period: { start: string; end: string };
+  /** 来自 token：'personal' 只显示个人分镜，'team' 只显示团队分镜，null/undefined 全显示（存量链接） */
+  kind?: "personal" | "team" | null;
   personal: {
     visit_count: number;
     customer_count: number;
@@ -313,7 +315,13 @@ function FootprintMap({ points, active }: { points: { lat: number; lng: number; 
   }, [active, points]);
 
   return (
-    <motion.div variants={fadeUp} className="mt-6 w-full overflow-hidden rounded-2xl border border-white/10" style={{ height: "46vh" }}>
+    <motion.div
+      variants={fadeUp}
+      className="mt-6 w-full overflow-hidden rounded-2xl border border-white/10"
+      style={{ height: "46vh" }}
+      // 地图自身要拖动缩放，阻止冒泡触发整页翻页拖拽
+      onPointerDown={(e) => e.stopPropagation()}
+    >
       {failed ? (
         <div className="flex h-full items-center justify-center text-white/50 text-sm">地图加载失败</div>
       ) : (
@@ -333,7 +341,6 @@ export default function SpecialReportPage() {
   const [shareImg, setShareImg] = useState<string | null>(null);
   const [shareBusy, setShareBusy] = useState(false);
   const shareCardRef = useRef<HTMLDivElement>(null);
-  const touchStartY = useRef<number | null>(null);
   const wheelLock = useRef(false);
   const audioRef = useRef<AmbientAudio | null>(null);
   const [audioStarted, setAudioStarted] = useState(false);
@@ -422,6 +429,11 @@ export default function SpecialReportPage() {
   const slides: Slide[] = useMemo(() => {
     if (!report) return [];
     const p = report.personal;
+    // kind 来自 token：personal 只保留个人分镜，team 只保留团队分镜，null/undefined（存量链接）全显示
+    const kind = report.kind ?? null;
+    const showPersonal = kind !== "team";
+    const showTeam = kind !== "personal";
+    const hasTeam = !!(report.team && report.team.top_members.length > 0);
     const fmtPeriod = (s: string) => {
       const d = new Date(s);
       return isNaN(d.getTime()) ? s : `${d.getMonth() + 1}.${d.getDate()}`;
@@ -431,8 +443,10 @@ export default function SpecialReportPage() {
       return isNaN(d.getTime()) ? s : `${d.getMonth() + 1} 月 ${d.getDate()} 日`;
     };
 
-    // 空数据（且无团队榜可看）：只有一页
-    if (p.visit_count === 0 && !(report.team && report.team.top_members.length > 0)) {
+    // 空数据（按 kind 口径：个人版看个人数据，团队版看团队榜）：只有一页
+    const emptyPersonal = showPersonal && p.visit_count === 0;
+    const emptyTeam = showTeam && !hasTeam;
+    if ((kind === "team" && emptyTeam) || (kind === "personal" && emptyPersonal) || (kind === null && emptyPersonal && emptyTeam)) {
       return [
         {
           key: "empty",
@@ -505,7 +519,18 @@ export default function SpecialReportPage() {
               2026 · 盛夏战报
             </motion.div>
             <CoverTitle name={report.user.user_name} />
-            <Sub>{report.user.department}</Sub>
+            {kind === "team" ? (
+              <>
+                <motion.div variants={fadeUp} className="mt-5 font-semibold text-white" style={{ fontSize: "clamp(20px, 5.6vw, 28px)", letterSpacing: "0.06em" }}>
+                  {report.user.department}
+                </motion.div>
+                <motion.div variants={fadeUp} className="mt-5 rounded-full border border-[#ff9a5a]/50 px-4 py-1 text-[#ffb37e]" style={{ fontSize: "clamp(12px, 3.2vw, 14px)", background: "rgba(26,26,46,0.35)" }}>
+                  团队战报
+                </motion.div>
+              </>
+            ) : (
+              <Sub>{report.user.department}</Sub>
+            )}
             <motion.div variants={fadeUp} className="mt-10 rounded-full border border-white/20 px-6 py-2 text-white/70" style={{ fontSize: "clamp(13px, 3.6vw, 16px)", background: "rgba(26,26,46,0.35)" }}>
               {fmtPeriod(report.period.start)} — {fmtPeriod(report.period.end)}
             </motion.div>
@@ -516,8 +541,8 @@ export default function SpecialReportPage() {
       ),
     });
 
-    // 个人分镜（个人 0 拜访但有团队榜时，只展示封面 + 团队 + 结尾）
-    if (p.visit_count > 0) {
+    // 个人分镜（个人 0 拜访但有团队榜时，只展示封面 + 团队 + 结尾；kind='team' 时整段跳过）
+    if (showPersonal && p.visit_count > 0) {
     // 2. 拜访数（visits.webp 全屏背景，文字垂直居中）
     list.push({
       key: "visits",
@@ -615,10 +640,12 @@ export default function SpecialReportPage() {
               {top.name}
             </motion.div>
             <Sub>
-              {top.count === 1 ? (
-                "你们的故事才刚刚开始"
-              ) : (
+              {top.count >= 3 ? (
                 <>这家客户，你去了 <span className="text-[#ff9a5a] font-semibold">{top.count}</span> 次，比回家还勤</>
+              ) : top.count === 2 ? (
+                "这家客户，你专程去了 2 次"
+              ) : (
+                "你们的故事才刚刚开始"
               )}
             </Sub>
           </PageShell>
@@ -632,7 +659,8 @@ export default function SpecialReportPage() {
         key: "customer-matrix",
         node: (a) => (
           <PageShell center={false}>
-            <div className="flex h-full w-full flex-col items-center justify-center text-center">
+            {/* 整体向上靠：减少顶部留白 */}
+            <div className="flex h-full w-full flex-col items-center justify-start pt-[9vh] text-center">
               <motion.h2 variants={fadeUp} className="font-bold text-white" style={{ fontSize: "clamp(24px, 6.5vw, 34px)" }}>
                 你的客户版图
               </motion.h2>
@@ -901,8 +929,8 @@ export default function SpecialReportPage() {
 
     }
 
-    // 15. 团队：总览+奖项一页，排行榜单独一页
-    if (report.team && report.team.top_members.length > 0) {
+    // 15. 团队：总览+奖项一页，排行榜单独一页（kind='personal' 时整段跳过）
+    if (showTeam && report.team && report.team.top_members.length > 0) {
       const medal = ["#ffd700", "#c0c0c0", "#cd7f32"];
       const t = report.team;
       list.push({
@@ -979,7 +1007,7 @@ export default function SpecialReportPage() {
     }
 
     // 15b. 成员图鉴（member_highlights 为空/undefined 时整页跳过）
-    if (report.team?.member_highlights && report.team.member_highlights.length > 0) {
+    if (showTeam && report.team?.member_highlights && report.team.member_highlights.length > 0) {
       const mh = report.team.member_highlights;
       list.push({
         key: "member-highlights",
@@ -1029,7 +1057,7 @@ export default function SpecialReportPage() {
     }
 
     // 15c. 团队视角分镜（manager/admin 且有 team 时；字段 undefined/空则逐页跳过，staff 不出现）
-    if (report.team) {
+    if (showTeam && report.team) {
       const t = report.team;
 
       // 高频搭档榜：单人单客户 >10 次的组合
@@ -1165,7 +1193,7 @@ export default function SpecialReportPage() {
     }
 
     // 15d. 战报的回响（仅 admin，open_stats 为 undefined 时整页跳过）
-    if (report.open_stats !== undefined) {
+    if (showTeam && report.open_stats !== undefined) {
       const fmtViewed = (s: string | null) => {
         if (!s) return "—";
         const d = new Date(s);
@@ -1224,11 +1252,11 @@ export default function SpecialReportPage() {
             </div>
           )}
           <motion.div variants={fadeUp} className="flex items-baseline gap-2">
-            <BigNumber value={p.visit_count > 0 ? p.active_days : (report.team?.total_visits ?? 0)} active={a} />
-            <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>{p.visit_count > 0 ? "天" : "次拜访"}</span>
+            <BigNumber value={p.visit_count > 0 && kind !== "team" ? p.active_days : (report.team?.total_visits ?? 0)} active={a} />
+            <span className="text-white/70" style={{ fontSize: "clamp(18px, 5vw, 26px)" }}>{p.visit_count > 0 && kind !== "team" ? "天" : "次拜访"}</span>
           </motion.div>
           <Sub>
-            {p.visit_count > 0 ? (
+            {p.visit_count > 0 && kind !== "team" ? (
               <>
                 山海自有归期，风雨自有相逢。
                 <br />
@@ -1283,30 +1311,16 @@ export default function SpecialReportPage() {
     [page, total]
   );
 
-  // ============ 手势 / 滚轮翻页 ============
+  // ============ 滚轮翻页（触摸翻页走 slide 容器的 drag="y" 拖拽跟随） ============
   useEffect(() => {
-    const onTouchStart = (e: TouchEvent) => {
-      touchStartY.current = e.touches[0].clientY;
-    };
-    const onTouchEnd = (e: TouchEvent) => {
-      if (touchStartY.current === null) return;
-      const deltaY = touchStartY.current - e.changedTouches[0].clientY;
-      touchStartY.current = null;
-      if (Math.abs(deltaY) < 50) return;
-      goTo(deltaY > 0 ? page + 1 : page - 1);
-    };
     const onWheel = (e: WheelEvent) => {
       if (wheelLock.current || Math.abs(e.deltaY) < 24) return;
       wheelLock.current = true;
       setTimeout(() => (wheelLock.current = false), 700);
       goTo(e.deltaY > 0 ? page + 1 : page - 1);
     };
-    window.addEventListener("touchstart", onTouchStart, { passive: true });
-    window.addEventListener("touchend", onTouchEnd, { passive: true });
     window.addEventListener("wheel", onWheel, { passive: true });
     return () => {
-      window.removeEventListener("touchstart", onTouchStart);
-      window.removeEventListener("touchend", onTouchEnd);
       window.removeEventListener("wheel", onWheel);
     };
   }, [page, goTo]);
@@ -1349,6 +1363,7 @@ export default function SpecialReportPage() {
 
   const slide = slides[page];
   const p = report.personal;
+  const kind = report.kind ?? null;
   const sharePeriod = `${fmtPeriodS(report.period.start)} — ${fmtPeriodS(report.period.end)}`;
 
   function fmtPeriodS(s: string) {
@@ -1391,6 +1406,15 @@ export default function SpecialReportPage() {
             animate={{ y: 0, opacity: 1, scale: 1 }}
             exit={{ y: direction > 0 ? "-60%" : "60%", opacity: 0, scale: 0.96 }}
             transition={{ duration: 0.55, ease: [0.32, 0.72, 0, 1] }}
+            // 拖拽跟随：页面实时跟手（0.6 阻尼橡皮筋），松手超阈值或快速滑动才翻页，否则回弹
+            drag={total > 1 ? "y" : false}
+            dragConstraints={{ top: 0, bottom: 0 }}
+            dragElastic={0.6}
+            dragDirectionLock
+            onDragEnd={(_, info) => {
+              if (info.offset.y < -60 || info.velocity.y < -400) goTo(page + 1);
+              else if (info.offset.y > 60 || info.velocity.y > 400) goTo(page - 1);
+            }}
           >
             {slide.node(true)}
           </motion.div>
@@ -1472,7 +1496,7 @@ export default function SpecialReportPage() {
             </div>
           )}
           <div style={{ marginTop: p.title ? 24 : 48, width: "100%", display: "flex", justifyContent: "space-around" }}>
-            {(p.visit_count > 0 || !report.team
+            {(p.visit_count > 0 && kind !== "team" || !report.team
               ? [
                   { label: "拜访次数", value: p.visit_count, unit: "次" },
                   { label: "客户", value: p.customer_count, unit: "家" },
