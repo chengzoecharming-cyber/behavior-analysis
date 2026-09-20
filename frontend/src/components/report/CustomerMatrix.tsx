@@ -24,7 +24,7 @@ export function CustomerMatrix({
   if (items.length === 0) return null;
   const max = Math.max(...items.map((t) => t.count), 1);
   const cols = 3;
-  const cell = 150;
+  const cell = 170;
   const rows = Math.ceil(items.length / cols);
   const w = cols * cell;
   const h = rows * cell;
@@ -51,7 +51,7 @@ export function CustomerMatrix({
       >
         {items.map((t, i) => {
           const ratio = t.count / max;
-          const size = 95 + 55 * Math.sqrt(ratio);
+          const size = 108 + 58 * Math.sqrt(ratio);
           const col = i % cols;
           const row = Math.floor(i / cols);
           return (
@@ -94,9 +94,9 @@ export function CustomerMatrix({
                   textOverflow: "ellipsis",
                 }}
               >
-                {t.name.length > 7 ? t.name.slice(0, 7) + "…" : t.name}
+                {t.name.length > 6 ? t.name.slice(0, 6) + "…" : t.name}
               </span>
-              <span style={{ color: "rgba(255,255,255,0.9)", fontSize: 12, fontVariantNumeric: "tabular-nums" }}>{t.count} 次</span>
+              <span style={{ color: "rgba(255,255,255,0.9)", fontSize: 13, fontVariantNumeric: "tabular-nums" }}>{t.count} 次</span>
             </motion.div>
           );
         })}

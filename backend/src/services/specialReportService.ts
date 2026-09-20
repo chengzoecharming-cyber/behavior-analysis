@@ -74,6 +74,20 @@ interface TopCustomer {
   count: number;
 }
 
+/**
+ * 地址类占位名判定：剔除「办公室/写字楼/大厦/园区/厂区/xx公司」这类把地址当客户名填的占位，
+ * 但含真实公司后缀（有限/有限责任/股份有限公司）的不误伤；纯「公司」「办公室」「总部」类极短词也剔除。
+ * 所有客户聚合（Top5/矩阵墙/最常拜访/最铁组合/成员图鉴 top_customer）统一走这层过滤。
+ */
+export function isAddressLikeName(name: string): boolean {
+  const n = name.trim();
+  if (!n) return true;
+  const hasRealSuffix = /有限公司|有限责任公司|股份有限公司/.test(n);
+  if (hasRealSuffix) return false;
+  if (n.length < 4) return true; // 极短占位词（公司/办公室/总部/厂里…）
+  return /办公室|写字楼|大厦|园区|厂区|公司$/.test(n);
+}
+
 interface SpecialReportPersonal {
   visit_count: number;
   customer_count: number;
@@ -255,8 +269,10 @@ async function aggregateCustomers(
   );
   const counter = new Map<string, number>();
   for (const row of res.rows) {
-    // 只计真实客户（过滤「虚拟客户/签到用/住址」类占位名，与拜访计数口径一致）
+    // 只计真实客户（过滤「虚拟客户/签到用/住址」类占位名，与拜访计数口径一致；
+    // 再剔除地址类占位名，如「办公室」「创维数字大厦」）
     for (const name of splitRealCustomerNames(row.customer_name)) {
+      if (isAddressLikeName(name)) continue;
       counter.set(name, (counter.get(name) || 0) + 1);
     }
   }
@@ -694,6 +710,7 @@ export async function computeSpecialReport(
         custCounterByUser.set(r.user_id, counter);
       }
       for (const name of splitRealCustomerNames(r.customer_name)) {
+        if (isAddressLikeName(name)) continue;
         counter.set(name, (counter.get(name) || 0) + 1);
       }
     }

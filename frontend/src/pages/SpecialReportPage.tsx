@@ -1270,10 +1270,7 @@ export default function SpecialReportPage() {
               </>
             )}
           </Sub>
-          <motion.div variants={fadeUp} className="mt-8" aria-hidden>
-            <RunnerSvg size={68} />
-          </motion.div>
-          <motion.div variants={fadeUp} className="mt-8 flex flex-col items-center gap-3">
+          <motion.div variants={fadeUp} className="mt-10 flex flex-col items-center gap-3">
             <button
               className="cursor-pointer rounded-full border border-[#ff9a5a]/60 bg-transparent px-8 py-2.5 text-[#ffb37e] transition hover:bg-[#ff9a5a]/10"
               style={{ fontSize: "clamp(14px, 3.8vw, 16px)" }}
@@ -1422,7 +1419,7 @@ export default function SpecialReportPage() {
 
         {/* 页码指示器（开场页不显示） */}
         {total > 1 && slide.key !== "intro" && (
-          <div className="absolute bottom-5 right-3 z-10 flex flex-col items-center gap-1 opacity-80">
+          <div className="absolute bottom-5 right-2 z-10 flex flex-col items-center gap-0.5 opacity-80">
             {slides.map((s, i) => (
               <button
                 key={s.key}
@@ -1430,8 +1427,8 @@ export default function SpecialReportPage() {
                 onClick={() => goTo(i)}
                 className="cursor-pointer rounded-full border-none transition-all"
                 style={{
-                  width: 4,
-                  height: i === page ? 12 : 4,
+                  width: 3,
+                  height: i === page ? 10 : 3,
                   background: i === page ? "#ff9a5a" : "rgba(255,255,255,0.18)",
                 }}
               />
