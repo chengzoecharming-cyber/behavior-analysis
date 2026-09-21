@@ -24,41 +24,45 @@ const chartFallback = (
 );
 import {
   getCurrentBusinessWeekRange,
-  getPreviousBusinessWeekRange,
   getLastTwoWeeksRange,
   getLastThreeWeeksRange,
   getLastMonthRange,
+  getPastNMonthsRange,
 } from "../utils/businessPeriod";
 
 const { Title, Text } = Typography;
 
 type DateRangeMode =
   | "current_week"
-  | "last_week"
   | "last_two_weeks"
   | "last_three_weeks"
-  | "last_month";
+  | "last_month"
+  | "last_two_months"
+  | "last_three_months";
 
 const DATE_RANGE_PRESETS = [
   { key: "current_week", label: "本周" },
-  { key: "last_week", label: "上周" },
   { key: "last_two_weeks", label: "过去两周" },
   { key: "last_three_weeks", label: "过去三周" },
   { key: "last_month", label: "上月" },
+  { key: "last_two_months", label: "过去两月" },
+  { key: "last_three_months", label: "过去三月" },
 ];
 
 function getPresetRange(key: DateRangeMode): [string, string] {
   switch (key) {
     case "current_week":
       return getCurrentBusinessWeekRange();
-    case "last_week":
-      return getPreviousBusinessWeekRange();
     case "last_two_weeks":
       return getLastTwoWeeksRange();
     case "last_three_weeks":
       return getLastThreeWeeksRange();
     case "last_month":
       return getLastMonthRange();
+    case "last_two_months":
+      return getPastNMonthsRange(2);
+    case "last_three_months":
+      return getPastNMonthsRange(3);
     default:
       return getCurrentBusinessWeekRange();
   }

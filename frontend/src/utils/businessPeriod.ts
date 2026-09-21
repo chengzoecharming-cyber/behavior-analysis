@@ -51,6 +51,14 @@ export function getLastMonthRange(date?: dayjs.Dayjs | string | Date): [string, 
   return [lastMonth.startOf("month").format("YYYY-MM-DD"), lastMonth.endOf("month").format("YYYY-MM-DD")];
 }
 
+/** 过去 N 个完整自然月（不含本月） */
+export function getPastNMonthsRange(n: number, date?: dayjs.Dayjs | string | Date): [string, string] {
+  const d = date ? dayjs.tz(date, "Asia/Shanghai") : dayjs.tz();
+  const start = d.subtract(n, "month").startOf("month");
+  const end = d.subtract(1, "month").endOf("month");
+  return [start.format("YYYY-MM-DD"), end.format("YYYY-MM-DD")];
+}
+
 export function getCurrentWeekSoFarRange(date?: dayjs.Dayjs | string | Date): [string, string] {
   const d = date ? dayjs.tz(date, "Asia/Shanghai") : dayjs.tz();
   const start = getBusinessWeekStart(d);
