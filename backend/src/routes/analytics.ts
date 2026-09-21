@@ -535,7 +535,11 @@ router.get("/customer-visit-frequency", authMiddleware, async (req: AuthRequest,
       excludedIds.add(id);
     }
 
-    const items = computeCustomerVisitFrequency(visits, excludedIds);
+    const items = computeCustomerVisitFrequency(
+      visits,
+      excludedIds,
+      companyAddresses.map((a) => a.name)
+    );
     const flaggedOnly = items.filter((i) => i.flagged);
 
     res.json({

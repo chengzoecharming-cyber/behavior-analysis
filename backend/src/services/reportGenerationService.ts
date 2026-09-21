@@ -518,6 +518,7 @@ export async function exportReportToDingTalkDoc(options: {
     visits: scopeData.visits,
     routes: scopeData.routes,
     homeVisitIds,
+    excludedCustomerNames: companyAddresses.map((a) => a.name),
     systemLink: buildSystemLink(scope, target, start, end),
     orgTree: tree,
   });

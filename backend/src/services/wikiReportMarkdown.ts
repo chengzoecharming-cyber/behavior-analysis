@@ -24,6 +24,8 @@ export interface WikiReportInput {
   visits: Visit[];
   routes: Route[];
   homeVisitIds?: Set<number>;
+  /** 公司相关名称（company_addresses.name），高频拜访关注章节按名称剔除公司自身打卡 */
+  excludedCustomerNames?: string[];
   systemLink: string;
   orgTree: OrgTreeNode[];
 }
@@ -123,7 +125,8 @@ function renderFreqSection(lines: string[], input: WikiReportInput): void {
   // input.visits 是未过滤的原始行，先按 exclude_from_visit_count 过滤（与分析接口口径一致）
   const items = computeCustomerVisitFrequency(
     input.visits.filter((v) => !v.exclude_from_visit_count),
-    input.homeVisitIds
+    input.homeVisitIds,
+    input.excludedCustomerNames
   ).filter((i) => i.flagged);
 
   lines.push("## 高频拜访关注");

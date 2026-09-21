@@ -11,6 +11,11 @@ import { getBusinessWeekStart } from "../utils/businessPeriod";
 export const FREQ_WEEK_THRESHOLD = 2;
 export const FREQ_MONTH_THRESHOLD = 3;
 
+// 高频拜访关注的客户名排除关键词（归一化后按包含匹配）：
+// 公司自身名称/内部昵称被销售写进客户字段时，不算客户拜访。
+// 公司地址白名单（company_addresses.name）由调用方经 excludedNames 传入，与这里的关键词合并生效。
+export const EXCLUDED_CUSTOMER_NAME_KEYWORDS = ["丹弗科技", "小胖峰"];
+
 export interface CustomerFreqItem {
   userId: string;
   userName: string;
@@ -35,11 +40,22 @@ function visitBusinessDate(v: Visit): string {
  * 统计「同一员工 × 同一客户」在时间段内的拜访频次。
  * visits 为已按 NOT exclude_from_visit_count 过滤的行；excludedIds 中
  * form_version !== 'v2' 的行（命中跨员工住址/公司地址）跳过。
+ * excludedNames 传入公司相关名称（如 company_addresses.name），与内置
+ * EXCLUDED_CUSTOMER_NAME_KEYWORDS 合并，归一化后按包含匹配剔除。
  */
 export function computeCustomerVisitFrequency(
   visits: Visit[],
-  excludedIds?: Set<number>
+  excludedIds?: Set<number>,
+  excludedNames?: string[]
 ): CustomerFreqItem[] {
+  const nameKeywords = [
+    ...EXCLUDED_CUSTOMER_NAME_KEYWORDS,
+    ...(excludedNames || []).map((n) => normalizeCustomerName(n)),
+  ].filter(Boolean);
+  const isExcludedName = (raw: string) => {
+    const norm = normalizeCustomerName(raw);
+    return nameKeywords.some((k) => norm.includes(k));
+  };
   interface GroupAcc {
     userId: string;
     userName: string;
@@ -57,6 +73,7 @@ export function computeCustomerVisitFrequency(
     if (excludedIds && v.form_version !== "v2" && excludedIds.has(v.id)) continue;
 
     for (const rawName of splitRealCustomerNames(v.customer_name)) {
+      if (isExcludedName(rawName)) continue;
       const normalized = normalizeCustomerName(rawName);
       if (!normalized) continue;
       const key = v.user_id + " " + normalized;
