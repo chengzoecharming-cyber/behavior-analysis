@@ -293,12 +293,10 @@ export async function computeSpecialReport(
   end: string,
   kind: "personal" | "team" | null = null
 ): Promise<SpecialReport> {
-  // 结束日截断到「今天」（北京时间）：战报周期可能写死到未来（如 9.30），
-  // 截断后聚合与 period 返回都不含未来日期，日历点阵不会出现大片未来暗点。
+  // 战报按 token 里存的固定区间统计（不再随打开日期顺延），
+  // 保证每个人任何时候打开看到的都是同一份报告。
   // rawEnd 保留原周期末日，供 open_stats 按 token 原始周期匹配
   const rawEnd = end;
-  const todayCN = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Shanghai" });
-  if (end > todayCN) end = todayCN;
 
   // 个人聚合：拜访次数（SUM(customer_count)，排除住址/公司打卡）、活跃天数
   const statsRes = await pool.query<{ visit_count: string; active_days: string }>(

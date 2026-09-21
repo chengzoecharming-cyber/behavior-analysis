@@ -16,7 +16,7 @@ import {
 const router = Router();
 
 const DEFAULT_START = "2026-06-01";
-const DEFAULT_END = "2026-09-30";
+const DEFAULT_END = "2026-09-20";
 const FRONTEND_BASE_URL = process.env.FRONTEND_BASE_URL || "http://localhost:5173";
 
 /** 公开：凭 token 查看战报 */
