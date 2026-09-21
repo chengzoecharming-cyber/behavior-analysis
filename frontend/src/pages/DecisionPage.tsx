@@ -180,7 +180,14 @@ function DecisionPage() {
     {
       title: "部门",
       dataIndex: "department",
-      render: (v: string | null) => v || "-",
+      render: (v: string | null) =>
+        v ? (
+          <Tag color="blue" size="small">
+            {v}
+          </Tag>
+        ) : (
+          "-"
+        ),
     },
     { title: "客户", dataIndex: "customerName" },
     { title: "期内次数", dataIndex: "totalCount", width: 90 },
@@ -325,7 +332,16 @@ function DecisionPage() {
           <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
             <Col span={isMobile ? 24 : 12}>
               <Card
-                title="员工活跃度"
+                title={
+                  <div>
+                    <div style={{ fontSize: 16, fontWeight: 600, color: "#1f2329" }}>
+                      员工活跃度
+                    </div>
+                    <div style={{ fontSize: 12, color: "#999", fontWeight: 400, marginTop: 4 }}>
+                      字号越大拜访越多，{isAdmin ? "点击可跳转控制台" : "仅 admin 可点击跳转"}
+                    </div>
+                  </div>
+                }
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
                 bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}

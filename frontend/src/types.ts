@@ -282,7 +282,7 @@ export interface CustomerFreqItem {
   maxWeekCount: number;
   maxMonthCount: number;
   flagged: boolean;
-  flagReasons: string[]; // 如 ["单周4次(2026-08-10起)", "单月7次(2026-08)"]
+  flagReasons: string[]; // 如 ["2026-08-03 ~ 2026-08-09（4次）", "2026-08 月（7次）"]
 }
 
 /** GET /analytics/customer-visit-frequency 返回（仅含 flagged 条目，最多 100 条） */

@@ -20,7 +20,7 @@ export interface CustomerFreqItem {
   maxWeekCount: number;
   maxMonthCount: number;
   flagged: boolean;
-  flagReasons: string[]; // 如 ["单周4次", "单月7次(2026-08)"]
+  flagReasons: string[]; // 如 ["2026-08-03 ~ 2026-08-09（4次）", "2026-08 月（7次）"]
 }
 
 /** 取拜访的业务日期（YYYY-MM-DD），business_date 缺失时回退按签到时间的北京时间日期 */
@@ -104,10 +104,14 @@ export function computeCustomerVisitFrequency(
 
     const flagReasons: string[] = [];
     if (maxWeekCount > FREQ_WEEK_THRESHOLD) {
-      flagReasons.push(`单周${maxWeekCount}次(${maxWeekKey}起)`);
+      // 展示为日期范围（周阈值仅作内部判定准则，不露出「单周」字样）
+      const weekEnd = formatBeijingDate(
+        new Date(getBusinessWeekStart(maxWeekKey).getTime() + 6 * 24 * 60 * 60 * 1000)
+      );
+      flagReasons.push(`${maxWeekKey} ~ ${weekEnd}（${maxWeekCount}次）`);
     }
     if (maxMonthCount > FREQ_MONTH_THRESHOLD) {
-      flagReasons.push(`单月${maxMonthCount}次(${maxMonthKey})`);
+      flagReasons.push(`${maxMonthKey} 月（${maxMonthCount}次）`);
     }
 
     // 展示名：组内出现次数最多的原始名
