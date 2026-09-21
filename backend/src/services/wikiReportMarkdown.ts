@@ -1,6 +1,7 @@
 import { OrgTreeNode } from "./orgService";
 import { ReportScope, ReportType } from "./dingtalkDoc";
 import { splitCustomerNames } from "./normalization";
+import { computeCustomerVisitFrequency } from "./customerVisitFrequency";
 import { resolveReportVisitNote } from "./exportConsoleReportMarkdown";
 import { Route, Visit } from "../types";
 import { formatBeijingDate, getBeijingWeekday } from "../utils/timezone";
@@ -110,6 +111,35 @@ function renderVisitItem(
 function renderSummary(lines: string[], visitCount: number, estimatedKm: number): void {
   lines.push(`> 拜访总数：${visitCount} 次`);
   lines.push(`> 总里程：${formatKm(estimatedKm)}`);
+  lines.push("");
+}
+
+/**
+ * 「高频拜访关注」小节：同一员工对同一客户 单业务周 >2 次或单自然月 >3 次。
+ * 仅周报/月报渲染（日报不渲染）；仅展示，不计风险分。
+ * 复用 input.visits 与报告侧已算好的住址/公司地址排除集合（homeVisitIds），不新增查询。
+ */
+function renderFreqSection(lines: string[], input: WikiReportInput): void {
+  // input.visits 是未过滤的原始行，先按 exclude_from_visit_count 过滤（与分析接口口径一致）
+  const items = computeCustomerVisitFrequency(
+    input.visits.filter((v) => !v.exclude_from_visit_count),
+    input.homeVisitIds
+  ).filter((i) => i.flagged);
+
+  lines.push("## 高频拜访关注");
+  lines.push("");
+  if (items.length === 0) {
+    lines.push("本期无同客户高频拜访。");
+    lines.push("");
+    return;
+  }
+  lines.push("| 员工 | 客户 | 期内次数 | 峰值 |");
+  lines.push("| --- | --- | --- | --- |");
+  for (const item of items) {
+    lines.push(
+      `| ${item.userName} | ${item.customerName} | ${item.totalCount} | ${item.flagReasons.join("、")} |`
+    );
+  }
   lines.push("");
 }
 
@@ -265,6 +295,10 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
     const items = buildVisitItems(input.visits, input.homeVisitIds);
     renderSummary(lines, countVisits(input.visits, input.homeVisitIds), input.overview.totals.estimated_distance_km);
 
+    if (groupByDate) {
+      renderFreqSection(lines, input);
+    }
+
     renderVisitItems(lines, items, duplicateCounts, groupByDate);
     if (items.length === 0) {
       lines.push("暂无有效客户拜访记录。");
@@ -276,6 +310,10 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
   }
 
   renderSummary(lines, input.overview.totals.visit_count, input.overview.totals.estimated_distance_km);
+
+  if (groupByDate) {
+    renderFreqSection(lines, input);
+  }
 
   for (const group of buildEmployeeGroups(input)) {
     lines.push(`## ${group.groupName}`);

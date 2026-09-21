@@ -188,3 +188,107 @@ export interface SyncAlert {
   createdAt: string;
   alertSent: boolean;
 }
+
+// ============ 客户分析（探迹 CRM，/crm-analytics）============
+
+/** GET /crm-analytics/overview 返回 */
+export interface CrmOverview {
+  total: number;
+  pool_count: number;
+  private_count: number;
+  /** 按 customer_type 分组计数，key 如 enterprise_domestic / agent_domestic / terminal_overseas / agent_overseas */
+  by_type: Record<string, number>;
+  unfollowed_count: number;
+  unfollowed_ratio: number;
+  approving_count: number;
+  new_30d_count: number;
+}
+
+export type CrmCrossType = "follow_only" | "visit_only" | "both";
+
+export interface CrmCrossItem {
+  customer_name: string;
+  follow_count: number;
+  visit_count: number;
+  owner_name: string | null;
+  /** 是否在 CRM 客户表内（false = 仅出现在拜访记录中） */
+  in_crm: boolean;
+}
+
+/** GET /crm-analytics/cross 返回 */
+export interface CrmCrossResponse {
+  only_follow_count: number;
+  only_visit_count: number;
+  both_count: number;
+  total: number;
+  list: CrmCrossItem[];
+}
+
+/** GET /crm-analytics/wordcloud 返回的元素 */
+export interface CrmWordCloudItem {
+  word: string;
+  count: number;
+}
+
+export interface CrmOpportunityItem {
+  name: string;
+  address: string;
+  region: string | null;
+  follow_status: string | null;
+  owner_name: string | null;
+  is_in_pool: boolean;
+  visit_count: number;
+  /** 坐标可能为 null（未解析或解析失败），前端跳过 */
+  lat: number | null;
+  lng: number | null;
+}
+
+/** GET /crm-analytics/opportunity-map 返回 */
+export interface CrmOpportunityMapResponse {
+  total: number;
+  /** 本次请求新解析的坐标条数（后端限流每次最多 30 条，可轮询逐步补全） */
+  geocoded_new: number;
+  list: CrmOpportunityItem[];
+}
+
+export type CrmStuckKind = "approval_stuck" | "zombie";
+
+export interface CrmStuckItem {
+  kind: CrmStuckKind;
+  customer_id: string;
+  customer_name: string;
+  owner_name: string | null;
+  status: string | null;
+  /** 卡死/躺尸天数 */
+  days: number;
+}
+
+/** GET /crm-analytics/stuck 返回 */
+export interface CrmStuckResponse {
+  approval_stuck_count: number;
+  zombie_count: number;
+  total: number;
+  list: CrmStuckItem[];
+}
+
+// ============ 同客户高频拜访关注（/analytics/customer-visit-frequency） ============
+
+export interface CustomerFreqItem {
+  userId: string;
+  userName: string;
+  department: string | null;
+  customerName: string;
+  totalCount: number;
+  maxWeekCount: number;
+  maxMonthCount: number;
+  flagged: boolean;
+  flagReasons: string[]; // 如 ["单周4次(2026-08-10起)", "单月7次(2026-08)"]
+}
+
+/** GET /analytics/customer-visit-frequency 返回（仅含 flagged 条目，最多 100 条） */
+export interface CustomerVisitFrequencyResponse {
+  start: string;
+  end: string;
+  flaggedCount: number;
+  list: CustomerFreqItem[];
+}

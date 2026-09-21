@@ -57,7 +57,8 @@ map/
 │   │   │   ├── riskSummary.ts
 │   │   │   ├── dingtalk.ts
 │   │   │   ├── users.ts
-│   │   │   └── feedback.ts
+│   │   │   ├── feedback.ts
+│   │   │   └── crmAnalytics.ts      # 客户分析（探迹 CRM 数据）：/crm-analytics 总览/交叉/词云/机会地图/躺尸卡死
 │   │   └── services/           # 业务逻辑
 │   │       ├── auth.ts
 │   │       ├── dingtalk.ts
@@ -81,6 +82,7 @@ map/
 │   │   ├── backfillVisitExclusion.ts     # 回填 visits.exclude_from_visit_count（拜访次数排除住址/公司地址，--dry 预览）
 │   │   ├── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
 │   │   ├── reparseApproval.ts        # 销售修改钉钉表单后重录指定审批单（重拉实例→重解析替换 visits→重算派生数据，--dry 预览）
+│   │   ├── importCrmExcel.ts         # 探迹 CRM Excel 导入（客户/联系人/跟进记录 → crm_* 表）
 │   │   └── addSalesChannelAliases.ts # 销售渠道-X区域 → 销售部主部门 别名归一化配置（幂等，npm run alias:sales-channels）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
@@ -103,11 +105,15 @@ map/
 │   │   │   ├── DataLineagePage.tsx     # 数据血缘面板（DataLineagePanel 被同步中心复用）
 │   │   │   ├── RulesConfigPage.tsx
 │   │   │   ├── FeedbackPage.tsx
+│   │   │   ├── CustomerAnalysisPage.tsx  # 客户分析（WIP）：总览/客户×拜访交叉/词云/躺尸卡死/机会地图
 │   │   │   └── MapPage.tsx
 │   │   └── components/         # 可复用组件
 │   │       ├── ErrorBoundary.tsx
 │   │       ├── MapContainer.tsx
-│   │       └── HeatMapContainer.tsx
+│   │       ├── HeatMapContainer.tsx
+│   │       └── crm/                # 客户分析组件
+│   │           ├── FollowWordCloud.tsx   # 跟进纪要词云（纯 SVG 螺旋布局，props: data:{word,count}[]，可复用）
+│   │           └── CustomerMap.tsx       # 客户机会地图（高德打点，私海蓝/公海橙，拜访次数决定气泡大小）
 │   ├── index.html
 │   ├── nginx.conf
 │   ├── Dockerfile
@@ -147,6 +153,7 @@ map/
 | 用户/权限 | `users`（含 `is_resigned` 离职标记）、`feedback`、`anomaly_exceptions` | 用户、角色、申诉、异常豁免 |
 | 钉钉同步 | `dingtalk_departments`、`dingtalk_users` | 钉钉通讯录同步缓存 |
 | 报告生成 | `report_generation_logs` | 自动报告生成日志（同一次 run 共享 `run_id`，含状态/耗时/文档链接） |
+| 探迹 CRM | `raw_crm_rows`、`crm_import_batches`、`crm_customers`、`crm_contacts`、`crm_follow_records`、`crm_customer_geocode` | CRM Excel 导入批次与原始行、客户主表、联系人、跟进记录、客户地址地理编码缓存 |
 
 **注意**：`backend/schema.sql` 是早期 P1 文档，只包含基础表。真实建表逻辑在 `backend/src/db.ts` 中，通过 `CREATE TABLE IF NOT EXISTS` 和 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 做幂等初始化。项目中没有独立的迁移框架。
 
@@ -207,6 +214,31 @@ map/
 该口径与里程口径一致（按审批单首次签到日期聚合，见 `mileageAnalysis.ts`）。注意：早期曾按「每条签到实际时间」逐条归日（d402944），后在跨天审批单上与控制台展示、里程口径冲突，已统一为审批单级归日。
 
 历史数据需要按此规则重算时，执行 `cd backend && npm run recompute:business-dates`（脚本只修正不一致的行，并对受影响的 user+date 自动重算 routes 与风险摘要缓存，支持 `dry` 预览）。
+
+### 业务周口径（businessPeriod）
+
+**业务周起点固定为 2026-06-01（周一）**，此后每 7 天一个业务周连续排下去，**不逐年重置**。因为 2026-06-01 是周一，业务周恒为「周一 ~ 周日」，2026 年内与周报所用的自然周完全重合。
+
+锚点是两个同名常量，分别位于 `backend/src/utils/businessPeriod.ts`（`BUSINESS_WEEK_ANCHOR`，导出）和 `frontend/src/utils/businessPeriod.ts`（`BUSINESS_WEEK_ANCHOR`）。**改一处必须同步改另一处**，否则前端「本周/近两周/近三周」筛选与后端按周统计的区间会错开。
+
+**不要把锚点改成「取日期所在年份的 6 月 1 日」**。那样每年 6/1 重新起算，而 6/1 的星期逐年漂移（2027-06-01 是周二），会导致：周边界漂成周二~周一；跨年处出现重叠周（2026-12-28 起的一周与 2026-12-29 起的一周重叠 5 天）；周序号每年重置且跨年变负数（2027-01-01 算成第 -21 周）。这是 2026-09-20 修掉的旧实现，不要改回去。
+
+2026-06-01 之前无业务数据，负周序号不处理。
+
+#### 两套时间口径刻意并存，禁止合并
+
+系统里**同时存在两套周口径**，分界是「报告 vs 分析」，**不是**「前端 vs 后端」：
+
+- **口径 A · 自然周（周一 ~ 周日）**——只服务报告与调度：周报触发（`scheduler.ts` 的 `getMillisecondsUntilWeekday(18,0,0)`，targetWeekday=0 即周日）、`reportGenerationService.generateWeeklyReports()` 默认的「本周一~今天」、catchup 补跑窗口、月报的自然月。**自然周的计算内联在 `scheduler.ts` 与 `reportGenerationService.ts`，不在 `businessPeriod.ts`。**
+- **口径 B · 业务周（2026-06-01 锚点）**——只服务分析：异常检测「拜访量不足」按周判定（`anomalyDetection.ts`）、风险摘要周维度（`riskSummaryService.ts`）、驾驶舱业务周序号（`companyDashboard.ts`）、前端 `DecisionPage`/`ConsolePage` 的「本周/近两周/近三周」筛选。
+
+易踩的坑：后端 `getLastWeekRange`、`getLastTwoWeeksRange`、`getLastThreeWeeksRange` 名字像自然周，**其实只是业务周的别名**（内部 `return getPastNBusinessWeeksRange(...)`）。
+
+改动锚点或周边界属于口径变更，按上文「派生数据重算原则」处理：受影响的 `anomalies` 与 `risk_summary_cache` 需重算。
+
+### 同客户高频拜访关注口径
+
+统计「同一员工 × 同一客户」在时间段内的拜访次数，**仅展示，不落 anomalies 表、不计风险分**。阈值常量在 `backend/src/services/customerVisitFrequency.ts`（`FREQ_WEEK_THRESHOLD=2` 单业务周、`FREQ_MONTH_THRESHOLD=3` 单自然月，任一超出即 flagged；周 key 用业务周锚点，月 key 用北京时间 YYYY-MM）。只统计 `NOT exclude_from_visit_count` 且非 `exclude_from_stats` 用户的行；非 v2 行再叠加跨员工住址 + 公司地址过滤（`batchFilterHomeVisits`/`batchFilterCompanyVisits`）。客户名用 `splitRealCustomerNames`（拆分 + 过滤占位名），分组 key 为 `user_id + normalizeCustomerName(name)`。两个出口：`GET /analytics/customer-visit-frequency`（决策页「同客户高频拜访」榜单，总览口径不做角色收敛）与周报/月报的「高频拜访关注」章节（`wikiReportMarkdown.ts` 的 `renderFreqSection`，日报不渲染）。纯查询时计算，无派生数据落库，**改阈值只需改代码重启，不需要重算派生数据**。
 
 ### 定时任务
 
@@ -393,6 +425,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET | `/analytics/risk-summary/range?start=&end=` | 日期范围风险摘要 |
 | POST | `/analytics/risk-summary/refresh?date=` | 手动刷新某天缓存 |
 | GET | `/analytics/regional-overview` | 区域拜访热力图与部门分布 |
+| GET | `/analytics/customer-visit-frequency?start=&end=` | 同客户高频拜访关注清单（仅 flagged 条目，最多 100 条 + flaggedCount） |
 | GET | `/analytics/departments` | 规范部门列表 |
 | POST | `/analytics/init-department-aliases` | 初始化部门别名映射 |
 | GET/PUT | `/analytics/department-aliases` | 部门别名 CRUD |
@@ -406,12 +439,22 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
 | POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`） |
 | GET | `/export/generation-logs` | 报告生成日志（page/pageSize 分页，report_type/status/start/end 筛选） |
+| GET | `/crm-analytics/overview` | 客户分析总览：总数、私海/公海、未跟进占比、审批中、30 天新增、按 customer_type 分布（聚合口径，登录角色全量可见） |
+| GET | `/crm-analytics/cross?type=follow_only\|visit_only\|both&page=&pageSize=` | 客户×拜访交叉：只跟不访/只访不跟/都有 三个计数 + 分页明细（行级按可见负责人收敛） |
+| GET | `/crm-analytics/wordcloud` | 跟进纪要词频 `[{word,count}]`（领域词典匹配 + 高频二元组补充，Top 200） |
+| GET | `/crm-analytics/opportunity-map` | 客户地址分布：坐标（可能为 null）+ 拜访次数；每次请求限流新解析 30 条坐标，前端可轮询补全 |
+| GET | `/crm-analytics/stuck?kind=approval_stuck\|zombie&page=&pageSize=` | 审批卡死（审批中超 7 天）+ 躺尸客户（私海超 30 天未跟进）计数与分页明细 |
+| GET | `/analytics/customer-visit-frequency?start=&end=` | 同客户高频拜访关注清单（仅 flagged 条目，总览页口径：全角色可见，不做权限收敛） |
 
 前后端代理路径：
 
 - 开发环境：Vite 把 `/api/*` 代理到 `http://localhost:3000/`，并去掉 `/api` 前缀。
 - 生产环境：Nginx 把 `/api/*` 代理到 `http://backend:3000/`，并去掉 `/api` 前缀。
 - 后端 Express 路由直接挂在根路径，例如 `/visits`。
+
+### 同客户高频拜访口径
+
+「同一员工 × 同一客户」频次统计仅作管理关注展示，**不落 anomalies、不计风险分**。核心逻辑在 `backend/src/services/customerVisitFrequency.ts`（`computeCustomerVisitFrequency`，阈值常量 `FREQ_WEEK_THRESHOLD=2` 单业务周 / `FREQ_MONTH_THRESHOLD=3` 单自然月，任一超过即 flagged）。口径：`NOT exclude_from_visit_count` + 非 v2 行叠加跨员工住址/公司地址过滤；客户名 `splitRealCustomerNames` 展开（过滤占位名）+ `normalizeCustomerName` 归并分组；决策页接口额外排除 `users.exclude_from_stats`。两个出口：决策页「同客户高频拜访」卡片（`DecisionPage.tsx`），以及周报/月报的「高频拜访关注」章节（`wikiReportMarkdown.ts` 的 `renderFreqSection`，日报不渲染）。纯查询时计算，无派生落库，改阈值不需要重算历史数据。
 
 ## 代码组织与约定
 

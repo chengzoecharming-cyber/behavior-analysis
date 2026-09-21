@@ -11,6 +11,7 @@ import {
   DingTalkSyncLog,
   SyncHealthItem,
   SyncAlert,
+  CustomerVisitFrequencyResponse,
 } from "./types";
 
 const api = axios.create({
@@ -405,6 +406,17 @@ export async function fetchCompanyDashboard(
   end: string
 ): Promise<CompanyDashboardResponse> {
   const res = await api.get("/analytics/company-dashboard", {
+    params: { start, end },
+  });
+  return res.data;
+}
+
+/** 同客户高频拜访关注清单（仅 flagged 条目） */
+export async function fetchCustomerVisitFrequency(
+  start: string,
+  end: string
+): Promise<CustomerVisitFrequencyResponse> {
+  const res = await api.get("/analytics/customer-visit-frequency", {
     params: { start, end },
   });
   return res.data;
@@ -942,5 +954,54 @@ export async function fetchLineageApprovals(params: {
 
 export async function fetchLineageDetail(approvalId: string): Promise<LineageDetail> {
   const res = await api.get(`/data-lineage/approvals/${encodeURIComponent(approvalId)}`);
+  return res.data;
+}
+
+// ============ 客户分析（探迹 CRM，/crm-analytics，登录角色均可见，行级口径后端已收敛）============
+
+import type {
+  CrmOverview,
+  CrmCrossResponse,
+  CrmCrossType,
+  CrmWordCloudItem,
+  CrmOpportunityMapResponse,
+  CrmStuckResponse,
+  CrmStuckKind,
+} from "./types";
+
+export async function fetchCrmOverview(): Promise<CrmOverview> {
+  const res = await api.get("/crm-analytics/overview");
+  return res.data;
+}
+
+export async function fetchCrmCross(
+  type: CrmCrossType | "" ,
+  page: number,
+  pageSize: number
+): Promise<CrmCrossResponse> {
+  const res = await api.get("/crm-analytics/cross", {
+    params: { type: type || undefined, page, pageSize },
+  });
+  return res.data;
+}
+
+export async function fetchCrmWordCloud(): Promise<CrmWordCloudItem[]> {
+  const res = await api.get("/crm-analytics/wordcloud");
+  return res.data;
+}
+
+export async function fetchCrmOpportunityMap(): Promise<CrmOpportunityMapResponse> {
+  const res = await api.get("/crm-analytics/opportunity-map");
+  return res.data;
+}
+
+export async function fetchCrmStuck(
+  kind: CrmStuckKind | "",
+  page: number,
+  pageSize: number
+): Promise<CrmStuckResponse> {
+  const res = await api.get("/crm-analytics/stuck", {
+    params: { kind: kind || undefined, page, pageSize },
+  });
   return res.data;
 }

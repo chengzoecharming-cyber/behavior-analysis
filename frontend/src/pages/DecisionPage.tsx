@@ -1,13 +1,15 @@
 import { useEffect, useState, useMemo, lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Button, Typography, Spin, Row, Col, Card } from "@douyinfe/semi-ui";
+import { Button, Typography, Spin, Row, Col, Card, Table, Tag } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
 import { useIsMobile } from "../hooks/useIsMobile";
 import {
   fetchCompanyDashboard,
   fetchCurrentUser,
+  fetchCustomerVisitFrequency,
   CompanyDashboardResponse,
 } from "../api";
+import { CustomerFreqItem } from "../types";
 // 图表组件懒加载：vchart 体积 2MB+，延后加载让页面骨架先渲染
 const EmployeeWordCloud = lazy(() => import("../components/EmployeeWordCloud"));
 const DepartmentRadarChart = lazy(() => import("../components/DepartmentRadarChart"));
@@ -91,6 +93,7 @@ function DecisionPage() {
   const [mode, setMode] = useState<DateRangeMode>(initialMode);
 
   const [data, setData] = useState<CompanyDashboardResponse | null>(null);
+  const [freqList, setFreqList] = useState<CustomerFreqItem[]>([]);
   const [loading, setLoading] = useState(false);
   // 总览页所有角色可看全量数据，但只有 admin 可以点击内容跳转（员工卡片 → 控制台）
   const [isAdmin, setIsAdmin] = useState(false);
@@ -122,6 +125,14 @@ function DecisionPage() {
     } finally {
       setLoading(false);
     }
+    // 高频拜访榜单独立请求，失败不影响主面板
+    try {
+      const freq = await fetchCustomerVisitFrequency(start, end);
+      setFreqList(freq.list);
+    } catch (err) {
+      console.error("Failed to load customer visit frequency:", err);
+      setFreqList([]);
+    }
   };
 
   useEffect(() => {
@@ -146,6 +157,47 @@ function DecisionPage() {
     params.set("end", end);
     window.open(`/console?${params.toString()}`, "_blank");
   };
+
+  // 同客户高频拜访榜单列：员工仅 admin 可点击跳控制台，非 admin 纯文本
+  const freqColumns = [
+    {
+      title: "员工",
+      dataIndex: "userName",
+      render: (_: unknown, record: CustomerFreqItem) =>
+        isAdmin ? (
+          <a
+            style={{ cursor: "pointer" }}
+            onClick={() =>
+              handleEmployeeClick({ userId: record.userId, userName: record.userName })
+            }
+          >
+            {record.userName}
+          </a>
+        ) : (
+          record.userName
+        ),
+    },
+    {
+      title: "部门",
+      dataIndex: "department",
+      render: (v: string | null) => v || "-",
+    },
+    { title: "客户", dataIndex: "customerName" },
+    { title: "期内次数", dataIndex: "totalCount", width: 90 },
+    {
+      title: "峰值",
+      dataIndex: "flagReasons",
+      render: (reasons: string[]) => (
+        <div className="flex flex-wrap gap-1">
+          {reasons.map((r) => (
+            <Tag key={r} color="red" size="small">
+              {r}
+            </Tag>
+          ))}
+        </div>
+      ),
+    },
+  ];
 
   return (
     <div>
@@ -316,6 +368,32 @@ function DecisionPage() {
                   <Suspense fallback={chartFallback}>
                     <DepartmentRadarChart data={data.departmentRadar} />
                   </Suspense>
+                )}
+              </Card>
+            </Col>
+          </Row>
+
+          {/* 同客户高频拜访关注清单 */}
+          <Row gutter={16} style={{ marginBottom: 16 }}>
+            <Col span={24}>
+              <Card
+                title={`同客户高频拜访（${freqList.length}）`}
+                headerLine={false}
+                headerStyle={{ paddingBottom: 0 }}
+                bodyStyle={{ padding: 12, maxHeight: 400, overflowY: "auto" }}
+              >
+                {freqList.length === 0 ? (
+                  <div style={{ color: "#999", padding: 24, textAlign: "center" }}>
+                    本时间段内无高频重复拜访
+                  </div>
+                ) : (
+                  <Table
+                    columns={freqColumns}
+                    dataSource={freqList}
+                    pagination={false}
+                    rowKey={(record) => `${record?.userId}-${record?.customerName}`}
+                    size="small"
+                  />
                 )}
               </Card>
             </Col>

@@ -30,6 +30,13 @@ import {
   getPreviousBusinessWeekRange,
 } from "../utils/businessPeriod";
 import { computeCompanyDashboard } from "../services/companyDashboard";
+import { computeCustomerVisitFrequency } from "../services/customerVisitFrequency";
+import {
+  loadAllHomeAddresses,
+  loadCompanyAddresses,
+  batchFilterHomeVisits,
+  batchFilterCompanyVisits,
+} from "../services/addressWhitelistService";
 import { authMiddleware, AuthRequest, requireRole } from "../services/auth";
 import {
   canViewUser,
@@ -490,6 +497,55 @@ router.get("/company-dashboard", authMiddleware, async (req: AuthRequest, res: R
     res.json(result);
   } catch (err) {
     console.error("Failed to compute company dashboard:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// 同客户高频拜访关注清单（总览页数据源：所有角色可见全量数据，不做权限收敛）。
+// 仅展示，不落 anomalies、不计风险分。
+router.get("/customer-visit-frequency", authMiddleware, async (req: AuthRequest, res: Response) => {
+  const { start, end } = req.query;
+
+  if (!start || !end) {
+    res.status(400).json({ error: "Missing start or end parameter" });
+    return;
+  }
+
+  try {
+    const rangeStart = ensureBeijingTimestamp(start as string);
+    const rangeEnd = ensureBeijingTimestamp(end as string);
+    const visitsResult = await pool.query(
+      `SELECT * FROM visits
+       WHERE business_date >= ($1::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         AND business_date <= ($2::timestamptz AT TIME ZONE 'Asia/Shanghai')::date
+         AND NOT exclude_from_visit_count
+         AND NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)
+       ORDER BY user_id, timestamp ASC`,
+      [rangeStart, rangeEnd]
+    );
+    const visits: Visit[] = visitsResult.rows;
+
+    // 非 v2 行叠加跨员工住址 + 公司地址过滤（与报告客户统计口径一致；
+    // v2 行的 exclude_from_visit_count 已含「客户名 × 地址」完整判定，不做地址二次排除）
+    const addressFilterVisits = visits.filter((v) => v.form_version !== "v2");
+    const homeAddressMap = await loadAllHomeAddresses();
+    const excludedIds = await batchFilterHomeVisits(addressFilterVisits, homeAddressMap);
+    const companyAddresses = await loadCompanyAddresses();
+    for (const id of batchFilterCompanyVisits(addressFilterVisits, companyAddresses)) {
+      excludedIds.add(id);
+    }
+
+    const items = computeCustomerVisitFrequency(visits, excludedIds);
+    const flaggedOnly = items.filter((i) => i.flagged);
+
+    res.json({
+      start,
+      end,
+      flaggedCount: flaggedOnly.length,
+      list: flaggedOnly.slice(0, 100),
+    });
+  } catch (err) {
+    console.error("Failed to compute customer visit frequency:", err);
     res.status(500).json({ error: "Database error" });
   }
 });
