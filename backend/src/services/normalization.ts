@@ -56,6 +56,17 @@ export function splitCustomerNames(name?: string | null): string[] {
     .filter(Boolean);
 }
 
+// CRM 客户名归一化：去全部空白、全角括号转半角、去常见公司后缀。
+// 用于 crm_customers / crm_follow_records / visits 客户名之间的匹配 join。
+export function normalizeCustomerName(name?: string | null): string {
+  if (!name) return "";
+  return name
+    .replace(/\s+/g, "")
+    .replace(/[（]/g, "(")
+    .replace(/[）]/g, ")")
+    .replace(/(有限责任公司|股份有限公司|有限公司|集团公司|集团)$/u, "");
+}
+
 // v2 占位客户名（不算真实拜访）：「虚拟客户」家族 + CRM 遗留占位选项「XX（签到用）」
 // （虚拟客户/住址/公司（签到用））。业务约定：住址、公司、酒店类未真实拜访的打卡，
 // 源头统一在客户字段写「虚拟客户」；「签到用」不会出现在真实客户名中，零误伤。
