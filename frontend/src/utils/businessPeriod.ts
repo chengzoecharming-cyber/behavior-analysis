@@ -1,19 +1,21 @@
 import dayjs from "dayjs";
 
-const ANCHOR_MONTH = 6;
-const ANCHOR_DAY = 1;
-
-function getAnchorDate(year: number): dayjs.Dayjs {
-  return dayjs.tz(`${year}-${String(ANCHOR_MONTH).padStart(2, "0")}-${String(ANCHOR_DAY).padStart(2, "0")}T00:00:00`, "Asia/Shanghai");
-}
+/**
+ * 业务周期锚点：固定为 2026-06-01 00:00（北京时间）。
+ *
+ * 与后端 `BUSINESS_WEEK_ANCHOR`（backend/src/utils/businessPeriod.ts）必须保持一致，
+ * 改一处就要同步改另一处，否则前端「本周/近两周/近三周」筛选与后端按周统计的区间会错开。
+ *
+ * 业务周从该日起每 7 天一周连续排下去，不逐年重置。2026-06-01 是周一，
+ * 因此业务周恒为「周一 ~ 周日」，与周报所用的自然周在 2026 年内完全重合。
+ */
+const BUSINESS_WEEK_ANCHOR = dayjs.tz("2026-06-01T00:00:00", "Asia/Shanghai");
 
 export function getBusinessWeekStart(date: dayjs.Dayjs | string | Date): dayjs.Dayjs {
   const d = dayjs.tz(date, "Asia/Shanghai").startOf("day");
-  const year = d.year();
-  const anchor = getAnchorDate(year);
-  const diffDays = d.diff(anchor, "day");
+  const diffDays = d.diff(BUSINESS_WEEK_ANCHOR, "day");
   const weekIndex = Math.floor(diffDays / 7);
-  return anchor.add(weekIndex * 7, "day");
+  return BUSINESS_WEEK_ANCHOR.add(weekIndex * 7, "day");
 }
 
 export function getBusinessWeekEnd(date: dayjs.Dayjs | string | Date): dayjs.Dayjs {
@@ -74,9 +76,7 @@ export function isBusinessWeekEnd(date: dayjs.Dayjs | string | Date): boolean {
 
 export function getBusinessWeekNumber(date?: dayjs.Dayjs | string | Date): number {
   const d = date ? dayjs.tz(date, "Asia/Shanghai").startOf("day") : dayjs.tz().startOf("day");
-  const year = d.year();
-  const anchor = getAnchorDate(year);
-  const diffDays = d.diff(anchor, "day");
+  const diffDays = d.diff(BUSINESS_WEEK_ANCHOR, "day");
   return Math.floor(diffDays / 7) + 1;
 }
 

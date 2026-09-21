@@ -3,16 +3,19 @@ import {
   formatBeijingDate,
 } from "./timezone";
 
-const ANCHOR_MONTH = 6;
-const ANCHOR_DAY = 1;
-const DAY_MS = 24 * 60 * 60 * 1000;
-
 /**
- * 获取指定日期所在年份的业务周期锚点（6 月 1 日 00:00 +08:00）。
+ * 业务周期锚点：固定为 2026-06-01 00:00（北京时间）。
+ *
+ * 业务周从该日起每 7 天一周连续排下去，不逐年重置。2026-06-01 是周一，
+ * 因此业务周恒为「周一 ~ 周日」，2026 年内与周报所用的自然周完全重合。
+ *
+ * 不要改成「取日期所在年份的 6 月 1 日」：那样每年 6/1 会重新起算，而 6/1 的星期
+ * 逐年漂移（2027-06-01 是周二），周边界会漂成周二~周一，跨年处还会出现重叠周
+ * （2026-12-28 起的一周与 2026-12-29 起的一周重叠 5 天），且周序号每年重置、跨年出现负数。
  */
-export function getAnchorDate(year: number): Date {
-  return parseDateTimeAsBeijing(`${year}-${String(ANCHOR_MONTH).padStart(2, "0")}-${String(ANCHOR_DAY).padStart(2, "0")}`);
-}
+export const BUSINESS_WEEK_ANCHOR = parseDateTimeAsBeijing("2026-06-01");
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 function toDateInput(date: Date | string): Date {
   return date instanceof Date ? date : parseDateTimeAsBeijing(date);
@@ -20,17 +23,15 @@ function toDateInput(date: Date | string): Date {
 
 /**
  * 计算指定日期所属业务周的起始日期。
- * 业务周以每年 6 月 1 日为起点，每 7 天一周。
- * 6 月 1 日之前为负周序号。
+ * 业务周以固定锚点 2026-06-01 为起点，每 7 天一周连续排下去。
+ * 2026-06-01 之前为负周序号（该区间无业务数据，暂不处理）。
  */
 export function getBusinessWeekStart(date: Date | string): Date {
   const d = toDateInput(date);
-  const year = parseInt(formatBeijingDate(d).slice(0, 4), 10);
-  const anchor = getAnchorDate(year);
 
-  const diffDays = Math.floor((d.getTime() - anchor.getTime()) / DAY_MS);
+  const diffDays = Math.floor((d.getTime() - BUSINESS_WEEK_ANCHOR.getTime()) / DAY_MS);
   const weekIndex = Math.floor(diffDays / 7);
-  const weekStart = new Date(anchor.getTime() + weekIndex * 7 * DAY_MS);
+  const weekStart = new Date(BUSINESS_WEEK_ANCHOR.getTime() + weekIndex * 7 * DAY_MS);
 
   return weekStart;
 }
@@ -78,14 +79,12 @@ export function isBusinessWeekEnd(date: Date | string): boolean {
 }
 
 /**
- * 获取业务周序号（从 6 月 1 日开始为第 1 周）。
- * 6 月 1 日之前返回 0 或负数。
+ * 获取业务周序号：从固定锚点 2026-06-01 起为第 1 周，此后连续递增，不逐年重置。
+ * 2026-06-01 之前返回 0 或负数（该区间无业务数据，暂不处理）。
  */
 export function getBusinessWeekNumber(date: Date | string): number {
   const d = toDateInput(date);
-  const year = parseInt(formatBeijingDate(d).slice(0, 4), 10);
-  const anchor = getAnchorDate(year);
-  const diffDays = Math.floor((d.getTime() - anchor.getTime()) / DAY_MS);
+  const diffDays = Math.floor((d.getTime() - BUSINESS_WEEK_ANCHOR.getTime()) / DAY_MS);
   return Math.floor(diffDays / 7) + 1;
 }
 
