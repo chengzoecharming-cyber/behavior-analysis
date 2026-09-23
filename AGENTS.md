@@ -251,6 +251,8 @@ map/
 5. **统计排除用户（`users.exclude_from_stats`）**：标记为 true 的用户可正常登录、只看自己的控制台（staff 口径天然满足），但其 visits 数据不进入任何聚合口径——company-dashboard、risk-summary 排行榜、mileage-distribution、regional-overview、org-tree/org-overview/排行榜/日周月报（经 `orgService`）全部按 `NOT EXISTS (SELECT 1 FROM users ux WHERE ux.user_id = visits.user_id AND ux.exclude_from_stats)` 排除；夜间对账完全跳过此类用户（不覆盖姓名/部门、不置 is_invalid、不标离职）。权限上他们通常为 admin（可看全部数据），但 `getPublicAdminUserIds` 会把 exclude_from_stats 用户从「全员可见 admin」中剔除——别人看不到他们的单人数据，仅自查。当前用于「陈列」「李杰」两人（2026-08-28 加入，部门置「其他」）。新增同类人员：`UPDATE users SET role='admin', department='其他', exclude_from_stats=true WHERE user_id='...'`。
 6. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，并通过 `company_addresses` 表排除公司地址签到（对全体员工生效），拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。**个人日报消息推送**：定时任务（trigger_source=`scheduler`）的日报生成成功后推送钉钉消息——**优先走应用机器人单聊**（`/v1.0/robot/oToMessages/batchSend`，**必须走 `api.dingtalk.com` 域名**——误用 `oapi.dingtalk.com` 会返回 HTTP 200 + `{"errcode":404}` 旧版错误体，消息实际未发送且代码检查不到（2026-08-21 假成功事故）；`sendRobotMarkdownToUsers` 已同时检查 `code` 与 `errcode`。robotCode 默认取 `DINGTALK_APP_KEY`，可用 `DINGTALK_ROBOT_CODE` 覆盖；消息以机器人 1 对 1 会话出现在消息列表），失败自动回退工作通知（`DINGTALK_AGENT_ID`）：本人收个人版（拜访数/里程/异常数 + 自己日报链接，0 拜访也推）；区总/负责人每个层级只收**一条汇总**（只报「生成 N 份、成功 X、失败 Y、总拜访 Z 次」+ 其可见的第一层级入口链接：区总→该区日报、部门负责人→部门日报、「公司」配置人→公司日报，成员明细进 wiki 自行查看）。接收人解析：`REPORT_DEPT_LEADERS`（格式 `华南一部:李朝晖;软件产品线:洪晨备`，姓名按 `users.user_name` 解析，兜底查 `dingtalk_users` 通讯录缓存，也可直接配 userid）**配了就以配置为准**，未配置的子部门/部门回退为 role=manager 的用户；manual 不推；catchup 仅当补跑的是「昨天」的日报时才推（9:00 前部署重启时启动补跑会抢先生成昨天日报，若 catchup 一律不推则 9:00 定时任务会因「已生成」跳过、整天无人收到推送——8/19 案例）；发送失败不影响生成结果。
 
+7. **CRM 摘要周报**：每周一 9:20（北京时间，避开 9:00 日报/整点任务）执行 `startCrmDigestScheduler` → `crmDigestService.sendCrmDigest`：生成 markdown 摘要（①公海挽回 Top 10 + 高阶段客户总数；②私海健康度预警 Top 5——掉保率最高且私海数 ≥ 10 的负责人；③阶段漏斗私海数一行速览，末尾注明 CRM 数据快照日期），经 `sendReportMessageToUsers`（机器人单聊优先、失败回退工作通知）推送。**灰度接收机制**：接收人只由环境变量 `CRM_DIGEST_RECIPIENTS`（逗号/分号分隔姓名或 userid，姓名按 `users.user_name` 解析、兜底 `dingtalk_users`、纯数字直接当 userid，复用 `resolveLeaderUserIds`）决定；**为空则任务完全不执行**（不生成内容，日志一行跳过）；解析不到的接收人只 warn 不中断。手动触发入口 `POST /crm-analytics/digest/send`（admin）。
+
 ### 同步数据校验
 
 `dingtalk_sync_logs` 表记录了每次同步的对账信息，新增字段含义：
@@ -274,7 +276,7 @@ map/
 - **AI 总结延迟**：AI总结在审批单结束后才生成，而写入是「存在即跳过」——v2 重复行开放 `visit_note`/`visit_detail` 刷新通道（processParsedVisits，`IS DISTINCT FROM` 才写），其他字段不刷新。
 - **里程读数异常（mileage_reading_invalid）v2 口径**（anomalyDetection.ts）：v2 单只判定起点（出发读数缺失）与终点（终点读数缺失/终点<出发/差值超限），途经点无读数不参与判定；RUNNING 中的 v2 单不判终点缺失（审批完成后才判）。v1 单维持逐点判定不变。「累计里程不一致」规则对 v2 天然不触发（v2 无逐段累计值），无需改动。
 - **填报里程与里程偏差 v2 整单口径**（mileageAnalysis.ts）：v2 单只有出发前/终点两个里程读数，中间签到点无读数，逐段口径算不出。填报里程聚合（`computeMileageByApprovalForUsers`）与里程偏差（`computeMileageSegments`）对 v2 统一走整单：填报 = 终点读数 − 出发前读数（读数缺失兜底取单内最大填报里程），高德 = 单内各段 routes 之和，任何一段路线缺失则整单跳过。v1/Excel 维持逐段口径不变。
-- **拜访计数口径分流**（`ParsedVisit.form_version='v2'`）：v2 按「出行方式 × 客户名称」逐个判定——真实客户名数为 0（空或全部为占位名）→ `exclude_from_visit_count=true`，不看地址；有真实客户名即使在住址/公司/酒店也算拜访；混合填写真实客户照计。占位模式 `PLACEHOLDER_CUSTOMER_PATTERN`（normalization.ts）= `/虚拟|签到用|住址|住所|住处|回家|到家|在家|家里/`（2026-08-10 起模糊识别手写住址类字眼，不匹配单独的「家」字防误伤「厂家」等）；改该模式后需重跑 `backfill:visit-exclusion` 刷新存量打标。v1/Excel 仍走住址+公司地址白名单（纯地址制，不看客户名）。`backfillVisitExclusion` 脚本同样按此分流。
+- **拜访计数口径分流**（`ParsedVisit.form_version='v2'`）：v2 按「出行方式 × 客户名称」逐个判定——真实客户名数为 0（空或全部为占位名）→ `exclude_from_visit_count=true`，不看地址；有真实客户名即使在住址/公司/酒店也算拜访；混合填写真实客户照计。占位判定分两层（normalization.ts）：子串模式 `PLACEHOLDER_CUSTOMER_PATTERN` = `/虚拟|签到用|住址|住所|住处|回家|到家|在家|家里|加油/`（2026-08-10 起模糊识别手写住址类字眼，不匹配单独的「家」字防误伤「厂家」等；2026-09-23 加「加油」排除加油站打卡），叠加整词模式 `GENERIC_PLACE_PATTERN` = `/^(回|返|在|到|去|住|于)?(公司|酒店|宾馆)(开会|办公|加班|休息|住宿|驻点|值班|签到|办事|培训)?$/`（2026-09-23 起排除手写「公司」「酒店」类泛化地点词；必须整词匹配，子串「公司」会误伤「XX有限公司」等真实客户名）；改这两层模式后需重跑 `backfill:visit-exclusion` 刷新存量打标。v1/Excel 仍走住址+公司地址白名单（纯地址制，不看客户名）。`backfillVisitExclusion` 脚本同样按此分流。
 - **一个打卡点 N 家客户 = N 次拜访**：`visits.customer_count`（v2 按客户数写；v1/Excel 按 customer_name 分隔符 `[,，、]` 拆分计，空名单值按 1；存量用 `npm run backfill:customer-count` 回填）。「拜访次数」类统计一律 `SUM(customer_count)`，不要用 `COUNT(*)`；「客户数」类统计用 `splitCustomerNames`（normalization.ts）拆分去重，不要在 SQL 里 LATERAL 展开（会让同行其他聚合翻倍）。
 - 旧表单停用时清空 `DINGTALK_PROCESS_CODE` 即可，v1 解析代码保留用于历史重跑。详见 PLAN.md Step 3.6。
 
@@ -340,6 +342,11 @@ DINGTALK_AGENT_ID=YOUR_DINGTALK_AGENT_ID
 LLM_API_KEY=
 LLM_BASE_URL=https://api.deepseek.com
 LLM_MODEL=deepseek-chat
+
+# CRM 摘要周报接收人（灰度）：逗号/分号分隔的钉钉姓名或 userid（如 程丽敏）
+# 姓名按 users.user_name 解析，兜底 dingtalk_users，纯数字直接当 userid
+# 为空则每周一 9:20 的 CRM 摘要推送完全不执行
+CRM_DIGEST_RECIPIENTS=
 ```
 
 ### 前端 `frontend/.env.example`
@@ -439,11 +446,24 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
 | POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`） |
 | GET | `/export/generation-logs` | 报告生成日志（page/pageSize 分页，report_type/status/start/end 筛选） |
-| GET | `/crm-analytics/overview` | 客户分析总览：总数、私海/公海、未跟进占比、审批中、30 天新增、按 customer_type 分布（聚合口径，登录角色全量可见） |
-| GET | `/crm-analytics/cross?type=follow_only\|visit_only\|both&page=&pageSize=` | 客户×拜访交叉：只跟不访/只访不跟/都有 三个计数 + 分页明细（行级按可见负责人收敛） |
+| GET | `/crm-analytics/overview` | 客户分析总览：总数、私海/公海、未跟进占比、审批中、30 天新增、按 customer_type 分布、`snapshot_date`（最近一次手工导入批次时间）（聚合口径，登录角色全量可见） |
+| GET | `/crm-analytics/cross?type=follow_only\|visit_only\|both\|unmatched&page=&pageSize=` | 客户×拜访交叉：只跟不访/只访不跟/都有 三个计数 + `unmatched_count` 待确认桶 + 分页明细（行级按可见负责人收敛）。匹配分三层（见下文「CRM 交叉匹配口径」） |
 | GET | `/crm-analytics/wordcloud` | 跟进纪要词频 `[{word,count}]`（领域词典匹配 + 高频二元组补充，Top 200） |
-| GET | `/crm-analytics/opportunity-map` | 客户地址分布：坐标（可能为 null）+ 拜访次数；每次请求限流新解析 30 条坐标，前端可轮询补全 |
-| GET | `/crm-analytics/stuck?kind=approval_stuck\|zombie&page=&pageSize=` | 审批卡死（审批中超 7 天）+ 躺尸客户（私海超 30 天未跟进）计数与分页明细 |
+| GET | `/crm-analytics/opportunity-map` | 客户地址分布：坐标（可能为 null）+ 拜访次数 + `pending_count`/`failed_count`；每次请求限流新解析 30 条坐标（优先从未解析的，失败的 attempts<5 可重试），前端可轮询补全 |
+| GET | `/crm-analytics/stuck?kind=approval_stuck\|zombie&page=&pageSize=` | 审批卡死（审批中超 7 天）+ 躺尸客户（私海超 30 天未跟进**且近 30 天无实际拜访**）计数与分页明细（明细含 `last_visit_time`） |
+| GET | `/crm-analytics/recovery-list?stage=&owner=&page=&pageSize=` | 公海挽回清单（仅 admin）：公海且 follow_status 为高阶段（方案/报价/已发合同/合同回传/付款/发货/已经交付）的客户明细，按「离成交最近」阶段权重 + return_pool_time 倒序；含 total 与按阶段分组计数 summary（summary 不受筛选影响） |
+| GET | `/crm-analytics/pool-health` | 私海健康度（聚合口径，登录可见）：顶部全公司汇总 + 按负责人（私海 owner_name）汇总私海数/零跟进数/30 天无跟进数/历史被掉保数（按 last_owner）/掉保率，按掉保率降序 |
+| GET | `/crm-analytics/funnel` | 阶段漏斗（聚合口径，登录可见）：follow_status 分组计数 × 公私海拆分（空值归「无阶段」桶），带 snapshot_date |
+| POST | `/crm-analytics/digest/send` | 手动触发 CRM 周报推送（仅 admin），接收人由 `CRM_DIGEST_RECIPIENTS` 配置，返回接收人/成功解析/解析失败列表；未配置时 skipped=true 不发送 |
+
+### CRM 交叉匹配口径（cross / stuck 共用）
+
+visits 客户名 → CRM 客户的匹配在 `backend/src/routes/crmAnalytics.ts` + `backend/src/services/customerMatch.ts`，查询时计算、无派生落库：
+
+- visits 侧客户名先用 `splitRealCustomerNames` 过滤占位名（「虚拟客户」「住址（签到用）」等），占位名不计入任何拜访计数；保持「一个打卡点 N 个真实客户 = N 次拜访」。
+- 匹配三层：① `name_norm` 精确匹配；② 规则归并——a) 去尾部「分公司/子公司/分厂/办事处/营业部」分支后缀再精确匹配，b) 双向包含（一方包含另一方且较短者长度 ≥ 4，取最长候选，并列最长视为歧义不归并）；③ 仍对不上 → 「待确认」桶（`type=unmatched`），**不计入** follow_only/visit_only/both 三个结论数字，沿用拜访人可见性收敛。
+- 躺尸判定复用同一归并口径：CRM 客户近 30 天内有 visits 拜访（`NOT exclude_from_visit_count`）则不算躺尸；明细行带 `last_visit_time`（无拜访为 null）。
+- 机会地图地理编码失败可重试：`crm_customer_geocode` 有 `attempts`/`last_attempt_at` 字段，每次失败 attempts+1，≥ 5 不再重试；响应 `failed_count`（attempts≥5 且无坐标）与 `pending_count`。
 | GET | `/analytics/customer-visit-frequency?start=&end=` | 同客户高频拜访关注清单（仅 flagged 条目，总览页口径：全角色可见，不做权限收敛） |
 
 前后端代理路径：
@@ -575,7 +595,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 - 月维度数据导出（Step 5）尚未实现。
 - 员工住址（`users.home_address`）用于异常检测和报告客户列表的住址排除。报告口径是**跨员工排除**：命中任何一位员工的住址（文本匹配或 500 米坐标半径）都不算客户（例如出差留宿在同事家小区）；异常检测仍按拜访人自己的住址匹配。**v2 表单例外**：v2 行的 `exclude_from_visit_count` 已包含「客户名 × 地址」完整判定（真实客户名即使在住址/公司打卡也算拜访），报告层（`reportGenerationService.ts`、`/export/console-report-to-doc`）的住址/公司地址过滤只作用于 v1/Excel 数据，v2 行不参与地址二次排除（2026-08-14 修复：否则 v2 真实客户在公司地址打卡会被误排，日报显示 0 拜访）。住址来源是线下收集的《国内业务人员常住地址》Excel（姓名 + 地址两列即可），通过 `backend/scripts/importEmployeeAddresses.ts` 导入：`cd backend && npx ts-node scripts/importEmployeeAddresses.ts /path/to/employee_addresses.xlsx`。脚本是幂等 UPDATE，Excel 有更新（新人入职、地址变更）时改完重跑即可；仅当员工在 `users` 或 `visits` 中已有记录才能匹配写入（新入职未产生签到数据的人会在产生数据后下次导入时补上）。目前仅覆盖业务人员，非业务部门按业务决定不收集。
 - 住址坐标持久化：导入/回填时把住址一次性地理编码存入 `users.home_lat/home_lng`，匹配时优先用坐标半径（500 米），不再依赖运行时实时解析高德（运行时解析曾遇限流导致整批漏过滤）。存量数据回填：`cd backend && npm run backfill:home-coords`（`--force` 全部重解析）。地理编码带回退简化（逐级截掉 幢/栋/单元/室 尾缀重试）；仍失败的记录按脚本提示人工核实坐标写入 `address_fallback_coordinates` 表后重跑（注意：高德「解析成功但位置跑偏」的情况兜底表不会生效，需直接 UPDATE users 的 home_lat/home_lng）。
-- 公司地址白名单：`company_addresses` 表（名称 + 地址 + 坐标），报告客户统计与异常检测（重复签到，见 `anomalyDetection.ts` 的 `filterExcludedVisits`）都会对全体员工排除命中公司地址的签到。维护：`cd backend && npm run upsert:company-address -- "创维数字大厦" "广东省深圳市宝安区石岩街道创维数字大厦"`（重复执行按 address upsert）。
+- 公司地址白名单：`company_addresses` 表（名称 + 地址 + 坐标），报告客户统计与异常检测（重复签到，见 `anomalyDetection.ts` 的 `filterExcludedVisits`）都会对全体员工排除命中公司地址的签到。维护：`cd backend && npm run upsert:company-address -- "创维数字大厦" "广东省深圳市宝安区石岩街道创维数字大厦"`（重复执行按 address upsert）。已知公司地址两处：①深圳创维数字大厦（小胖峰/丹弗，已入白名单）；②苏州小胖峰（2026-09-23 业务确认存在，**暂不加入白名单**，待业务通知后再 upsert）。
 - 拜访次数统计口径：`visits.exclude_from_visit_count` 标记命中**员工本人住址**或**公司地址白名单**的签到，全系统「拜访次数」类统计（决策页总拜访/趋势/活跃度/部门人均、控制台拜访频率/人均/排行榜/拜访点数、风险摘要 visit_count、日周月报与导出报告）统一加 `AND NOT exclude_from_visit_count` 过滤；**不影响**轨迹展示、停留点、里程与异常检测（「拜访量不足」规则刻意保持原口径，待重新设计）。打标时机：新数据在 `processParsedVisits` 入库时自动打标；存量与住址/公司地址变更后需重跑 `cd backend && npm run backfill:visit-exclusion`（幂等全量重打标，`--dry` 预览，同时修正 `risk_summary_cache.visit_count`）。
 
 ## 快速开始（最小路径）

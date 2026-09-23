@@ -68,19 +68,29 @@ export function normalizeCustomerName(name?: string | null): string {
 }
 
 // v2 占位客户名（不算真实拜访）：「虚拟客户」家族 + CRM 遗留占位选项「XX（签到用）」
-// （虚拟客户/住址/公司（签到用））。业务约定：住址、公司、酒店类未真实拜访的打卡，
-// 源头统一在客户字段写「虚拟客户」；「签到用」不会出现在真实客户名中，零误伤。
+// （虚拟客户/住址/公司（签到用））。「签到用」不会出现在真实客户名中，零误伤。
 // 2026-08-10 补丁：员工会绕过下拉选项手写「住址」，模糊识别住址类字眼
 // （住址/住所/住处/回家/到家/在家/家里），同样按住址处理不计拜访。
+// 2026-09-23 补充：员工也会手写「公司」「酒店」等泛化地点词，由下方
+// GENERIC_PLACE_PATTERN 整词匹配兜底；另加子串「加油」（加油站打卡，真实客户名
+// 不会含「加油」二字）。
 // 注意不匹配单独的「家」字（厂家/大家/专家等真实客户名会误伤）。
 const PLACEHOLDER_CUSTOMER_PATTERN =
-  /虚拟|签到用|住址|住所|住处|回家|到家|在家|家里/;
+  /虚拟|签到用|住址|住所|住处|回家|到家|在家|家里|加油/;
+
+// 泛化地点词（2026-09-23 新增）：员工在公司/酒店等非拜访场景打卡时，客户字段常手写
+// 「公司」「回公司」「酒店」等。整词匹配（允许前缀趋向动词 + 后缀场景词），
+// 不能用子串匹配「公司」——「XX有限公司」这类真实客户名会被误伤。
+const GENERIC_PLACE_PATTERN =
+  /^(回|返|在|到|去|住|于)?(公司|酒店|宾馆)(开会|办公|加班|休息|住宿|驻点|值班|签到|办事|培训)?$/;
 
 // v2 拜访计数口径：逐个客户名判定，返回非占位的真实客户名列表。
 // 情况B（不计拜访）= 真实客户名数为 0（空、全占位）；混合填写「真实客户A、虚拟客户」
 // 时真实客户仍计入拜访（realCount = 1，不排除）。
 export function splitRealCustomerNames(name?: string | null): string[] {
-  return splitCustomerNames(name).filter((n) => !PLACEHOLDER_CUSTOMER_PATTERN.test(n));
+  return splitCustomerNames(name).filter(
+    (n) => !PLACEHOLDER_CUSTOMER_PATTERN.test(n) && !GENERIC_PLACE_PATTERN.test(n)
+  );
 }
 
 interface XlsxDateParts {
