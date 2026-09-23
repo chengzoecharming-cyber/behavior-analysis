@@ -385,7 +385,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             rowKey="key"
             size="small"
             showHeader={false}
-            scroll={{ x: 500 }}
+            scroll={{ x: "100%" }}
             expandedRowRender={expandedRowRender}
             rowExpandable={(r?: OrgRankingItem) => !!r?.hasChildren}
             expandedRowKeys={Array.from(expandedKeys)}
@@ -508,7 +508,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
                 pagination={false}
                 rowKey="key"
                 size="small"
-                scroll={{ x: 500 }}
+                scroll={{ x: "100%" }}
                 expandedRowRender={expandedRowRender}
                 rowExpandable={(record?: OrgRankingItem) => !!record?.hasChildren}
                 expandedRowKeys={Array.from(expandedKeys)}
