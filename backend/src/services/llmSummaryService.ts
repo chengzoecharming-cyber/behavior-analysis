@@ -30,7 +30,8 @@ export function isLlmConfigured(): boolean {
 /**
  * 把一条拜访的「沟通内容详情」与「存在问题点」压缩成 1~2 句极简摘要。
  * 硬性约束在 prompt 中：只概括不扩写、长度明显短于原文。
- * 内容为空、未配置 key、超时或调用失败均返回 null（绝不抛异常，失败保留兜底文本）。
+ * 内容为空/过短（如只填「公司办公」「。」）、未配置 key、超时、调用失败
+ * 或模型返回拒绝语（「无法生成摘要」等）均返回 null（绝不抛异常，失败保留兜底文本）。
  */
 export async function summarizeVisit(
   comm?: string,
@@ -41,6 +42,11 @@ export async function summarizeVisit(
   if (issues && issues.trim()) parts.push(`存在问题点：${issues.trim()}`);
   if (parts.length === 0) return null;
   if (!isLlmConfigured()) return null;
+
+  // 有效内容过短（「公司办公」「交付」「。」之类）不值得总结，
+  // 模型也只会返回「信息不足，无法生成摘要」，直接跳过保留兜底文本
+  const meaningful = ((comm || "") + (issues || "")).replace(/[\s\p{P}\p{S}]/gu, "");
+  if (meaningful.length < 8) return null;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
@@ -73,7 +79,9 @@ export async function summarizeVisit(
     }
     const data: any = await res.json();
     const text = (data?.choices?.[0]?.message?.content || "").trim();
-    return text || null;
+    // 模型对过短/无意义输入会返回拒绝语，不能当摘要落库
+    if (!text || /信息不足|无法生成|内容为空|请提供/.test(text)) return null;
+    return text;
   } catch (err: any) {
     console.warn(`[llmSummary] 总结生成失败: ${err?.message || err}`);
     return null;
