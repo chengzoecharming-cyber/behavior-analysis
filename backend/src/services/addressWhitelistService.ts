@@ -264,6 +264,26 @@ export async function batchFilterHomeVisits(
 }
 
 /**
+ * 判断客户名是否命中公司白名单名称（自家公司被当成客户填写的情况，如
+ * 「苏州小胖蜂分公司」「深圳丹弗科技有限公司」「创维数字大厦」）。
+ * 双向包含匹配，公司名/客户名较短者至少 3 个字符，避免过短误伤。
+ */
+export function isCompanyCustomerName(
+  customerName: string | null | undefined,
+  companies: CompanyAddress[]
+): boolean {
+  const normCustomer = normalizeAddress(customerName);
+  if (!normCustomer) return false;
+  for (const company of companies) {
+    const normCompany = normalizeAddress(company.name);
+    if (normCompany.length < 3) continue;
+    if (normCustomer.includes(normCompany)) return true;
+    if (normCustomer.length >= 3 && normCompany.includes(normCustomer)) return true;
+  }
+  return false;
+}
+
+/**
  * 批量判断一组 visit 是否命中公司地址白名单（对全体员工生效）。
  * 报告客户统计中应排除公司签到。
  */

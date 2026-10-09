@@ -3,8 +3,9 @@
  *
  * 打标口径按表单版本分流：
  * - v1 旧表单 / Excel：命中「员工本人住址」或「公司地址白名单」的签到置为 true；
- * - v2 新表单（按 raw_approvals.process_code 识别）：客户名为空或含「虚拟」字眼
- *   （情况B）置为 true，不看地址（PLAN.md Step 3.6）。
+ * - v2 新表单（按 raw_approvals.process_code 识别）：客户名为空或全部为占位名
+ *   （情况B）置为 true，不看地址（PLAN.md Step 3.6）；客户名命中公司白名单
+ *   名称（创维数字大厦/小胖蜂/丹弗等自家公司）也算占位。
  *
  * 全量重算、幂等：住址或公司地址白名单有更新时，直接重跑本脚本即可刷新。
  * 同时按新口径修正 risk_summary_cache.visit_count（不重算风险分）。
@@ -19,6 +20,7 @@ import {
   loadCompanyAddresses,
   isHomeAddress,
   isCompanyAddress,
+  isCompanyCustomerName,
 } from "../src/services/addressWhitelistService";
 import { splitRealCustomerNames } from "../src/services/normalization";
 
@@ -64,8 +66,12 @@ async function main() {
 
   for (const v of visits.rows) {
     const isV2 = !!v.approval_id && v2ApprovalIds.has(v.approval_id);
+    // v2：无真实客户名，或客户名命中公司白名单名称（自家公司被当成客户填写）
+    const realNames = splitRealCustomerNames(v.customer_name).filter(
+      (n) => !isCompanyCustomerName(n, companyAddresses)
+    );
     const excluded = isV2
-      ? splitRealCustomerNames(v.customer_name).length === 0
+      ? realNames.length === 0
       : (await (async () => {
           const home = homeAddressMap.get(v.user_id);
           return (

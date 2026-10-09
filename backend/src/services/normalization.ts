@@ -7,6 +7,7 @@ import {
   loadCompanyAddresses,
   isHomeAddress,
   isCompanyAddress,
+  isCompanyCustomerName,
   HomeAddressInfo,
   CompanyAddress,
 } from "./addressWhitelistService";
@@ -75,14 +76,16 @@ export function normalizeCustomerName(name?: string | null): string {
 // GENERIC_PLACE_PATTERN 整词匹配兜底；另加子串「加油」（加油站打卡，真实客户名
 // 不会含「加油」二字）。
 // 注意不匹配单独的「家」字（厂家/大家/专家等真实客户名会误伤）。
+// 2026-10-09 补充：到公司/回公司/开业务会（如「国庆后到公司开业务会」）。
 const PLACEHOLDER_CUSTOMER_PATTERN =
-  /虚拟|签到用|住址|住所|住处|回家|到家|在家|家里|加油/;
+  /虚拟|签到用|住址|住所|住处|回家|到家|在家|家里|加油|到公司|回公司|开业务会/;
 
 // 泛化地点词（2026-09-23 新增）：员工在公司/酒店等非拜访场景打卡时，客户字段常手写
 // 「公司」「回公司」「酒店」等。整词匹配（允许前缀趋向动词 + 后缀场景词），
 // 不能用子串匹配「公司」——「XX有限公司」这类真实客户名会被误伤。
+// 2026-10-09 补充：「开会」「去开会」等纯会议场景词。
 const GENERIC_PLACE_PATTERN =
-  /^(回|返|在|到|去|住|于)?(公司|酒店|宾馆)(开会|办公|加班|休息|住宿|驻点|值班|签到|办事|培训)?$/;
+  /^(回|返|在|到|去|住|于)?(公司|酒店|宾馆|开会)(开会|办公|加班|休息|住宿|驻点|值班|签到|办事|培训)?$/;
 
 // v2 拜访计数口径：逐个客户名判定，返回非占位的真实客户名列表。
 // 情况B（不计拜访）= 真实客户名数为 0（空、全占位）；混合填写「真实客户A、虚拟客户」
@@ -348,7 +351,10 @@ export async function processParsedVisits(
     let excludeFromVisitCount: boolean;
     let customerCount: number;
     if (visit.form_version === "v2") {
-      const realNames = splitRealCustomerNames(visit.customer_name);
+      // 客户名命中公司白名单名称（创维数字大厦/小胖蜂/丹弗等自家公司）也算占位
+      const realNames = splitRealCustomerNames(visit.customer_name).filter(
+        (n) => !isCompanyCustomerName(n, companyAddresses)
+      );
       excludeFromVisitCount = realNames.length === 0;
       customerCount = realNames.length;
     } else {
