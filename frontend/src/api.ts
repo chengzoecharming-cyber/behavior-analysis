@@ -101,6 +101,18 @@ export async function fetchVisits(
   return res.data;
 }
 
+/** 陪同对象类型识别：名字 → 同事/客户/代理商（未识别不返回该名字） */
+export type AccompanyType = "同事" | "客户" | "代理商";
+export async function fetchAccompanyTypes(
+  names: string[]
+): Promise<Record<string, AccompanyType>> {
+  if (names.length === 0) return {};
+  const res = await api.get("/visits/accompany-types", {
+    params: { names: names.join(",") },
+  });
+  return res.data.types || {};
+}
+
 export async function fetchStops(
   userId: string,
   start: string,
@@ -137,6 +149,7 @@ export async function fetchMileage(
 export interface DailyOverview {
   date: string;
   visit_count: number;
+  accompany_count: number;
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
@@ -277,6 +290,8 @@ export interface OrgRankingItem {
   name: string;
   level: "department" | "sub_department" | "person";
   visitCount: number;
+  /** 陪同拜访次数（陪同对象非空的打卡点数） */
+  accompanyCount: number;
   employeeCount: number;
   reportedKm: number;
   estimatedKm: number;
@@ -293,6 +308,7 @@ export interface OrgRankingItem {
 export interface OrgTrendItem {
   date: string;
   visitCount: number;
+  accompanyCount: number;
   reportedKm: number;
   estimatedKm: number;
   anomalyCount: number;
@@ -967,6 +983,9 @@ import type {
   CrmOpportunityMapResponse,
   CrmStuckResponse,
   CrmStuckKind,
+  CrmRecoveryListResponse,
+  CrmPoolHealthResponse,
+  CrmFunnelResponse,
 } from "./types";
 
 export async function fetchCrmOverview(): Promise<CrmOverview> {
@@ -1003,5 +1022,27 @@ export async function fetchCrmStuck(
   const res = await api.get("/crm-analytics/stuck", {
     params: { kind: kind || undefined, page, pageSize },
   });
+  return res.data;
+}
+
+export async function fetchCrmRecoveryList(
+  stage: string,
+  owner: string,
+  page: number,
+  pageSize: number
+): Promise<CrmRecoveryListResponse> {
+  const res = await api.get("/crm-analytics/recovery-list", {
+    params: { stage: stage || undefined, owner: owner || undefined, page, pageSize },
+  });
+  return res.data;
+}
+
+export async function fetchCrmPoolHealth(): Promise<CrmPoolHealthResponse> {
+  const res = await api.get("/crm-analytics/pool-health");
+  return res.data;
+}
+
+export async function fetchCrmFunnel(): Promise<CrmFunnelResponse> {
+  const res = await api.get("/crm-analytics/funnel");
   return res.data;
 }

@@ -98,16 +98,96 @@ function buildDuplicateCounts(visits: Visit[], homeVisitIds?: Set<number>): Map<
   return counts;
 }
 
+/** 北京时间 HH:mm（TIMESTAMPTZ 为 UTC，+8 换算） */
+function formatBeijingTimeHM(value: string | Date): string {
+  const d = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(d.getTime())) return "";
+  const bj = new Date(d.getTime() + 8 * 60 * 60 * 1000);
+  const hh = String(bj.getUTCHours()).padStart(2, "0");
+  const mm = String(bj.getUTCMinutes()).padStart(2, "0");
+  return `${hh}:${mm}`;
+}
+
+/** 取 visits 的第一张照片 URL（photos 为 JSONB 数组） */
+function firstPhotoUrl(v: Visit): string {
+  const photos = (v as any).photos;
+  if (Array.isArray(photos) && photos.length > 0 && typeof photos[0] === "string") {
+    return photos[0];
+  }
+  return "";
+}
+
+/** 出行方式分类（仅日报使用）：含「开车」→ 车，其余非空 → 公（公共交通/其他）；空则不分类 */
+function tripCategory(tripType?: string | null): { label: string; color: string } | null {
+  const t = (tripType || "").trim();
+  if (!t) return null;
+  if (t.includes("开车")) return { label: "车", color: "#1890ff" };
+  return { label: "公", color: "#722ed1" };
+}
+
+/** 多审批单出行方式不一致时，只给非开车（公共交通/其他）的记录打紫色 [公]，开车不打 */
+function tripTagPublicOnly(v: Visit): string {
+  const c = tripCategory(v.trip_type);
+  return c && c.label === "公" ? ` <font color="${c.color}">公</font>` : "";
+}
+
+/**
+ * 员工当日出行方式展示模式（仅日报）：
+ * - 所有审批单出行方式一致（或只有一种）→ heading：tag 放人名/标题行；
+ * - 多张审批单出行方式不同 → perItem：tag 放各审批单对应的客户名后。
+ * 按「有出行方式的 visit」取分类集合；全部无出行方式（老数据）→ 不打 tag。
+ */
+function resolveTripTagMode(items: VisitItem[]): { headingTag: string; perItem: boolean } {
+  const cats = new Set<string>();
+  for (const item of items) {
+    const c = tripCategory(item.visit.trip_type);
+    if (c) cats.add(c.label);
+  }
+  if (cats.size !== 1) return { headingTag: "", perItem: cats.size > 1 };
+  const c = tripCategory(items.find((i) => tripCategory(i.visit.trip_type))!.visit.trip_type)!;
+  return { headingTag: ` <font color="${c.color}">${c.label}</font>`, perItem: false };
+}
+
 function renderVisitItem(
   index: number,
   item: VisitItem,
-  duplicateCounts: Map<string, number>
+  duplicateCounts: Map<string, number>,
+  isDaily: boolean,
+  tripPerItem: boolean
 ): string {
   const count = duplicateCounts.get(duplicateKey(item.visit.user_id, item.customerName)) || 0;
   const marker = count > 2 ? `（重复拜访 ${count} 次）` : "";
   const note = resolveReportVisitNote(item.visit);
   const summary = note?.text?.trim() || "无拜访情况";
-  return `${index}. **${item.customerName}**${marker}\n   ${summary}`;
+
+  // 陪同拜访（2026-10-15 v3 表单）：客户名后加橙色「陪」tag，陪同人名单独一行灰色次要信息
+  const accompany = item.visit.visit_detail?.accompany?.trim();
+  const accompanyTag = accompany ? ` <font color="#fa8c16">陪</font>` : "";
+  // 出行方式不一致的日报：非开车审批单的记录客户名后加紫色「公」tag
+  const tripTag = isDaily && tripPerItem ? tripTagPublicOnly(item.visit) : "";
+
+  const lines = [`${index}. **${item.customerName}**${tripTag}${accompanyTag}${marker}`];
+  // 次要信息行（仅日报）：北京时间 HH:mm + 地址（灰色，先时间后地址）
+  // 钉钉文档会把列表项内连续行合并成一段，每个子行末尾都加 <br/> 保证逐行显示
+  if (isDaily) {
+    const time = formatBeijingTimeHM(item.visit.timestamp as any);
+    const address = item.visit.address?.trim() || "";
+    const info = [time, address].filter(Boolean).join(" · ");
+    if (info) {
+      lines.push(`   <font color="#999">${info}</font><br/>`);
+    }
+  }
+  if (accompany) {
+    lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
+  }
+  // 总结行（沟通内容）同样另起一行；后面跟图片时图片也另起一行
+  // 照片（仅日报）：只放第一张，用小尺寸 img 防止钉钉文档里撑满全宽
+  const photoUrl = isDaily ? firstPhotoUrl(item.visit) : "";
+  lines.push(`   ${summary}<br/>`);
+  if (photoUrl) {
+    lines.push(`   <img src="${photoUrl}" width="96" />`);
+  }
+  return lines.join("\n");
 }
 
 function renderSummary(lines: string[], visitCount: number, estimatedKm: number): void {
@@ -170,11 +250,13 @@ function renderVisitItems(
   lines: string[],
   items: VisitItem[],
   duplicateCounts: Map<string, number>,
-  groupByDate: boolean
+  groupByDate: boolean,
+  isDaily: boolean,
+  tripPerItem: boolean
 ): void {
   if (!groupByDate) {
     for (let i = 0; i < items.length; i++) {
-      lines.push(renderVisitItem(i + 1, items[i], duplicateCounts));
+      lines.push(renderVisitItem(i + 1, items[i], duplicateCounts, isDaily, tripPerItem));
       lines.push("");
     }
     return;
@@ -192,7 +274,7 @@ function renderVisitItems(
     lines.push(formatDateGroupTitle(date));
     lines.push("");
     for (const item of byDate.get(date)!) {
-      lines.push(renderVisitItem(++index, item, duplicateCounts));
+      lines.push(renderVisitItem(++index, item, duplicateCounts, isDaily, tripPerItem));
       lines.push("");
     }
   }
@@ -288,6 +370,7 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
   const duplicateCounts = buildDuplicateCounts(input.visits, input.homeVisitIds);
   // 日报只有一天，无需按日期分组；周报/月报按日期分组展示
   const groupByDate = input.reportType !== "日报";
+  const isDaily = input.reportType === "日报";
 
   lines.push(`# ${input.titleName} 客户拜访${input.reportType}`);
   lines.push("");
@@ -296,13 +379,18 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
 
   if (input.scope === "person") {
     const items = buildVisitItems(input.visits, input.homeVisitIds);
+    // 日报：出行方式一致时 tag 放标题（人名）行，不一致时逐条打 [公]
+    const tripMode = isDaily ? resolveTripTagMode(items) : { headingTag: "", perItem: false };
+    if (tripMode.headingTag) {
+      lines[0] = lines[0] + tripMode.headingTag;
+    }
     renderSummary(lines, countVisits(input.visits, input.homeVisitIds), input.overview.totals.estimated_distance_km);
 
     if (groupByDate) {
       renderFreqSection(lines, input);
     }
 
-    renderVisitItems(lines, items, duplicateCounts, groupByDate);
+    renderVisitItems(lines, items, duplicateCounts, groupByDate, isDaily, tripMode.perItem);
     if (items.length === 0) {
       lines.push("暂无有效客户拜访记录。");
       lines.push("");
@@ -325,12 +413,14 @@ export function renderWikiReportMarkdown(input: WikiReportInput): string {
     for (let userIndex = 0; userIndex < group.users.length; userIndex++) {
       const user = group.users[userIndex];
       const items = buildVisitItems(user.visits, input.homeVisitIds);
+      // 日报：该员工出行方式一致时 tag 放人名行，不一致时逐条打 [公]
+      const tripMode = isDaily ? resolveTripTagMode(items) : { headingTag: "", perItem: false };
 
-      lines.push(`#### ${user.userName}`);
+      lines.push(`#### ${user.userName}${tripMode.headingTag}`);
       lines.push("");
       renderSummary(lines, countVisits(user.visits, input.homeVisitIds), user.estimatedKm);
 
-      renderVisitItems(lines, items, duplicateCounts, groupByDate);
+      renderVisitItems(lines, items, duplicateCounts, groupByDate, isDaily, tripMode.perItem);
       if (items.length === 0) {
         lines.push("暂无有效客户拜访记录。");
         lines.push("");

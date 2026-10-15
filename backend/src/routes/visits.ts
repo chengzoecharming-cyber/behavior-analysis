@@ -15,6 +15,7 @@ import {
   getVisibleUserIds,
   FORBIDDEN_MESSAGE,
 } from "../services/permission";
+import { normalizeCustomerName } from "../services/normalization";
 
 const router = Router();
 
@@ -54,6 +55,55 @@ router.post("/:id/coordinates", authMiddleware, requireRole("admin", "manager"),
     res.json(result.rows[0]);
   } catch (err) {
     console.error("Failed to update coordinates:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
+// 陪同对象类型识别：同事（users 姓名精确命中）> CRM 客户（name_norm 归一化命中，
+// customer_type 以 agent 开头为代理商，其余为客户）> 未识别（不返回该名字）
+router.get("/accompany-types", authMiddleware, async (req: AuthRequest, res: Response) => {
+  const raw = String(req.query.names || "");
+  const names = raw
+    .split(/[,、，]/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .slice(0, 50);
+  if (names.length === 0) {
+    res.json({ types: {} });
+    return;
+  }
+  try {
+    const types: Record<string, "同事" | "客户" | "代理商"> = {};
+
+    const colleagueRes = await pool.query(
+      `SELECT DISTINCT user_name FROM users WHERE user_name = ANY($1)`,
+      [names]
+    );
+    const colleagueSet = new Set(colleagueRes.rows.map((r) => r.user_name));
+    for (const n of names) {
+      if (colleagueSet.has(n)) types[n] = "同事";
+    }
+
+    const rest = names.filter((n) => !types[n]);
+    if (rest.length > 0) {
+      const normPairs = rest.map((n) => ({ name: n, norm: normalizeCustomerName(n) }));
+      const crmRes = await pool.query(
+        `SELECT name_norm, customer_type FROM crm_customers WHERE name_norm = ANY($1)`,
+        [normPairs.map((p) => p.norm)]
+      );
+      const crmMap = new Map<string, string>(
+        crmRes.rows.map((r) => [r.name_norm, r.customer_type || ""])
+      );
+      for (const p of normPairs) {
+        const ct = crmMap.get(p.norm);
+        if (ct === undefined) continue;
+        types[p.name] = ct.startsWith("agent") ? "代理商" : "客户";
+      }
+    }
+
+    res.json({ types });
+  } catch (err) {
+    console.error("Failed to resolve accompany types:", err);
     res.status(500).json({ error: "Database error" });
   }
 });

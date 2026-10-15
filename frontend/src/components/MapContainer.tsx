@@ -603,6 +603,25 @@ export default function MapContainer({
                   {selectedVisit.visit_detail?.ai && (
                     <DescItem label="AI总结">{selectedVisit.visit_detail.ai}</DescItem>
                   )}
+                  {selectedVisit.visit_detail?.accompany && (
+                    <DescItem label="陪同对象">{selectedVisit.visit_detail.accompany}</DescItem>
+                  )}
+                  {selectedVisit.visit_detail?.accompany_photo &&
+                    selectedVisit.visit_detail.accompany_photo.length > 0 && (
+                      <DescItem label="陪同合照">
+                        <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                          {selectedVisit.visit_detail.accompany_photo.map((url, idx) => (
+                            <Image
+                              key={idx}
+                              src={url}
+                              width={80}
+                              height={80}
+                              style={{ borderRadius: 4, objectFit: "cover" }}
+                            />
+                          ))}
+                        </div>
+                      </DescItem>
+                    )}
                   {selectedVisit.visit_detail?.comm && (
                     <DescItem label="沟通内容详情">{selectedVisit.visit_detail.comm}</DescItem>
                   )}

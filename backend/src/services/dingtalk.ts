@@ -1294,36 +1294,43 @@ function extractCustomerNameV2(c: FormComponent): { name: string; count: number 
   if (!value || value === "null") return { name: "", count: 0 };
 
   if (c.component_type === "TableField") {
-    const names: string[] = [];
-    try {
-      const rows = JSON.parse(value);
-      if (Array.isArray(rows)) {
-        for (const row of rows) {
-          const rv = row?.rowValue;
-          if (!Array.isArray(rv)) continue;
-          for (const item of rv) {
-            if (item?.componentType !== "OpenDataField") continue;
-            const v = typeof item.value === "string" ? item.value.trim() : "";
-            let name = v ? extractReadableName(v) : "";
-            if (!name) {
-              const title = item?.extendValue?.data?.find(
-                (d: any) => d?.key === "titleKeyFieldId"
-              )?.value;
-              if (title) name = extractReadableName(String(title));
-            }
-            if (name && !names.includes(name)) names.push(name);
-          }
-        }
-      }
-    } catch {
-      // 忽略 JSON 解析失败，按无客户处理
-    }
+    const names = extractTableOpenDataNames(c);
     return { name: names.join("、"), count: names.length };
   }
 
   if (isSchemaEchoValue(value)) return { name: "", count: 0 };
   const name = extractReadableName(value);
   return { name, count: name ? 1 : 0 };
+}
+
+// 从 TableField 的 rowValue JSON 中提取所有 OpenDataField 的可读名称（去重保序）。
+// 客户表（拜访客户N/旧快照「表格」）与陪同表（陪同对象信息N）共用此遍历逻辑。
+function extractTableOpenDataNames(c: FormComponent): string[] {
+  const names: string[] = [];
+  try {
+    const rows = JSON.parse((c.value || "").trim());
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        const rv = row?.rowValue;
+        if (!Array.isArray(rv)) continue;
+        for (const item of rv) {
+          if (item?.componentType !== "OpenDataField") continue;
+          const v = typeof item.value === "string" ? item.value.trim() : "";
+          let name = v ? extractReadableName(v) : "";
+          if (!name) {
+            const title = item?.extendValue?.data?.find(
+              (d: any) => d?.key === "titleKeyFieldId"
+            )?.value;
+            if (title) name = extractReadableName(String(title));
+          }
+          if (name && !names.includes(name)) names.push(name);
+        }
+      }
+    }
+  } catch {
+    // 忽略 JSON 解析失败，按无内容处理
+  }
+  return names;
 }
 
 // 解析钉钉 AI 字段（DDAIField「AI总结」）的按块输出，格式为：
@@ -1410,6 +1417,10 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
 
   // 在当前 stop 后面、下一个定位字段之前找「拜访客户N」组件
   // （拜访客户1 是 OpenDataField；拜访客户2~5 嵌在 TableField 里）
+  // 2026-10-15 v3 表单在每个打卡点新增了「陪同对象信息N」TableField（排在拜访客户之前），
+  // 不能无脑取第一个 TableField：含「陪同对象名称」的是陪同表，跳过继续找。
+  // 未填的 TableField value 是 schema 回显 JSON（含列字段名），已填的是 rowValue JSON
+  // （含 componentName/label），两种形态都可用子串匹配区分；旧快照客户表叫「表格」，保持兼容。
   const findNearbyCustomerComponent = (stopIndex: number): FormComponent | undefined => {
     for (let i = stopIndex + 1; i < formComponents.length; i++) {
       const c = formComponents[i];
@@ -1418,6 +1429,9 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
         return c;
       }
       if (c.component_type === "TableField") {
+        // 陪同表：按名字（未填时 value 可能为空/无内容）或按 value 内容（schema 回显/rowValue 均含列名）识别
+        if (/^陪同对象信息\d*$/.test((c.name || "").trim())) continue;
+        if ((c.value || "").includes("陪同对象名称")) continue;
         return c;
       }
     }
@@ -1452,6 +1466,32 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
       ? extractCustomerNameV2(customerComponent)
       : { name: "", count: 0 };
 
+    // 陪同拜访（2026-10-15 v3 表单新增）：是否为陪同拜访N = 是 时，
+    // 提取陪同对象信息N TableField 内的陪同对象名称N + 拍摄与陪同对象的合照N
+    const accompaniedRaw = findNearby(stop.index, /^是否为陪同拜访\d*$/);
+    const accompanied = accompaniedRaw === "是";
+    let accompanyNames: string[] = [];
+    if (accompanied) {
+      const accompanyTable = (() => {
+        for (let j = stop.index + 1; j < formComponents.length; j++) {
+          const c = formComponents[j];
+          if (c.component_type === "TimeAndLocationField") break;
+          if (
+            c.component_type === "TableField" &&
+            /^陪同对象信息\d*$/.test((c.name || "").trim())
+          ) {
+            return c;
+          }
+        }
+        return undefined;
+      })();
+      if (accompanyTable) accompanyNames = extractTableOpenDataNames(accompanyTable);
+    }
+    const accompanyPhotosRaw = accompanied
+      ? findNearby(stop.index, /^拍摄与陪同对象的合照\d*$/)
+      : undefined;
+    const accompanyPhotos = accompanyPhotosRaw ? parsePhotoUrls(accompanyPhotosRaw) : [];
+
     // visit_note：优先取 AI 总结的对应块；兜底拼接原始字段
     // （2026-08-06 表单改版后字段名带编号「沟通内容详情1」，正则用 \d* 兼容新旧快照）
     // visit_detail：原始字段结构化存储，供弹窗按 v2 表单字段名原样展示
@@ -1463,13 +1503,22 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
       const contact = findNearby(stop.index, /^交流对象\d*$/); // 旧快照字段，已从新表单删除
       const noteParts: string[] = [];
       if (contact) noteParts.push(`交流对象：${contact}`);
+      if (accompanied && accompanyNames.length > 0) {
+        noteParts.push(`陪同拜访：${accompanyNames.join("、")}`);
+      }
       if (commDetail) noteParts.push(`沟通内容：${commDetail}`);
       if (issues) noteParts.push(`存在问题：${issues}`);
       visitNoteText = noteParts.join("；");
     }
     const visitDetail =
-      commDetail || issues || aiNote
-        ? { comm: commDetail || undefined, issues: issues || undefined, ai: aiNote || undefined }
+      commDetail || issues || aiNote || accompanied
+        ? {
+            comm: commDetail || undefined,
+            issues: issues || undefined,
+            ai: aiNote || undefined,
+            accompany: accompanied && accompanyNames.length > 0 ? accompanyNames.join("、") : undefined,
+            accompany_photo: accompanied && accompanyPhotos.length > 0 ? accompanyPhotos : undefined,
+          }
         : undefined;
 
     const photosRaw = findNearby(stop.index, /^现场交流照片\d*$/);

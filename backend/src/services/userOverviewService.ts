@@ -9,6 +9,8 @@ import {
 export interface DailyOverview {
   date: string;
   visit_count: number;
+  /** 陪同拜访数（visit_detail.accompany 非空的打卡点数） */
+  accompany_count: number;
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
@@ -48,7 +50,8 @@ export async function computeUserOverview(
 ): Promise<UserOverviewResult> {
   // 1. 每日拜访次数
   const visitResult = await pool.query(
-    `SELECT business_date, COALESCE(SUM(customer_count), 0) as visit_count
+    `SELECT business_date, COALESCE(SUM(customer_count), 0) as visit_count,
+            COUNT(*) FILTER (WHERE COALESCE(visit_detail->>'accompany', '') <> '') AS accompany_count
      FROM visits
      WHERE user_id = $1
        AND business_date >= $2::date
@@ -106,6 +109,7 @@ export async function computeUserOverview(
       dateMap.set(date, {
         date,
         visit_count: 0,
+        accompany_count: 0,
         reported_distance_km: 0,
         estimated_distance_km: 0,
         anomaly_count: 0,
@@ -117,6 +121,7 @@ export async function computeUserOverview(
   for (const row of visitResult.rows) {
     const d = ensureDay(formatDate(row.business_date));
     d.visit_count = parseInt(row.visit_count, 10);
+    d.accompany_count = parseInt(row.accompany_count, 10) || 0;
   }
   for (const [key, vals] of byUserDate) {
     const date = key.split("_").pop() || "";

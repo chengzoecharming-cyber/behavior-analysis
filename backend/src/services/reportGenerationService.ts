@@ -52,6 +52,8 @@ export interface ScopeData {
       reported_distance_km: number;
       estimated_distance_km: number;
       anomaly_count: number;
+      /** 陪同拜访次数（陪同对象非空的打卡点数，同拜访次数口径） */
+      accompany_count: number;
     };
     daily: {
       date: string;
@@ -139,9 +141,10 @@ async function computeScopeOverview(
 ): Promise<{ overview: ScopeData["overview"]; hasData: boolean; visits: Visit[]; routes: Route[] }> {
   const userIds = getUserIdsForScope(scope, node, tree);
 
-  // 1. 总拜访次数
+  // 1. 总拜访次数（含陪同拜访次数）
   const visitResult = await pool.query(
-    `SELECT COALESCE(SUM(customer_count), 0) AS visit_count
+    `SELECT COALESCE(SUM(customer_count), 0) AS visit_count,
+            COUNT(*) FILTER (WHERE COALESCE(visit_detail->>'accompany', '') <> '') AS accompany_count
      FROM visits
      WHERE user_id = ANY($1::text[])
        AND business_date >= $2::date
@@ -330,6 +333,7 @@ async function computeScopeOverview(
         ),
         estimated_distance_km: Math.round(totals.estimated_distance_km),
         anomaly_count: totals.anomaly_count,
+        accompany_count: parseInt(visitResult.rows[0]?.accompany_count, 10) || 0,
       },
       daily,
       anomalies: anomalyDetailResult.rows.map((r) => ({
@@ -405,6 +409,7 @@ export async function exportReportToDingTalkDoc(options: {
     visit_count: number;
     estimated_distance_km: number;
     anomaly_count: number;
+    accompany_count?: number;
   };
 }> {
   const { operatorUserId, workspaceName, scope, target, start, end, orgTree } =
@@ -463,6 +468,8 @@ export async function exportReportToDingTalkDoc(options: {
           reported_distance_km: overview.totals.reported_distance_km,
           estimated_distance_km: overview.totals.estimated_distance_km,
           anomaly_count: overview.totals.anomaly_count,
+          // user-overview 的 totals 无陪同字段，从每日聚合汇总
+          accompany_count: overview.daily.reduce((s, d) => s + (d.accompany_count || 0), 0),
         },
         daily: overview.daily.map((d) => ({
           date: d.date,
@@ -580,6 +587,7 @@ export async function exportReportToDingTalkDoc(options: {
       visit_count: scopeData.overview.totals.visit_count,
       estimated_distance_km: scopeData.overview.totals.estimated_distance_km,
       anomaly_count: scopeData.overview.totals.anomaly_count,
+      accompany_count: scopeData.overview.totals.accompany_count,
     },
   };
 }
@@ -599,6 +607,7 @@ export interface ReportGenerationResult {
     visit_count: number;
     estimated_distance_km: number;
     anomaly_count: number;
+    accompany_count?: number;
   };
 }
 
@@ -840,6 +849,9 @@ async function sendPersonDailyReportNotification(params: {
       `- 总里程：${Math.round(totals?.estimated_distance_km ?? 0)} km`,
       `- 异常：${totals?.anomaly_count ?? 0} 条`,
     ];
+    if ((totals?.accompany_count ?? 0) > 0) {
+      lines.push(`- 陪同拜访：${totals!.accompany_count} 次`);
+    }
     if (url) {
       lines.push("", `[查看完整日报](${url})`);
     }
@@ -1055,10 +1067,13 @@ async function generateReportsForPeriod(
   // 日报推送：仅 manual 不推。scheduler 正常推；catchup 只在补跑「昨天」的日报时推——
   // 典型场景是 9:00 前部署重启，启动补跑抢先生成了昨天的日报，若 catchup 一律不推，
   // 9:00 定时任务又会因「已生成」跳过，导致整天无人收到推送（8/19 案例）。
+  // REPORT_PUSH_ENABLED=false 时仅生成钉钉文档，跳过本人推送与区总/负责人汇总推送
+  // （用于灰度验证报告内容后再放开推送）
   const notifyDaily =
     reportType === "daily" &&
     (triggerSource === "scheduler" ||
-      (triggerSource === "catchup" && start === getYesterdayBeijing()));
+      (triggerSource === "catchup" && start === getYesterdayBeijing())) &&
+    process.env.REPORT_PUSH_ENABLED !== "false";
   const companyStats = { generated: 0, failed: 0, totalVisits: 0 };
 
   // 公司维度

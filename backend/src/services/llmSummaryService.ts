@@ -35,9 +35,11 @@ export function isLlmConfigured(): boolean {
  */
 export async function summarizeVisit(
   comm?: string,
-  issues?: string
+  issues?: string,
+  accompany?: string
 ): Promise<string | null> {
   const parts: string[] = [];
+  if (accompany && accompany.trim()) parts.push(`陪同对象：${accompany.trim()}`);
   if (comm && comm.trim()) parts.push(`沟通内容详情：${comm.trim()}`);
   if (issues && issues.trim()) parts.push(`存在问题点：${issues.trim()}`);
   if (parts.length === 0) return null;
@@ -65,7 +67,7 @@ export async function summarizeVisit(
           {
             role: "system",
             content:
-              "你是销售外勤管理助手。把销售人员拜访客户时填写的「沟通内容详情」和「存在问题点」压缩成一段极简的中文摘要。" +
+              "你是销售外勤管理助手。把销售人员拜访客户时填写的「陪同对象」（如有）、「沟通内容详情」和「存在问题点」压缩成一段极简的中文摘要。" +
               "硬性要求：1) 只概括、不创作，禁止补充、推测或扩写任何原文没有的信息（如建议、评价、背景）；2) 输出长度必须明显短于原文，一般不超过原文一半，通常 1~2 句；3) 保留关键事实：拜访对象、事项、结论或待办；4) 只输出摘要正文，不要标题、列表、编号或表情。",
           },
           { role: "user", content: parts.join("\n") },
@@ -127,6 +129,7 @@ interface VisitRowForSummary {
   visit_note: string | null;
   comm: string;
   issues: string;
+  accompany: string;
 }
 
 /** 查询指定 user+date 下缺 AI 总结但有原始内容的 v2 行 */
@@ -137,7 +140,8 @@ async function findMissingAiRows(
   const result = await pool.query<VisitRowForSummary>(
     `SELECT approval_id, user_id, sequence, visit_note,
             COALESCE(visit_detail->>'comm', '') AS comm,
-            COALESCE(visit_detail->>'issues', '') AS issues
+            COALESCE(visit_detail->>'issues', '') AS issues,
+            COALESCE(visit_detail->>'accompany', '') AS accompany
      FROM visits
      WHERE form_version = 'v2'
        AND user_id = $1 AND business_date = $2
@@ -191,7 +195,7 @@ export async function summarizeMissingAiForUserDates(
   let failed = 0;
   await mapWithConcurrency(rows, CONCURRENCY, async (row) => {
     try {
-      const aiText = await summarizeVisit(row.comm, row.issues);
+      const aiText = await summarizeVisit(row.comm, row.issues, row.accompany);
       if (!aiText) {
         failed++;
         return;

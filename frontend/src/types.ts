@@ -29,7 +29,7 @@ export interface Visit {
   approval_status?: string;
   exclude_from_visit_count?: boolean;
   form_version?: string;
-  visit_detail?: { comm?: string; issues?: string; ai?: string } | null;
+  visit_detail?: { comm?: string; issues?: string; ai?: string; accompany?: string; accompany_photo?: string[] } | null;
 }
 
 export interface RawVisit {
@@ -202,9 +202,11 @@ export interface CrmOverview {
   unfollowed_ratio: number;
   approving_count: number;
   new_30d_count: number;
+  /** CRM 数据快照日期（最近一次手工导入批次时间，YYYY-MM-DD；从未导入为 null） */
+  snapshot_date: string | null;
 }
 
-export type CrmCrossType = "follow_only" | "visit_only" | "both";
+export type CrmCrossType = "follow_only" | "visit_only" | "both" | "unmatched";
 
 export interface CrmCrossItem {
   customer_name: string;
@@ -220,6 +222,8 @@ export interface CrmCrossResponse {
   only_follow_count: number;
   only_visit_count: number;
   both_count: number;
+  /** 归并后仍匹配不上 CRM 客户的 visits 客户名数量（待确认桶，不计入三个分类） */
+  unmatched_count: number;
   total: number;
   list: CrmCrossItem[];
 }
@@ -248,6 +252,10 @@ export interface CrmOpportunityMapResponse {
   total: number;
   /** 本次请求新解析的坐标条数（后端限流每次最多 30 条，可轮询逐步补全） */
   geocoded_new: number;
+  /** 待解析（含可重试的失败记录）数量 */
+  pending_count: number;
+  /** 解析失败且重试次数用尽（attempts>=5）的数量 */
+  failed_count: number;
   list: CrmOpportunityItem[];
 }
 
@@ -261,6 +269,8 @@ export interface CrmStuckItem {
   status: string | null;
   /** 卡死/躺尸天数 */
   days: number;
+  /** 最近实际拜访时间（ISO，归并匹配口径；无则 null） */
+  last_visit_time: string | null;
 }
 
 /** GET /crm-analytics/stuck 返回 */
@@ -269,6 +279,64 @@ export interface CrmStuckResponse {
   zombie_count: number;
   total: number;
   list: CrmStuckItem[];
+}
+
+/** GET /crm-analytics/recovery-list 返回的明细行 */
+export interface CrmRecoveryItem {
+  name: string;
+  follow_status: string;
+  last_owner: string | null;
+  owner_name: string | null;
+  return_pool_time: string | null;
+  return_pool_reason: string | null;
+  return_pool_times: number | null;
+  latest_follow_up_time: string | null;
+  follow_times: number;
+  region: string | null;
+  channel: string | null;
+}
+
+/** GET /crm-analytics/recovery-list 返回（仅 admin 可调） */
+export interface CrmRecoveryListResponse {
+  total: number;
+  /** 按阶段分组计数（不含筛选条件的全量口径），key 为 follow_status */
+  summary: Record<string, number>;
+  list: CrmRecoveryItem[];
+}
+
+export interface CrmPoolHealthRow {
+  owner_name: string;
+  private_count: number;
+  zero_follow_count: number;
+  stale_30d_count: number;
+  dropped_count: number;
+  /** 掉保率 = 历史被掉保数 / (当前私海数 + 历史被掉保数) */
+  drop_ratio: number;
+}
+
+/** GET /crm-analytics/pool-health 返回 */
+export interface CrmPoolHealthResponse {
+  company: {
+    private_count: number;
+    zero_follow_count: number;
+    zero_follow_ratio: number;
+    stale_30d_count: number;
+    stale_30d_ratio: number;
+    dropped_count: number;
+  };
+  rows: CrmPoolHealthRow[];
+}
+
+export interface CrmFunnelStage {
+  stage: string;
+  private_count: number;
+  pool_count: number;
+}
+
+/** GET /crm-analytics/funnel 返回 */
+export interface CrmFunnelResponse {
+  stages: CrmFunnelStage[];
+  snapshot_date: string | null;
 }
 
 // ============ 同客户高频拜访关注（/analytics/customer-visit-frequency） ============

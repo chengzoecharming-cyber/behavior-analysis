@@ -44,7 +44,7 @@ export interface Visit {
   exclude_from_visit_count?: boolean;
   customer_count?: number;
   form_version?: string;
-  visit_detail?: { comm?: string; issues?: string; ai?: string } | null;
+  visit_detail?: { comm?: string; issues?: string; ai?: string; accompany?: string; accompany_photo?: string[] } | null;
 }
 
 export interface Stop {
@@ -129,8 +129,9 @@ export interface ParsedVisit {
   form_version?: "v2";
   // 该打卡点的客户数（v2 一个打卡点可填多家客户）；缺省按 1 处理
   customer_count?: number;
-  // v2 拜访块原始字段：comm=沟通内容详情，issues=存在问题点，ai=该块 AI 总结
-  visit_detail?: { comm?: string; issues?: string; ai?: string };
+  // v2 拜访块原始字段：comm=沟通内容详情，issues=存在问题点，ai=该块 AI 总结，
+  // accompany=陪同对象（v3 表单，2026-10-15 起），accompany_photo=陪同合照 URL 列表
+  visit_detail?: { comm?: string; issues?: string; ai?: string; accompany?: string; accompany_photo?: string[] };
 }
 
 export interface User {

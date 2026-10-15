@@ -1,8 +1,10 @@
 import { Timeline, Tag, Popover } from "@douyinfe/semi-ui";
 import type { CSSProperties } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { formatBeijingHHmm } from "../utils/time";
 import { isMileageRequiredTrip } from "../utils/tripType";
 import { Visit, Route, Anomaly } from "../types";
+import { fetchAccompanyTypes, AccompanyType } from "../api";
 import { AnomalyItem } from "./AnomalyItem";
 
 interface TrajectoryTimelineProps {
@@ -99,6 +101,27 @@ export default function TrajectoryTimeline({
   routes,
   anomalies,
 }: TrajectoryTimelineProps) {
+  // 收集本时间线出现的全部陪同对象名，一次性识别类型（同事/客户/代理商）
+  const accompanyNamesKey = useMemo(() => {
+    const set = new Set<string>();
+    for (const v of visits) {
+      const a = v.visit_detail?.accompany;
+      if (a) {
+        a.split(/[、,，]/).map((s) => s.trim()).filter(Boolean).forEach((n) => set.add(n));
+      }
+    }
+    return Array.from(set).join(",");
+  }, [visits]);
+  const [accompanyTypes, setAccompanyTypes] = useState<Record<string, AccompanyType>>({});
+  useEffect(() => {
+    let cancelled = false;
+    const names = accompanyNamesKey ? accompanyNamesKey.split(",") : [];
+    fetchAccompanyTypes(names)
+      .then((t) => { if (!cancelled) setAccompanyTypes(t); })
+      .catch(() => { /* 类型识别失败不影响展示 */ });
+    return () => { cancelled = true; };
+  }, [accompanyNamesKey]);
+
   if (visits.length === 0) {
     return <div style={{ color: "#999", fontSize: 14 }}>暂无轨迹数据</div>;
   }
@@ -254,6 +277,52 @@ export default function TrajectoryTimeline({
                   title={v.customer_name}
                 >
                   客户：{v.customer_name}
+                  {v.visit_detail?.accompany && (
+                    <Tag
+                      color="amber"
+                      type="light"
+                      size="small"
+                      style={{ marginLeft: 6 }}
+                    >
+                      陪
+                    </Tag>
+                  )}
+                </div>
+              )}
+
+              {/* 陪同拜访（2026-10-15 v3 表单）：客户名下方一行展示陪同人及类型 */}
+              {v.visit_detail?.accompany && (
+                <div
+                  style={{
+                    fontSize: 13,
+                    color: "#666",
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                  title={v.visit_detail.accompany}
+                >
+                  <span style={{ color: "#999" }}>陪同人：</span>
+                  {v.visit_detail.accompany
+                    .split(/[、,，]/)
+                    .map((s) => s.trim())
+                    .filter(Boolean)
+                    .map((name, idx, arr) => (
+                      <span key={`${name}-${idx}`}>
+                        {name}
+                        {accompanyTypes[name] && (
+                          <Tag
+                            color={accompanyTypes[name] === "同事" ? "blue" : accompanyTypes[name] === "代理商" ? "orange" : "green"}
+                            type="light"
+                            size="small"
+                            style={{ marginLeft: 2 }}
+                          >
+                            {accompanyTypes[name]}
+                          </Tag>
+                        )}
+                        {idx < arr.length - 1 ? "、" : ""}
+                      </span>
+                    ))}
                 </div>
               )}
 

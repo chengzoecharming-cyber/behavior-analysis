@@ -67,11 +67,16 @@ export interface OrgOverviewStat {
   totalAnomalies: number;
 }
 
+// 陪同拜访计数 SQL 片段：visit_detail.accompany 非空的打卡点数（与拜访次数同口径排除 exclude_from_visit_count）
+const ACCOMPANY_COUNT_SQL = `COUNT(*) FILTER (WHERE COALESCE(visit_detail->>'accompany', '') <> '')`;
+
 export interface OrgRankingItem {
   key: string; // 下钻用的节点路径或用户ID
   name: string;
   level: "department" | "sub_department" | "person";
   visitCount: number;
+  /** 陪同拜访次数（visit_detail.accompany 非空的打卡点数） */
+  accompanyCount: number;
   employeeCount: number;
   reportedKm: number;
   estimatedKm: number;
@@ -88,6 +93,7 @@ export interface OrgRankingItem {
 export interface OrgTrendItem {
   date: string;
   visitCount: number;
+  accompanyCount: number;
   reportedKm: number;
   estimatedKm: number;
   anomalyCount: number;
@@ -542,6 +548,7 @@ async function computeRanking(
       `SELECT
          SPLIT_PART(${normalizedPrimaryDeptSql()}, '-', 1) AS dept_name,
          COALESCE(SUM(customer_count), 0) AS visit_count,
+         ${ACCOMPANY_COUNT_SQL} AS accompany_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
        ${departmentAliasJoinSql()}
@@ -566,6 +573,7 @@ async function computeRanking(
         name: deptName,
         level: "department",
         visitCount: parseInt(row.visit_count, 10),
+        accompanyCount: parseInt(row.accompany_count, 10),
         employeeCount: parseInt(row.employee_count, 10),
         ...childStats,
         hasChildren: await nodeHasChildren(deptName, "department"),
@@ -581,6 +589,7 @@ async function computeRanking(
         name: SALES_DEPARTMENT_NAME,
         level: "department",
         visitCount: 0,
+        accompanyCount: 0,
         employeeCount: 0,
         ...salesStats,
         hasChildren: true, // 销售部固定可展开
@@ -608,6 +617,7 @@ async function computeRanking(
         `SELECT
            ${normalizedPrimaryDeptSql()} AS sub_dept_name,
            COALESCE(SUM(customer_count), 0) AS visit_count,
+           ${ACCOMPANY_COUNT_SQL} AS accompany_count,
            COUNT(DISTINCT user_id) AS employee_count
          FROM visits
          ${departmentAliasJoinSql()}
@@ -620,10 +630,11 @@ async function computeRanking(
         [startDate, endDate, userIds, nodeName]
       );
 
-      const dataMap = new Map<string, { visitCount: number; employeeCount: number }>();
+      const dataMap = new Map<string, { visitCount: number; accompanyCount: number; employeeCount: number }>();
       for (const row of result.rows) {
         dataMap.set(String(row.sub_dept_name), {
           visitCount: parseInt(row.visit_count, 10),
+          accompanyCount: parseInt(row.accompany_count, 10),
           employeeCount: parseInt(row.employee_count, 10),
         });
       }
@@ -638,6 +649,7 @@ async function computeRanking(
           name: fullName.replace(`${nodeName}-`, ""),
           level: "sub_department",
           visitCount: data?.visitCount ?? 0,
+          accompanyCount: data?.accompanyCount ?? 0,
           employeeCount: data?.employeeCount ?? 0,
           ...childStats,
           hasChildren: await nodeHasChildren(fullName, "sub_department"),
@@ -655,6 +667,7 @@ async function computeRanking(
       `SELECT
          ${normalizedPrimaryDeptSql()} AS sub_dept_name,
          COALESCE(SUM(customer_count), 0) AS visit_count,
+         ${ACCOMPANY_COUNT_SQL} AS accompany_count,
          COUNT(DISTINCT user_id) AS employee_count
        FROM visits
        ${departmentAliasJoinSql()}
@@ -677,6 +690,7 @@ async function computeRanking(
         name: subDeptName.replace(`${nodeName}-`, ""),
         level: "sub_department",
         visitCount: parseInt(row.visit_count, 10),
+        accompanyCount: parseInt(row.accompany_count, 10),
         employeeCount: parseInt(row.employee_count, 10),
         ...childStats,
         hasChildren: await nodeHasChildren(subDeptName, "sub_department"),
@@ -690,7 +704,8 @@ async function computeRanking(
     `SELECT
        user_id,
        MAX(user_name) AS user_name,
-       COALESCE(SUM(customer_count), 0) AS visit_count
+       COALESCE(SUM(customer_count), 0) AS visit_count,
+       ${ACCOMPANY_COUNT_SQL} AS accompany_count
      FROM visits
      WHERE business_date >= $1::date AND business_date <= $2::date
        AND user_id = ANY($3)
@@ -708,6 +723,7 @@ async function computeRanking(
       name: row.user_name || row.user_id,
       level: "person",
       visitCount: parseInt(row.visit_count, 10),
+      accompanyCount: parseInt(row.accompany_count, 10),
       employeeCount: 1,
       ...childStats,
       hasChildren: false,
@@ -800,7 +816,8 @@ async function computeTrend(
 ): Promise<OrgTrendItem[]> {
   const [visits, mileageResults, anomalies] = await Promise.all([
     pool.query(
-      `SELECT business_date, COALESCE(SUM(customer_count), 0) AS visit_count
+      `SELECT business_date, COALESCE(SUM(customer_count), 0) AS visit_count,
+              ${ACCOMPANY_COUNT_SQL} AS accompany_count
        FROM visits
        WHERE user_id = ANY($1)
          AND business_date >= $2::date
@@ -831,6 +848,7 @@ async function computeTrend(
       map.set(date, {
         date,
         visitCount: 0,
+        accompanyCount: 0,
         reportedKm: 0,
         estimatedKm: 0,
         anomalyCount: 0,
@@ -840,7 +858,9 @@ async function computeTrend(
   };
 
   for (const row of visits.rows) {
-    ensureDay(formatBeijingDate(row.business_date)).visitCount = parseInt(row.visit_count, 10);
+    const day = ensureDay(formatBeijingDate(row.business_date));
+    day.visitCount = parseInt(row.visit_count, 10);
+    day.accompanyCount = parseInt(row.accompany_count, 10);
   }
   for (const [date, vals] of byDate) {
     const day = ensureDay(date);

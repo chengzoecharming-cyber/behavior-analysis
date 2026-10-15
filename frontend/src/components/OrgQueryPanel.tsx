@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, useCallback, useRef } from "react";
-import { Row, Col, Table, Spin, Typography, Tag } from "@douyinfe/semi-ui";
+import { Row, Col, Table, Spin, Typography, Tag, Tooltip } from "@douyinfe/semi-ui";
+import { IconInfoCircle } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
 import { fetchOrgOverview, OrgOverviewResponse, OrgRankingItem } from "../api";
 import HeatMapContainer from "./HeatMapContainer";
@@ -91,6 +92,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     return data.trend.map((d) => ({
       date: d.date,
       visit_count: d.visitCount,
+      accompany_count: d.accompanyCount,
       reported_distance_km: d.reportedKm,
       estimated_distance_km: Math.round(d.estimatedKm),
       anomaly_count: d.anomalyCount,
@@ -282,11 +284,22 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         ),
       },
       {
-        title: "拜访次数",
+        title: (
+          <span style={{ display: "inline-flex", alignItems: "center", gap: 4 }}>
+            拜访次数
+            <Tooltip content="括号内为陪同拜访次数（填写了陪同对象的打卡点数）">
+              <IconInfoCircle style={{ color: "#999", cursor: "default" }} />
+            </Tooltip>
+          </span>
+        ),
         dataIndex: "visitCount",
-        width: 110,
+        width: 130,
         sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
           (a?.visitCount ?? 0) - (b?.visitCount ?? 0),
+        render: (_: any, record: OrgRankingItem) =>
+          record.accompanyCount > 0
+            ? `${record.visitCount}（${record.accompanyCount}）`
+            : `${record.visitCount}`,
       },
       {
         title: "填报/估算里程",
@@ -324,6 +337,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
       {
         title: "风险标签",
         dataIndex: "riskTags",
+        width: 140,
         className: "risk-tag-cell",
         render: (_: any, record: OrgRankingItem) => {
           const allTags = [

@@ -7,6 +7,7 @@ import dayjs from "dayjs";
 interface DailyPoint {
   date: string;
   visit_count: number;
+  accompany_count: number;
   reported_distance_km: number;
   estimated_distance_km: number;
   anomaly_count: number;
@@ -33,10 +34,17 @@ const MIN_ZOOM_SPAN = 0.1;
 
 const SERIES_META = [
   {
-    key: "visit_count" as const,
-    dataId: "visit_data" as const,
-    name: "拜访数",
+    key: "visit_normal" as const,
+    dataId: "visit_normal_data" as const,
+    name: "总拜访数",
     color: "#1890ff",
+    type: "bar" as const,
+  },
+  {
+    key: "accompany_count" as const,
+    dataId: "accompany_data" as const,
+    name: "陪同拜访",
+    color: "#fa8c16",
     type: "bar" as const,
   },
   {
@@ -76,6 +84,9 @@ export default function OverviewChart({
     const baseValues = data.map((d) => ({
       date: d.date,
       visit_count: d.visit_count,
+      accompany_count: d.accompany_count ?? 0,
+      // 拜访数堆叠 = 普通拜访（总数-陪同）+ 陪同拜访
+      visit_normal: Math.max(0, d.visit_count - (d.accompany_count ?? 0)),
       reported_distance_km: d.reported_distance_km,
       estimated_distance_km: d.estimated_distance_km,
       has_mileage_reading_invalid: d.has_mileage_reading_invalid,
@@ -87,7 +98,7 @@ export default function OverviewChart({
         return {
           id: cfg.dataId,
           values: visible
-            ? baseValues.map((d) => ({ date: d.date, value: d[cfg.key] }))
+            ? baseValues.map((d) => ({ date: d.date, value: d[cfg.key], total: d.visit_count }))
             : [],
         };
       }
@@ -99,13 +110,42 @@ export default function OverviewChart({
       type: "common",
       data: datasets,
       series: [
+        // 包含关系堆叠：陪同拜访在底部（橙色），其上补普通拜访，柱总高 = 总拜访数
         {
           type: "bar",
-          id: "visit_count",
-          dataId: "visit_data",
+          id: "accompany_count",
+          dataId: "accompany_data",
           xField: "date",
           yField: "value",
-          name: "拜访数",
+          name: "陪同拜访",
+          stack: true,
+          bar: {
+            style: {
+              fill: "#fa8c16",
+            },
+          },
+          tooltip: {
+            dimension: {
+              title: {
+                value: (datum: any) => datum?.date ?? "",
+              },
+              content: [
+                {
+                  key: "陪同拜访",
+                  value: (datum: any) => String(datum?.value ?? ""),
+                },
+              ],
+            },
+          },
+        },
+        {
+          type: "bar",
+          id: "visit_normal",
+          dataId: "visit_normal_data",
+          xField: "date",
+          yField: "value",
+          name: "总拜访数",
+          stack: true,
           bar: {
             style: {
               fill: "#1890ff",
@@ -118,8 +158,8 @@ export default function OverviewChart({
               },
               content: [
                 {
-                  key: "拜访数",
-                  value: (datum: any) => String(datum?.value ?? ""),
+                  key: "总拜访数",
+                  value: (datum: any) => String(datum?.total ?? ""),
                 },
               ],
             },
@@ -217,7 +257,7 @@ export default function OverviewChart({
         },
         {
           orient: "left",
-          seriesId: ["visit_count"],
+          seriesId: ["visit_normal", "accompany_count"],
         },
         {
           orient: "right",

@@ -2,6 +2,7 @@
 
 > 本文件面向 AI 编程助手。如果你刚拿到这个项目，请先阅读本文，再修改代码。
 > 项目人文档见 `README.md`，部署细节见 `DEPLOY.md`，开发计划见 `PLAN.md`。
+> 若根目录存在 `我的画像.md`（本地文件，不入库）：每个 session 开始时务必阅读，它描述了项目负责人的协作偏好、行为模式与成长目标，按其要求协作。
 
 ## 项目概述
 
@@ -272,7 +273,8 @@ map/
 
 - v1 旧表单「用车里程登记&客户签到」：`DINGTALK_PROCESS_CODE`；v2 新表单「用车里程登记&拜访客户签到」：`DINGTALK_PROCESS_CODE_V2`（为空则只同步 v1）。同步时两个 code 分别 listids 轮询，`raw_approvals.process_code` 落库作为版本依据。
 - 解析分发在 `parseApprovalInstance(instance, processCode)`：v2 走 `parseApprovalInstanceV2`（dingtalk.ts），v1 逻辑一行未改。两套映射输出相同的 `ParsedVisit` 字段、落同一张 `visits` 表，下游（控制台/报告/风险）无感知。
-- v2 关键差异：客户名「拜访客户N」在打卡点**之后**（向后找，v1 是向前找）；拜访客户2~5 嵌在 TableField（取 `rowValue` 内 OpenDataField 的 `value`，多行=多客户）；未填写字段是 schema 回显 JSON 而非 null，必须显式判空；无逐段里程，填报总里程 = 终点读数 − 出发前读数（= 表单「今日出行总里程」）。`visit_note` 优先取表单 DDAIField「AI总结」按「总结内容N」拆块的内容（2026-08-06 表单新增），无值时兜底拼接 `沟通内容详情N`/`存在问题点N`；原始字段另存 `visits.visit_detail` JSONB（comm/issues/ai）供弹窗按 v2 字段名展示。
+- v2 关键差异：客户名「拜访客户N」在打卡点**之后**（向后找，v1 是向前找）；拜访客户2~5 嵌在 TableField（取 `rowValue` 内 OpenDataField 的 `value`，多行=多客户）；未填写字段是 schema 回显 JSON 而非 null，必须显式判空；无逐段里程，填报总里程 = 终点读数 − 出发前读数（= 表单「今日出行总里程」）。`visit_note` 优先取表单 DDAIField「AI总结」按「总结内容N」拆块的内容（2026-08-06 表单新增），无值时兜底拼接 `沟通内容详情N`/`存在问题点N`；原始字段另存 `visits.visit_detail` JSONB（comm/issues/ai，2026-10-15 起增加 accompany/accompany_photo）供弹窗按 v2 字段名展示。
+- **v3 改版（2026-10-15 生效，同 process_code 原地升级，新旧不并行）**：每个打卡点新增「是否为陪同拜访N」「陪同对象信息N」（TableField，内含 OpenDataField「陪同对象名称N」）「拍摄与陪同对象的合照N」。陪同表排在拜访客户之前，`findNearbyCustomerComponent` 对 TableField 做内容 peek（含「陪同对象名称」则跳过），防止陪同人被误当客户名；新旧快照（旧客户表名叫「表格」）均兼容。陪同对象/合照存 `visit_detail.accompany` / `visit_detail.accompany_photo`（仅陪同拜访时写入），日报渲染「陪同：X」行，控制台弹窗展示「陪同对象」，LLM 总结输入含陪同对象。
 - **AI 总结延迟**：AI总结在审批单结束后才生成，而写入是「存在即跳过」——v2 重复行开放 `visit_note`/`visit_detail` 刷新通道（processParsedVisits，`IS DISTINCT FROM` 才写），其他字段不刷新。
 - **里程读数异常（mileage_reading_invalid）v2 口径**（anomalyDetection.ts）：v2 单只判定起点（出发读数缺失）与终点（终点读数缺失/终点<出发/差值超限），途经点无读数不参与判定；RUNNING 中的 v2 单不判终点缺失（审批完成后才判）。v1 单维持逐点判定不变。「累计里程不一致」规则对 v2 天然不触发（v2 无逐段累计值），无需改动。
 - **填报里程与里程偏差 v2 整单口径**（mileageAnalysis.ts）：v2 单只有出发前/终点两个里程读数，中间签到点无读数，逐段口径算不出。填报里程聚合（`computeMileageByApprovalForUsers`）与里程偏差（`computeMileageSegments`）对 v2 统一走整单：填报 = 终点读数 − 出发前读数（读数缺失兜底取单内最大填报里程），高德 = 单内各段 routes 之和，任何一段路线缺失则整单跳过。v1/Excel 维持逐段口径不变。
@@ -347,6 +349,9 @@ LLM_MODEL=deepseek-chat
 # 姓名按 users.user_name 解析，兜底 dingtalk_users，纯数字直接当 userid
 # 为空则每周一 9:20 的 CRM 摘要推送完全不执行
 CRM_DIGEST_RECIPIENTS=
+
+# 日报推送开关：置 false 时日报文档照常生成到钉钉知识库，仅跳过本人/区总汇总推送（灰度验证用），默认推送
+REPORT_PUSH_ENABLED=true
 ```
 
 ### 前端 `frontend/.env.example`
