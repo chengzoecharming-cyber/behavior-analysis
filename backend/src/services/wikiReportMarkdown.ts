@@ -181,11 +181,18 @@ function renderVisitItem(
     lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
   }
   // 总结行（沟通内容）同样另起一行；后面跟图片时图片也另起一行
-  // 照片（仅日报）：只放第一张，用小尺寸 img 防止钉钉文档里撑满全宽
+  // 照片（仅日报）：现场交流照片取第一张；陪同拜访时陪同合照也取第一张，各一行小图
   const photoUrl = isDaily ? firstPhotoUrl(item.visit) : "";
+  const accompanyPhotoUrl =
+    isDaily && accompany && Array.isArray(item.visit.visit_detail?.accompany_photo)
+      ? item.visit.visit_detail!.accompany_photo![0] || ""
+      : "";
   lines.push(`   ${summary}<br/>`);
   if (photoUrl) {
-    lines.push(`   <img src="${photoUrl}" width="96" />`);
+    lines.push(`   <img src="${photoUrl}" width="96" /><br/>`);
+  }
+  if (accompanyPhotoUrl) {
+    lines.push(`   <img src="${accompanyPhotoUrl}" width="96" />`);
   }
   return lines.join("\n");
 }
