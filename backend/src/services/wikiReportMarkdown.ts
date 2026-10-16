@@ -192,27 +192,8 @@ function renderVisitItem(
       ? item.visit.visit_detail!.accompany_photo![0] || ""
       : "";
 
-  // 陪同拜访且有照片：两列表格（左详情右照片），手机上可能自动堆叠为上下，属预期
-  if (accompany && (photoUrl || accompanyPhotoUrl)) {
-    const detailCell = [
-      addressLine,
-      accompany ? `<font color="#999">陪同：${accompany}</font>` : "",
-      summary,
-    ].filter(Boolean).join("<br/>");
-    const photoCell = [photoUrl, accompanyPhotoUrl]
-      .filter(Boolean)
-      .map((u) => `![](${thumbUrl(u)})`)
-      .join("<br/>");
-    return [
-      titleLine,
-      "",
-      `| 拜访详情 | 照片 |`,
-      `|---|---|`,
-      `| ${detailCell} | ${photoCell} |`,
-    ].join("\n");
-  }
-
-  // 非陪同 / 无照片：逐行文本 + 缩略图（钉钉会把列表项内连续行合并成一段，<br/> 保证逐行显示）
+  // 陪同拜访且有照片：两列布局在钉钉 markdown 导入下会爆表格（单元格不支持 <br/>/图片），
+  // 实测不可用（2026-10-16 排版测试），回退为纯文本逐行 + 缩略图
   const lines = [titleLine];
   if (addressLine) lines.push(`   ${addressLine}<br/>`);
   if (accompany) lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
