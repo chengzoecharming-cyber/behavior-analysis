@@ -1108,8 +1108,13 @@ async function generateReportsForPeriod(
     results.push(companyResult);
   }
 
+  // 推送去重：每人只收层级最高的一条（公司接收人 > 部门负责人 > 区总 > 个人日报）。
+  // 各层 leader 名单在循环前算好，个人推送时跳过已是上级接收人的成员
+  const companyLeaderIds = notifyPush ? await getCompanyLeaderIds() : [];
+
   // 部门 / 子部门 / 个人维度
   for (const dept of tree) {
+    const deptLeaderIds = notifyPush ? await getDeptLeaderIds(dept) : [];
     const deptUserIds = getUserIdsForScope("department", dept, tree);
     const deptStats = { generated: 0, failed: 0, totalVisits: 0 };
     let deptResult: ReportGenerationResult | null = null;
@@ -1131,6 +1136,7 @@ async function generateReportsForPeriod(
     }
 
     for (const sub of dept.children) {
+      const subLeaderIds = notifyPush ? await getSubDeptLeaderIds(dept, sub) : [];
       const subUserIds = getUserIdsForScope("sub_department", sub, tree);
       let subResult: ReportGenerationResult | null = null;
       if (await hasRecentData(subUserIds)) {
@@ -1182,8 +1188,13 @@ async function generateReportsForPeriod(
           subStats.generated++;
           if (result.status === "success") {
             subStats.totalVisits += result.totals?.visit_count ?? 0;
-            // 个人日报推送工作通知：仅定时任务触发，manual/catchup 不推（避免补跑刷消息）
-            if (notifyPush) {
+            // 个人推送：本人各收一条；已是上级接收人（公司/部门/区总）的成员跳过，只收汇总
+            if (
+              notifyPush &&
+              !companyLeaderIds.includes(userId) &&
+              !deptLeaderIds.includes(userId) &&
+              !subLeaderIds.includes(userId)
+            ) {
               await sendPersonDailyReportNotification({
                 userId,
                 userName,
@@ -1203,7 +1214,7 @@ async function generateReportsForPeriod(
       deptStats.totalVisits += subStats.totalVisits;
       if (notifyPush && subStats.generated > 0) {
         await sendLeaderDailySummary({
-          leaderIds: await getSubDeptLeaderIds(dept, sub),
+          leaderIds: subLeaderIds,
           groupName: sub.shortName,
           date: periodLabel,
           typeLabel: reportTypeLabel,
@@ -1242,8 +1253,12 @@ async function generateReportsForPeriod(
         deptStats.generated++;
         if (result.status === "success") {
           deptStats.totalVisits += result.totals?.visit_count ?? 0;
-          // 个人日报推送工作通知：仅定时任务触发，manual/catchup 不推（避免补跑刷消息）
-          if (notifyPush) {
+          // 个人推送：已是公司/部门接收人的直属成员跳过，只收汇总
+          if (
+            notifyPush &&
+            !companyLeaderIds.includes(userId) &&
+            !deptLeaderIds.includes(userId)
+          ) {
             await sendPersonDailyReportNotification({
               userId,
               userName,
@@ -1264,7 +1279,7 @@ async function generateReportsForPeriod(
     // 部门负责人：一条部门级汇总（生成份数/成功/失败/总拜访 + 部门日报入口链接）
     if (notifyPush && deptStats.generated > 0) {
       await sendLeaderDailySummary({
-        leaderIds: await getDeptLeaderIds(dept),
+        leaderIds: deptLeaderIds,
         groupName: dept.shortName,
         date: periodLabel,
         typeLabel: reportTypeLabel,
@@ -1280,7 +1295,7 @@ async function generateReportsForPeriod(
   // 公司级接收人（REPORT_DEPT_LEADERS 配置「公司:姓名」）：全公司汇总 + 公司日报入口链接
   if (notifyPush && companyStats.generated > 0) {
     await sendLeaderDailySummary({
-      leaderIds: await getCompanyLeaderIds(),
+      leaderIds: companyLeaderIds,
       groupName: "公司",
       date: periodLabel,
       typeLabel: reportTypeLabel,
