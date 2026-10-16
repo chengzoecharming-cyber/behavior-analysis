@@ -192,15 +192,16 @@ function renderVisitItem(
       ? item.visit.visit_detail!.accompany_photo![0] || ""
       : "";
 
-  // 陪同拜访且有照片：两列布局在钉钉 markdown 导入下会爆表格（单元格不支持 <br/>/图片），
-  // 实测不可用（2026-10-16 排版测试），回退为纯文本逐行 + 缩略图
-  const lines = [titleLine];
-  if (addressLine) lines.push(`   ${addressLine}<br/>`);
-  if (accompany) lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
-  lines.push(`   ${summary}<br/>`);
-  if (photoUrl) lines.push(`   ![](${thumbUrl(photoUrl)})<br/>`);
-  if (accompanyPhotoUrl) lines.push(`   ![](${thumbUrl(accompanyPhotoUrl)})`);
-  return lines.join("\n");
+  // 纯文本逐行 + 缩略图（两列表格在钉钉 markdown 导入下会爆，2026-10-16 实测不可用）。
+  // 钉钉会把列表项内连续行合并成一段，所以整个条目合成一行 markdown、用 <br/> 分隔，
+  // 保证：标题行 → 地址 → 陪同 → 总结 → 图片 逐行紧凑显示且图片不外脱
+  const parts: string[] = [];
+  if (addressLine) parts.push(addressLine);
+  if (accompany) parts.push(`<font color="#999">陪同：${accompany}</font>`);
+  parts.push(summary);
+  if (photoUrl) parts.push(`![](${thumbUrl(photoUrl)})`);
+  if (accompanyPhotoUrl) parts.push(`![](${thumbUrl(accompanyPhotoUrl)})`);
+  return titleLine + "<br/>" + parts.join("<br/>");
 }
 
 function renderSummary(lines: string[], visitCount: number, estimatedKm: number): void {
