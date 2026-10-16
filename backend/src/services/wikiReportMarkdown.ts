@@ -199,8 +199,9 @@ function renderVisitItem(
   if (addressLine) parts.push(addressLine);
   if (accompany) parts.push(`<font color="#999">陪同：${accompany}</font>`);
   parts.push(summary);
-  if (photoUrl) parts.push(`![](${thumbUrl(photoUrl)})`);
-  if (accompanyPhotoUrl) parts.push(`![](${thumbUrl(accompanyPhotoUrl)})`);
+  // 图片（现场照+陪同合照）同行空格分隔并排显示（钉钉同段 <br/> 分行的第二张图不缩放，2026-10-16 实测）
+  const photoParts = [photoUrl, accompanyPhotoUrl].filter(Boolean).map((u) => `![](${thumbUrl(u)})`);
+  if (photoParts.length > 0) parts.push(photoParts.join(" "));
   return titleLine + "<br/>" + parts.join("<br/>");
 }
 
