@@ -792,58 +792,63 @@ async function sendLeaderDailySummary(params: {
   leaderIds: string[];
   groupName: string;
   date: string;
+  typeLabel?: string; // 日报/周报/月报
   stats: { generated: number; failed: number; totalVisits: number };
   reportUrl?: string;
 }): Promise<void> {
   if (!isReportPushConfigured()) return;
   const { leaderIds, groupName, date, stats, reportUrl } = params;
+  const typeLabel = params.typeLabel || "日报";
   if (leaderIds.length === 0) {
     console.log(`[Report Gen] ${groupName} 无区总/负责人，跳过汇总推送`);
     return;
   }
   try {
     const lines = [
-      `### ${groupName} ${date} 外勤日报`,
+      `### ${groupName} ${date} 外勤${typeLabel}`,
       "",
-      `- 生成日报 ${stats.generated} 份：成功 ${stats.generated - stats.failed}，失败 ${stats.failed}`,
+      `- 生成${typeLabel} ${stats.generated} 份：成功 ${stats.generated - stats.failed}，失败 ${stats.failed}`,
       `- 总拜访：${stats.totalVisits} 次`,
     ];
     if (reportUrl) {
-      lines.push("", `[查看${groupName}日报](${reportUrl})`);
+      lines.push("", `[查看${groupName}${typeLabel}](${reportUrl})`);
     }
     await sendReportMessageToUsers(
       leaderIds,
-      `外勤日报-${groupName}-${date}`,
+      `外勤${typeLabel}-${groupName}-${date}`,
       lines.join("\n")
     );
     console.log(
-      `[Report Gen] 已推送日报汇总: ${groupName} → ${leaderIds.length} 人`
+      `[Report Gen] 已推送${typeLabel}汇总: ${groupName} → ${leaderIds.length} 人`
     );
   } catch (err: any) {
     console.warn(
-      `[Report Gen] 日报汇总发送失败（不影响生成）: ${groupName}:`,
+      `[Report Gen] ${typeLabel}汇总发送失败（不影响生成）: ${groupName}:`,
       err?.message || err
     );
   }
 }
 
 /**
- * 个人日报生成后推送给本人（拜访数/里程/异常数 + 自己的日报链接）。
- * 0 拜访也推送；优先机器人单聊，失败回退工作通知；发送失败不影响生成结果。
+/**
+ * 个人报告生成后推送给本人（拜访数/里程/异常数/陪同数 + 报告链接）。
+ * 日报/周报/月报通用；0 拜访也推送；优先机器人单聊，失败回退工作通知；发送失败不影响生成结果。
  */
 async function sendPersonDailyReportNotification(params: {
   userId: string;
   userName: string;
   date: string;
+  typeLabel?: string; // 日报/周报/月报
   url?: string;
   totals?: ReportGenerationResult["totals"];
 }): Promise<void> {
   if (!isReportPushConfigured()) return;
   const { userId, userName, date, url, totals } = params;
+  const typeLabel = params.typeLabel || "日报";
   try {
-    const title = `外勤日报-${userName}-${date}`;
+    const title = `外勤${typeLabel}-${userName}-${date}`;
     const lines = [
-      `### ${userName} ${date} 外勤日报`,
+      `### ${userName} ${date} 外勤${typeLabel}`,
       "",
       `- 拜访次数：${totals?.visit_count ?? 0} 次`,
       `- 总里程：${Math.round(totals?.estimated_distance_km ?? 0)} km`,
@@ -853,13 +858,13 @@ async function sendPersonDailyReportNotification(params: {
       lines.push(`- 陪同拜访：${totals!.accompany_count} 次`);
     }
     if (url) {
-      lines.push("", `[查看完整日报](${url})`);
+      lines.push("", `[查看完整${typeLabel}](${url})`);
     }
     await sendReportMessageToUsers([userId], title, lines.join("\n"));
-    console.log(`[Report Gen] 已推送日报通知: ${userName}（本人）`);
+    console.log(`[Report Gen] 已推送${typeLabel}通知: ${userName}（本人）`);
   } catch (err: any) {
     console.warn(
-      `[Report Gen] 日报通知发送失败（不影响生成）: ${userName}:`,
+      `[Report Gen] ${typeLabel}通知发送失败（不影响生成）: ${userName}:`,
       err?.message || err
     );
   }
@@ -1063,16 +1068,15 @@ async function generateReportsForPeriod(
   const runId = randomUUID();
   const results: ReportGenerationResult[] = [];
   let companyResult: ReportGenerationResult | null = null;
-  // 日报推送统计（仅 daily + scheduler 时发送）：按子部门/部门/公司三级聚合
-  // 日报推送：仅 manual 不推。scheduler 正常推；catchup 只在补跑「昨天」的日报时推——
-  // 典型场景是 9:00 前部署重启，启动补跑抢先生成了昨天的日报，若 catchup 一律不推，
-  // 9:00 定时任务又会因「已生成」跳过，导致整天无人收到推送（8/19 案例）。
-  // REPORT_PUSH_ENABLED=false 时仅生成钉钉文档，跳过本人推送与区总/负责人汇总推送
-  // （用于灰度验证报告内容后再放开推送）
-  const notifyDaily =
-    reportType === "daily" &&
+  // 报告推送（日/周/月报共用）：manual 不推；scheduler 推；
+  // catchup 仅日报补跑「昨天」时推（8/19 案例），周报/月报 catchup 不推避免刷消息。
+  // REPORT_PUSH_ENABLED=false 时仅生成钉钉文档，跳过本人推送与区总/负责人汇总推送（灰度验证用）
+  const reportTypeLabel =
+    reportType === "daily" ? "日报" : reportType === "weekly" ? "周报" : "月报";
+  const periodLabel = start === end ? start : `${start} ~ ${end}`;
+  const notifyPush =
     (triggerSource === "scheduler" ||
-      (triggerSource === "catchup" && start === getYesterdayBeijing())) &&
+      (reportType === "daily" && triggerSource === "catchup" && start === getYesterdayBeijing())) &&
     process.env.REPORT_PUSH_ENABLED !== "false";
   const companyStats = { generated: 0, failed: 0, totalVisits: 0 };
 
@@ -1179,11 +1183,12 @@ async function generateReportsForPeriod(
           if (result.status === "success") {
             subStats.totalVisits += result.totals?.visit_count ?? 0;
             // 个人日报推送工作通知：仅定时任务触发，manual/catchup 不推（避免补跑刷消息）
-            if (notifyDaily) {
+            if (notifyPush) {
               await sendPersonDailyReportNotification({
                 userId,
                 userName,
-                date: start,
+                date: periodLabel,
+                typeLabel: reportTypeLabel,
                 url: result.url,
                 totals: result.totals,
               });
@@ -1196,11 +1201,12 @@ async function generateReportsForPeriod(
       deptStats.generated += subStats.generated;
       deptStats.failed += subStats.failed;
       deptStats.totalVisits += subStats.totalVisits;
-      if (notifyDaily && subStats.generated > 0) {
+      if (notifyPush && subStats.generated > 0) {
         await sendLeaderDailySummary({
           leaderIds: await getSubDeptLeaderIds(dept, sub),
           groupName: sub.shortName,
-          date: start,
+          date: periodLabel,
+          typeLabel: reportTypeLabel,
           stats: subStats,
           reportUrl:
             subResult && subResult.status === "success"
@@ -1237,11 +1243,12 @@ async function generateReportsForPeriod(
         if (result.status === "success") {
           deptStats.totalVisits += result.totals?.visit_count ?? 0;
           // 个人日报推送工作通知：仅定时任务触发，manual/catchup 不推（避免补跑刷消息）
-          if (notifyDaily) {
+          if (notifyPush) {
             await sendPersonDailyReportNotification({
               userId,
               userName,
-              date: start,
+              date: periodLabel,
+              typeLabel: reportTypeLabel,
               url: result.url,
               totals: result.totals,
             });
@@ -1255,11 +1262,12 @@ async function generateReportsForPeriod(
     companyStats.failed += deptStats.failed;
     companyStats.totalVisits += deptStats.totalVisits;
     // 部门负责人：一条部门级汇总（生成份数/成功/失败/总拜访 + 部门日报入口链接）
-    if (notifyDaily && deptStats.generated > 0) {
+    if (notifyPush && deptStats.generated > 0) {
       await sendLeaderDailySummary({
         leaderIds: await getDeptLeaderIds(dept),
         groupName: dept.shortName,
-        date: start,
+        date: periodLabel,
+        typeLabel: reportTypeLabel,
         stats: deptStats,
         reportUrl:
           deptResult && deptResult.status === "success"
@@ -1270,11 +1278,12 @@ async function generateReportsForPeriod(
   }
 
   // 公司级接收人（REPORT_DEPT_LEADERS 配置「公司:姓名」）：全公司汇总 + 公司日报入口链接
-  if (notifyDaily && companyStats.generated > 0) {
+  if (notifyPush && companyStats.generated > 0) {
     await sendLeaderDailySummary({
       leaderIds: await getCompanyLeaderIds(),
       groupName: "公司",
-      date: start,
+      date: periodLabel,
+      typeLabel: reportTypeLabel,
       stats: companyStats,
       reportUrl:
         companyResult && companyResult.status === "success"
