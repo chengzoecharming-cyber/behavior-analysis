@@ -39,7 +39,8 @@ export async function summarizeVisit(
   accompany?: string
 ): Promise<string | null> {
   const parts: string[] = [];
-  if (accompany && accompany.trim()) parts.push(`陪同对象：${accompany.trim()}`);
+  const hasAccompany = !!(accompany && accompany.trim());
+  if (hasAccompany) parts.push(`陪同对象：${accompany!.trim()}`);
   if (comm && comm.trim()) parts.push(`沟通内容详情：${comm.trim()}`);
   if (issues && issues.trim()) parts.push(`存在问题点：${issues.trim()}`);
   if (parts.length === 0) return null;
@@ -52,6 +53,15 @@ export async function summarizeVisit(
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), LLM_TIMEOUT_MS);
+  // 有无陪同对象用两套 prompt：有则要求以陪同信息开头整合成一段；无则绝不提及陪同，
+  // 避免模型输出「陪同信息缺失/未提及」这类评论或把沟通对象脑补成陪同人
+  const systemPrompt = hasAccompany
+    ? "你是销售外勤管理助手。把销售人员拜访客户时填写的「陪同对象」「沟通内容详情」和「存在问题点」（如有）压缩成一段极简的中文摘要。" +
+      "硬性要求：1) 只概括、不创作，禁止补充、推测或扩写任何原文没有的信息（如建议、评价、背景）；2) 输出长度必须明显短于原文，一般不超过原文一半，通常 1~2 句；3) 保留关键事实：拜访对象、事项、结论或待办；4) 只输出摘要正文，不要标题、列表、编号、分点或表情；" +
+      "5) 摘要必须以陪同信息开头，把陪同人与沟通内容整合成一段直接说明（如「陪同XX，拜访了……」），禁止把陪同与沟通内容分开描述。"
+    : "你是销售外勤管理助手。把销售人员拜访客户时填写的「沟通内容详情」和「存在问题点」（如有）压缩成一段极简的中文摘要。" +
+      "硬性要求：1) 只概括、不创作，禁止补充、推测或扩写任何原文没有的信息（如建议、评价、背景）；2) 输出长度必须明显短于原文，一般不超过原文一半，通常 1~2 句；3) 保留关键事实：拜访对象、事项、结论或待办；4) 只输出摘要正文，不要标题、列表、编号、分点或表情；" +
+      "5) 本次拜访与陪同无关：禁止出现「陪同」「陪伴」字样，也禁止输出「陪同信息缺失」「未提及」之类的评论。";
   try {
     const res = await fetch(`${LLM_BASE_URL}/chat/completions`, {
       method: "POST",
@@ -66,10 +76,7 @@ export async function summarizeVisit(
         messages: [
           {
             role: "system",
-            content:
-              "你是销售外勤管理助手。把销售人员拜访客户时填写的「陪同对象」（如有）、「沟通内容详情」和「存在问题点」压缩成一段极简的中文摘要。" +
-              "硬性要求：1) 只概括、不创作，禁止补充、推测或扩写任何原文没有的信息（如建议、评价、背景）；2) 输出长度必须明显短于原文，一般不超过原文一半，通常 1~2 句；3) 保留关键事实：拜访对象、事项、结论或待办；4) 只输出摘要正文，不要标题、列表、编号或表情；" +
-              "5) 若有「陪同对象」，摘要必须以陪同信息开头（如「陪同XX，拜访了……」），陪同对象放在最前面，不要单独分段。",
+            content: systemPrompt,
           },
           { role: "user", content: parts.join("\n") },
         ],
@@ -84,6 +91,11 @@ export async function summarizeVisit(
     const text = (data?.choices?.[0]?.message?.content || "").trim();
     // 模型对过短/无意义输入会返回拒绝语，不能当摘要落库
     if (!text || /信息不足|无法生成|内容为空|请提供/.test(text)) return null;
+    // 非陪同拜访的摘要禁止出现陪同字眼（模型违规时丢弃，保留兜底文本）
+    if (!hasAccompany && /陪/.test(text)) {
+      console.warn(`[llmSummary] 非陪同拜访摘要出现陪同字眼，丢弃: ${text.slice(0, 50)}`);
+      return null;
+    }
     return text;
   } catch (err: any) {
     console.warn(`[llmSummary] 总结生成失败: ${err?.message || err}`);

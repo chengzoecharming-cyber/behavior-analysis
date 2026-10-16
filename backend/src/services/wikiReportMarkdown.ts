@@ -166,16 +166,20 @@ function renderVisitItem(
   // 出行方式不一致的日报：非开车审批单的记录客户名后加紫色「公」tag
   const tripTag = isDaily && tripPerItem ? tripTagPublicOnly(item.visit) : "";
 
-  const lines = [`${index}. **${item.customerName}**${tripTag}${accompanyTag}${marker}`];
-  // 次要信息行（仅日报）：北京时间 HH:mm + 地址（灰色，先时间后地址）
+  // 次要信息（仅日报）：打卡时间跟在客户名同行（灰色），地址单独一行（灰色），避免一行过长
   // 钉钉文档会把列表项内连续行合并成一段，每个子行末尾都加 <br/> 保证逐行显示
+  let timeSuffix = "";
+  let addressLine = "";
   if (isDaily) {
     const time = formatBeijingTimeHM(item.visit.timestamp as any);
+    if (time) timeSuffix = ` <font color="#999">${time}</font>`;
     const address = item.visit.address?.trim() || "";
-    const info = [time, address].filter(Boolean).join(" · ");
-    if (info) {
-      lines.push(`   <font color="#999">${info}</font><br/>`);
-    }
+    if (address) addressLine = `   <font color="#999">${address}</font><br/>`;
+  }
+
+  const lines = [`${index}. **${item.customerName}**${tripTag}${accompanyTag}${marker}${timeSuffix}`];
+  if (addressLine) {
+    lines.push(addressLine);
   }
   if (accompany) {
     lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
