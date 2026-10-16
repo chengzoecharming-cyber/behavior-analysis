@@ -1492,23 +1492,23 @@ async function parseApprovalInstanceV2(instance: any): Promise<ParsedVisit[]> {
       : undefined;
     const accompanyPhotos = accompanyPhotosRaw ? parsePhotoUrls(accompanyPhotosRaw) : [];
 
-    // visit_note：优先取 AI 总结的对应块；兜底拼接原始字段
-    // （2026-08-06 表单改版后字段名带编号「沟通内容详情1」，正则用 \d* 兼容新旧快照）
-    // visit_detail：原始字段结构化存储，供弹窗按 v2 表单字段名原样展示
+    // visit_note：优先取 AI 总结的对应块；兜底为自然语句拼接（不带「沟通内容：」等标签前缀，
+    // 报告里直接当摘要展示）：陪同在前，如「陪同陈列，聊周年庆活动」
     const commDetail = findNearby(stop.index, /^沟通内容详情\d*$/);
     const issues = findNearby(stop.index, /^存在问题点\d*$/);
     const aiNote = customerComponent ? aiSummaryByBlock.get(customerBlockNo) || "" : "";
     let visitNoteText = aiNote;
     if (!visitNoteText) {
       const contact = findNearby(stop.index, /^交流对象\d*$/); // 旧快照字段，已从新表单删除
-      const noteParts: string[] = [];
-      if (contact) noteParts.push(`交流对象：${contact}`);
+      const parts: string[] = [];
       if (accompanied && accompanyNames.length > 0) {
-        noteParts.push(`陪同拜访：${accompanyNames.join("、")}`);
+        parts.push(`陪同${accompanyNames.join("、")}`);
       }
-      if (commDetail) noteParts.push(`沟通内容：${commDetail}`);
-      if (issues) noteParts.push(`存在问题：${issues}`);
-      visitNoteText = noteParts.join("；");
+      if (contact) parts.push(contact);
+      if (commDetail) parts.push(commDetail);
+      let text = parts.join("，");
+      if (issues) text += (text ? "；" : "") + issues;
+      visitNoteText = text;
     }
     const visitDetail =
       commDetail || issues || aiNote || accompanied
