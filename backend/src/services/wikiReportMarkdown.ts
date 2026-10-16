@@ -148,6 +148,12 @@ function resolveTripTagMode(items: VisitItem[]): { headingTag: string; perItem: 
   return { headingTag: ` <font color="${c.color}">${c.label}</font>`, perItem: false };
 }
 
+/** 钉钉图片 CDN（OSS）缩略图：原图撑满文档宽，追加 resize 参数生成小图文件 */
+function thumbUrl(url: string, width = 150): string {
+  if (!url || !url.includes("dingtalk.com")) return url;
+  return `${url}?x-oss-process=image/resize,w_${width}`;
+}
+
 function renderVisitItem(
   index: number,
   item: VisitItem,
@@ -174,30 +180,45 @@ function renderVisitItem(
     const time = formatBeijingTimeHM(item.visit.timestamp as any);
     if (time) timeSuffix = ` <font color="#999">${time}</font>`;
     const address = item.visit.address?.trim() || "";
-    if (address) addressLine = `   <font color="#999">${address}</font><br/>`;
+    if (address) addressLine = `<font color="#999">${address}</font>`;
   }
 
-  const lines = [`${index}. **${item.customerName}**${tripTag}${accompanyTag}${marker}${timeSuffix}`];
-  if (addressLine) {
-    lines.push(addressLine);
-  }
-  if (accompany) {
-    lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
-  }
-  // 总结行（沟通内容）同样另起一行；后面跟图片时图片也另起一行
-  // 照片（仅日报）：现场交流照片取第一张；陪同拜访时陪同合照也取第一张，各一行小图
+  const titleLine = `${index}. **${item.customerName}**${tripTag}${accompanyTag}${marker}${timeSuffix}`;
+
+  // 照片（仅日报）：现场交流照片取第一张；陪同拜访时陪同合照也取第一张
   const photoUrl = isDaily ? firstPhotoUrl(item.visit) : "";
   const accompanyPhotoUrl =
     isDaily && accompany && Array.isArray(item.visit.visit_detail?.accompany_photo)
       ? item.visit.visit_detail!.accompany_photo![0] || ""
       : "";
+
+  // 陪同拜访且有照片：两列表格（左详情右照片），手机上可能自动堆叠为上下，属预期
+  if (accompany && (photoUrl || accompanyPhotoUrl)) {
+    const detailCell = [
+      addressLine,
+      accompany ? `<font color="#999">陪同：${accompany}</font>` : "",
+      summary,
+    ].filter(Boolean).join("<br/>");
+    const photoCell = [photoUrl, accompanyPhotoUrl]
+      .filter(Boolean)
+      .map((u) => `![](${thumbUrl(u)})`)
+      .join("<br/>");
+    return [
+      titleLine,
+      "",
+      `| 拜访详情 | 照片 |`,
+      `|---|---|`,
+      `| ${detailCell} | ${photoCell} |`,
+    ].join("\n");
+  }
+
+  // 非陪同 / 无照片：逐行文本 + 缩略图（钉钉会把列表项内连续行合并成一段，<br/> 保证逐行显示）
+  const lines = [titleLine];
+  if (addressLine) lines.push(`   ${addressLine}<br/>`);
+  if (accompany) lines.push(`   <font color="#999">陪同：${accompany}</font><br/>`);
   lines.push(`   ${summary}<br/>`);
-  if (photoUrl) {
-    lines.push(`   <img src="${photoUrl}" width="96" /><br/>`);
-  }
-  if (accompanyPhotoUrl) {
-    lines.push(`   <img src="${accompanyPhotoUrl}" width="96" />`);
-  }
+  if (photoUrl) lines.push(`   ![](${thumbUrl(photoUrl)})<br/>`);
+  if (accompanyPhotoUrl) lines.push(`   ![](${thumbUrl(accompanyPhotoUrl)})`);
   return lines.join("\n");
 }
 
