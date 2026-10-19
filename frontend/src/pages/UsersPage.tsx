@@ -294,7 +294,7 @@ export default function UsersPage() {
   }, [users, deptOrder, subOrder]);
 
   return (
-    <div className="mx-auto max-w-7xl">
+    <div>
       <div className="mb-4 flex items-center justify-between">
         <Title heading={4} style={{ margin: 0 }}>
           用户管理

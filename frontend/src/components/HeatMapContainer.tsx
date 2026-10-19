@@ -125,12 +125,22 @@ export default function HeatMapContainer({ points }: HeatMapContainerProps) {
     applyHeatmapData(heatmapInstance.current, mapInstance.current, aMapRef.current, points);
   }, [points]);
 
+  // 容器尺寸变化（Sidebar 折叠/展开、窗口 resize）时通知地图实例自适应
+  useEffect(() => {
+    if (!mapRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapInstance.current?.resize();
+    });
+    observer.observe(mapRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   return (
     <div
       style={{
         width: "100%",
         height: "100%",
-        borderRadius: 16,
+        borderRadius: 6,
         background: "#e5e5e5",
         position: "relative",
         overflow: "hidden",
@@ -141,7 +151,7 @@ export default function HeatMapContainer({ points }: HeatMapContainerProps) {
         style={{
           width: "100%",
           height: "100%",
-          borderRadius: 16,
+          borderRadius: 6,
         }}
       />
     </div>

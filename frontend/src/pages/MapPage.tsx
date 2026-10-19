@@ -176,7 +176,7 @@ function MapPage() {
       </div>
 
       {/* Map Area */}
-      <div style={{ flex: 1, minHeight: 0, backgroundColor: "#fff", borderRadius: 16, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+      <div className="panel-bordered" style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         <div style={{ flex: 1, minHeight: 0, padding: 12 }}>
           <MapContainer
             visits={visits}

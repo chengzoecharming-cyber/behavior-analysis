@@ -360,3 +360,121 @@ export interface CustomerVisitFrequencyResponse {
   flaggedCount: number;
   list: CustomerFreqItem[];
 }
+
+
+// ============ 客户库（/crm-customers，第一版仅 admin）============
+
+/** GET /crm-customers 列表行 */
+export interface CrmCustomerListItem {
+  id: string;
+  name: string | null;
+  customer_type: string | null;
+  is_in_pool: boolean;
+  follow_status: string | null;
+  owner_name: string | null;
+  region: string | null;
+  channel: string | null;
+  follow_times: number;
+  latest_follow_up_time: string | null;
+  process_status: string | null;
+  created_time: string | null;
+}
+
+/** GET /crm-customers 返回 */
+export interface CrmCustomerListResponse {
+  total: number;
+  list: CrmCustomerListItem[];
+  /** CRM 数据快照日期（最近一次手工导入批次时间，YYYY-MM-DD） */
+  snapshot_date: string | null;
+  owner_options: string[];
+  stage_options: string[];
+}
+
+/** 客户详情：crm_customers 全字段（含 extra 原始字段） */
+export interface CrmCustomerFull {
+  id: string;
+  customer_type: string | null;
+  is_in_pool: boolean;
+  name: string | null;
+  name_norm: string | null;
+  legal_person: string | null;
+  address: string | null;
+  install_address: string | null;
+  region: string | null;
+  tags: string[] | null;
+  follow_status: string | null;
+  channel: string | null;
+  competitor: string | null;
+  owner_name: string | null;
+  follow_times: number;
+  latest_follow_up_time: string | null;
+  recycle_time: string | null;
+  process_status: string | null;
+  process_result: string | null;
+  last_owner: string | null;
+  return_pool_time: string | null;
+  return_pool_reason: string | null;
+  return_pool_times: number | null;
+  extra: Record<string, unknown> | null;
+  created_time: string | null;
+  updated_time: string | null;
+}
+
+export interface CrmContactItem {
+  id: string;
+  customer_name: string | null;
+  name: string | null;
+  phone: string | null;
+  position: string | null;
+  is_decision_maker: string | null;
+  owner_name: string | null;
+  created_time: string | null;
+}
+
+export interface CrmFollowRecordItem {
+  id: string;
+  customer_name: string | null;
+  follow_type: string | null;
+  content: string | null;
+  picture: string | null;
+  create_user_name: string | null;
+  create_time: string | null;
+}
+
+/** 归并匹配到该客户的实际拜访记录 */
+export interface CrmCustomerVisitItem {
+  visit_id: number;
+  time: string;
+  user_name: string;
+  /** visits 里实际填写的客户名（归并前） */
+  matched_name: string;
+  address: string | null;
+  location_name: string | null;
+}
+
+export type CrmCustomerRelation = "both" | "follow_only" | "visit_only" | "none";
+
+/** 客户判断信号（系统派生，非 CRM 原始字段） */
+export interface CrmCustomerInsights {
+  follow_count: number;
+  visit_count: number;
+  last_follow_time: string | null;
+  last_visit_time: string | null;
+  relation: CrmCustomerRelation;
+  no_follow_30d: boolean;
+  no_visit_30d: boolean;
+  approving: boolean;
+}
+
+/** GET /crm-customers/:id 返回 */
+export interface CrmCustomerDetailResponse {
+  customer: CrmCustomerFull;
+  contacts: CrmContactItem[];
+  follow_records: CrmFollowRecordItem[];
+  visits: CrmCustomerVisitItem[];
+  insights: CrmCustomerInsights;
+  /** 订单预留：OA 订单同步接入前固定为空数组 */
+  orders: unknown[];
+  orders_status: "pending_oa_sync";
+  snapshot_date: string | null;
+}

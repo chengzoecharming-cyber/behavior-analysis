@@ -59,7 +59,8 @@ map/
 │   │   │   ├── dingtalk.ts
 │   │   │   ├── users.ts
 │   │   │   ├── feedback.ts
-│   │   │   └── crmAnalytics.ts      # 客户分析（探迹 CRM 数据）：/crm-analytics 总览/交叉/词云/机会地图/躺尸卡死
+│   │   │   ├── crmAnalytics.ts      # 客户分析（探迹 CRM 数据）：/crm-analytics 总览/交叉/词云/机会地图/躺尸卡死
+│   │   │   └── crmCustomers.ts      # 客户库（只读，admin-only）：/crm-customers 列表 + 客户判断详情
 │   │   └── services/           # 业务逻辑
 │   │       ├── auth.ts
 │   │       ├── dingtalk.ts
@@ -76,6 +77,7 @@ map/
 │   │       ├── riskScoring.ts
 │   │       ├── riskSummaryService.ts
 │   │       ├── departmentAliasService.ts
+│   │       ├── crmCustomerDirectory.ts # 客户库列表/详情查询（PRD-007）：筛选分页、联系人/跟进名称桥接、visits 归并匹配拜访、派生判断信号
 │   │       └── scheduler.ts
 │   ├── scripts/
 │   │   ├── seed.ts                       # 从 data/mock-visits.xlsx 导入模拟数据
@@ -107,9 +109,12 @@ map/
 │   │   │   ├── RulesConfigPage.tsx
 │   │   │   ├── FeedbackPage.tsx
 │   │   │   ├── CustomerAnalysisPage.tsx  # 客户分析（WIP）：总览/客户×拜访交叉/词云/躺尸卡死/机会地图
+│   │   │   ├── CustomersPage.tsx         # 客户库列表（admin-only，Semi，白底）：搜索/筛选/分页 + CRM 快照日期
+│   │   │   ├── CustomerDetailPage.tsx    # 客户判断详情（admin-only）：左侧关键判断/跟进×拜访×订单链路/动态时间线，右侧 Basic Info/联系人/原始 CRM 字段
 │   │   │   └── MapPage.tsx
 │   │   └── components/         # 可复用组件
 │   │       ├── ErrorBoundary.tsx
+│   │       ├── layout/AppShell.tsx  # 全局 App Shell（PRD-008 Phase 1）：左侧可折叠 Sidebar（216/60px，localStorage 持久化）+ Utility Header(56px) + Workspace 唯一纵向滚动区；菜单统一配置 + 角色过滤；移动端 <768px 抽屉
 │   │       ├── MapContainer.tsx
 │   │       ├── HeatMapContainer.tsx
 │   │       └── crm/                # 客户分析组件
@@ -460,6 +465,8 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET | `/crm-analytics/pool-health` | 私海健康度（聚合口径，登录可见）：顶部全公司汇总 + 按负责人（私海 owner_name）汇总私海数/零跟进数/30 天无跟进数/历史被掉保数（按 last_owner）/掉保率，按掉保率降序 |
 | GET | `/crm-analytics/funnel` | 阶段漏斗（聚合口径，登录可见）：follow_status 分组计数 × 公私海拆分（空值归「无阶段」桶），带 snapshot_date |
 | POST | `/crm-analytics/digest/send` | 手动触发 CRM 周报推送（仅 admin），接收人由 `CRM_DIGEST_RECIPIENTS` 配置，返回接收人/成功解析/解析失败列表；未配置时 skipped=true 不发送 |
+| GET | `/crm-customers` | 客户库列表（仅 admin）：keyword/customer_type/pool/owner/stage 筛选 + 分页，返回 list/total/snapshot_date/owner_options/stage_options |
+| GET | `/crm-customers/:id` | 客户判断详情（仅 admin）：customer 全字段（含 extra）+ contacts + follow_records + visits（归并匹配的实际拜访）+ insights 信号 + `orders: []`/`orders_status: "pending_oa_sync"`（OA 订单预留，无假数据） |
 
 ### CRM 交叉匹配口径（cross / stuck 共用）
 
@@ -469,6 +476,16 @@ visits 客户名 → CRM 客户的匹配在 `backend/src/routes/crmAnalytics.ts`
 - 匹配三层：① `name_norm` 精确匹配；② 规则归并——a) 去尾部「分公司/子公司/分厂/办事处/营业部」分支后缀再精确匹配，b) 双向包含（一方包含另一方且较短者长度 ≥ 4，取最长候选，并列最长视为歧义不归并）；③ 仍对不上 → 「待确认」桶（`type=unmatched`），**不计入** follow_only/visit_only/both 三个结论数字，沿用拜访人可见性收敛。
 - 躺尸判定复用同一归并口径：CRM 客户近 30 天内有 visits 拜访（`NOT exclude_from_visit_count`）则不算躺尸；明细行带 `last_visit_time`（无拜访为 null）。
 - 机会地图地理编码失败可重试：`crm_customer_geocode` 有 `attempts`/`last_attempt_at` 字段，每次失败 attempts+1，≥ 5 不再重试；响应 `failed_count`（attempts≥5 且无坐标）与 `pending_count`。
+
+### 客户库与客户判断页（PRD-007，只读 admin-only）
+
+`/crm-customers` 模块（`backend/src/services/crmCustomerDirectory.ts` + `routes/crmCustomers.ts`，前端 `CustomersPage`/`CustomerDetailPage`，路由 `/customers`、`/customers/:id`，Semi Design 白底）：面向「单个客户」的列表检索与判断详情，定位 insight-first（左侧系统判断/链路/时间线，右侧 Basic Info/联系人/折叠的 extra 原始字段），不是 CRM 字段复制品。
+
+- 权限：两个接口均 `authMiddleware + requireRole("admin")`；前端导航仅 admin 可见、非 admin 直访跳回首页。
+- 实际拜访匹配复用上文 cross/stuck 同一归并口径（`splitRealCustomerNames` → `normalizeCustomerName` → `resolveCrmName`，排除 `exclude_from_visit_count`）。
+- 联系人/跟进目前是**名称桥接**（contacts 按 `customer_name`，follow_records 按 `customer_name_norm`），未做数据库迁移；待 PRD-006 统一客户身份层落地后改 ID 关联。
+- 订单不接 OA 同步、不建订单表：详情固定返回 `orders: []` + `orders_status: "pending_oa_sync"`，前端显示「待 OA 订单同步接入」，不展示假订单。
+- 页面展示 CRM 快照日期（`crm_import_batches` 最近导入时间），提示数据为手工同步非实时。
 | GET | `/analytics/customer-visit-frequency?start=&end=` | 同客户高频拜访关注清单（仅 flagged 条目，总览页口径：全角色可见，不做权限收敛） |
 
 前后端代理路径：

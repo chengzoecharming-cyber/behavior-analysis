@@ -26,7 +26,9 @@
     "backfill:customer-count": "ts-node scripts/backfillCustomerCount.ts",
     "alias:sales-channels": "ts-node scripts/addSalesChannelAliases.ts",
     "reparse:approval": "ts-node scripts/reparseApproval.ts",
-    "backfill:ai-summary": "ts-node scripts/backfillAiSummary.ts"
+    "backfill:ai-summary": "ts-node scripts/backfillAiSummary.ts",
+    "import:crm": "ts-node scripts/importCrmExcel.ts",
+    "dryrun:daily-report": "ts-node scripts/dryRunDailyReportMarkdown.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

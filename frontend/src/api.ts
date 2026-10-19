@@ -1056,3 +1056,40 @@ export async function fetchCrmFunnel(): Promise<CrmFunnelResponse> {
   const res = await api.get("/crm-analytics/funnel");
   return res.data;
 }
+
+
+// ============ 客户库（/crm-customers，第一版仅 admin）============
+
+import type { CrmCustomerListResponse, CrmCustomerDetailResponse } from "./types";
+
+export interface CrmCustomerListQuery {
+  keyword?: string;
+  customer_type?: string;
+  pool?: "pool" | "private" | "";
+  owner?: string;
+  stage?: string;
+  page: number;
+  pageSize: number;
+}
+
+export async function fetchCrmCustomers(
+  query: CrmCustomerListQuery
+): Promise<CrmCustomerListResponse> {
+  const res = await api.get("/crm-customers", {
+    params: {
+      keyword: query.keyword || undefined,
+      customer_type: query.customer_type || undefined,
+      pool: query.pool || undefined,
+      owner: query.owner || undefined,
+      stage: query.stage || undefined,
+      page: query.page,
+      pageSize: query.pageSize,
+    },
+  });
+  return res.data;
+}
+
+export async function fetchCrmCustomerDetail(id: string): Promise<CrmCustomerDetailResponse> {
+  const res = await api.get(`/crm-customers/${encodeURIComponent(id)}`);
+  return res.data;
+}

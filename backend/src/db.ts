@@ -495,6 +495,110 @@ export async function initDB(): Promise<void> {
         reason TEXT,
         created_at TIMESTAMPTZ DEFAULT NOW()
       );
+
+      -- ===== CRM 客户分析（探迹 CRM Excel 导入） =====
+
+      -- RAW 层：CRM Excel 原始行，永不可变，按 batch_id+row_index 去重
+      CREATE TABLE IF NOT EXISTS raw_crm_rows (
+        id SERIAL PRIMARY KEY,
+        batch_id TEXT NOT NULL,
+        source_file TEXT,
+        file_hash TEXT,
+        row_index INTEGER NOT NULL,
+        row_json JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_raw_crm_rows_batch_row
+        ON raw_crm_rows(batch_id, row_index);
+
+      -- 导入批次对账表
+      CREATE TABLE IF NOT EXISTS crm_import_batches (
+        batch_id TEXT PRIMARY KEY,
+        source_file TEXT,
+        file_hash TEXT,
+        total INTEGER NOT NULL DEFAULT 0,
+        success INTEGER NOT NULL DEFAULT 0,
+        dropped INTEGER NOT NULL DEFAULT 0,
+        drop_reasons JSONB DEFAULT '{}',
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      );
+
+      -- NORMALIZED 层：CRM 客户（私海/公海、四类客户统一一张表）
+      CREATE TABLE IF NOT EXISTS crm_customers (
+        id TEXT PRIMARY KEY,
+        customer_type TEXT,        -- enterprise_domestic / agent_domestic / terminal_overseas / agent_overseas
+        is_in_pool BOOLEAN NOT NULL DEFAULT false,
+        name TEXT,
+        name_norm TEXT,            -- 归一化名：去空格、全角括号转半角、去公司后缀
+        legal_person TEXT,
+        address TEXT,
+        install_address TEXT,
+        region TEXT,
+        tags TEXT[],
+        follow_status TEXT,
+        channel TEXT,
+        competitor TEXT,
+        owner_name TEXT,
+        follow_times INTEGER NOT NULL DEFAULT 0,
+        latest_follow_up_time TIMESTAMPTZ,
+        recycle_time TIMESTAMPTZ,
+        process_status TEXT,
+        process_result TEXT,
+        last_owner TEXT,
+        return_pool_time TIMESTAMPTZ,
+        return_pool_reason TEXT,
+        return_pool_times INTEGER,
+        extra JSONB DEFAULT '{}',  -- 源文件其余列原样保留
+        created_time TIMESTAMPTZ,
+        updated_time TIMESTAMPTZ
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_crm_customers_name_norm
+        ON crm_customers(name_norm);
+      CREATE INDEX IF NOT EXISTS idx_crm_customers_owner
+        ON crm_customers(owner_name);
+      CREATE INDEX IF NOT EXISTS idx_crm_customers_pool
+        ON crm_customers(is_in_pool);
+
+      -- NORMALIZED 层：CRM 联系人
+      CREATE TABLE IF NOT EXISTS crm_contacts (
+        id TEXT PRIMARY KEY,
+        customer_name TEXT,
+        name TEXT,
+        phone TEXT,
+        position TEXT,
+        is_decision_maker TEXT,
+        owner_name TEXT,
+        created_time TIMESTAMPTZ
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_crm_contacts_customer
+        ON crm_contacts(customer_name);
+
+      -- NORMALIZED 层：CRM 跟进记录
+      CREATE TABLE IF NOT EXISTS crm_follow_records (
+        id TEXT PRIMARY KEY,
+        customer_name TEXT,
+        customer_name_norm TEXT,
+        follow_type TEXT,
+        content TEXT,
+        picture TEXT,
+        create_user_name TEXT,
+        create_time TIMESTAMPTZ
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_crm_follow_records_customer_norm
+        ON crm_follow_records(customer_name_norm);
+
+      -- 缓存：CRM 客户地址地理编码结果（高德限流；失败记录带 attempts 计数，< 5 次可重试）
+      CREATE TABLE IF NOT EXISTS crm_customer_geocode (
+        customer_id TEXT PRIMARY KEY,
+        lat DOUBLE PRECISION,
+        lng DOUBLE PRECISION
+      );
+      ALTER TABLE crm_customer_geocode ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE crm_customer_geocode ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
     `);
 
     // 初始化数据质量监控表

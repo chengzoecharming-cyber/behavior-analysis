@@ -108,7 +108,7 @@ function SyncPanel() {
 
   return (
     <div>
-      <Card style={{ marginBottom: 24, borderRadius: 16 }}>
+      <Card style={{ marginBottom: 24, borderRadius: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <RefreshCw size={20} />
           <span style={{ fontSize: 16, fontWeight: 600 }}>钉钉同步状态</span>
@@ -171,7 +171,7 @@ function SyncPanel() {
         )}
       </Card>
 
-      <Card style={{ marginBottom: 24, borderRadius: 16 }}>
+      <Card style={{ marginBottom: 24, borderRadius: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <CheckCircle size={20} />
           <span style={{ fontSize: 16, fontWeight: 600 }}>连接测试</span>
@@ -211,7 +211,7 @@ function SyncPanel() {
         )}
       </Card>
 
-      <Card style={{ borderRadius: 16 }}>
+      <Card style={{ borderRadius: 6 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16 }}>
           <RefreshCw size={20} />
           <span style={{ fontSize: 16, fontWeight: 600 }}>手动同步</span>

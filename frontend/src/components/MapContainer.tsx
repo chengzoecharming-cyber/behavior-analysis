@@ -243,6 +243,16 @@ export default function MapContainer({
     };
   }, []);
 
+  // 容器尺寸变化（Sidebar 折叠/展开、窗口 resize）时通知地图实例自适应
+  useEffect(() => {
+    if (!loaded || !mapRef.current) return;
+    const observer = new ResizeObserver(() => {
+      mapInstance.current?.resize();
+    });
+    observer.observe(mapRef.current);
+    return () => observer.disconnect();
+  }, [loaded]);
+
   useEffect(() => {
     if (!mapInstance.current || !loaded) return;
     const AMap = (window as any).AMap;

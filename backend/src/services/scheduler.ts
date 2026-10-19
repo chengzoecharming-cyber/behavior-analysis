@@ -9,6 +9,7 @@ import {
 } from "./reportGenerationService";
 import { checkAndSendAlerts, sendDailySyncSummary, sendRobotMarkdown } from "./syncCheckService";
 import { reconcileUsers } from "./userSyncService";
+import { sendCrmDigest } from "./crmDigestService";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -430,6 +431,28 @@ export async function catchUpReportGeneration(): Promise<void> {
   } catch (err) {
     console.error("[Scheduler] Monthly report catch-up failed:", err);
   }
+}
+
+/**
+ * CRM 周报推送调度：每周一 9:20（北京时间，避开 9:00 日报与整点任务）。
+ * 灰度机制：接收人由 CRM_DIGEST_RECIPIENTS 配置（逗号/分号分隔姓名或 userid），
+ * 未配置时 sendCrmDigest 内部简洁跳过，不生成也不发送。
+ */
+export function startCrmDigestScheduler(): void {
+  const schedule = () => {
+    const ms = getMillisecondsUntilWeekday(9, 20, 1); // 1 = 周一
+    console.log(`[Scheduler] CRM digest will run in ${Math.round(ms / 1000 / 60)} minutes`);
+    safeSetTimeout(async () => {
+      console.log("[Scheduler] Running CRM digest");
+      try {
+        await sendCrmDigest();
+      } catch (err) {
+        console.error("[Scheduler] CRM digest failed:", err);
+      }
+      schedule();
+    }, ms);
+  };
+  schedule();
 }
 
 /** 报告生成调度：日报 9:00（发昨天）、周报周日 18:00（发本周）、月报每月 1 日 9:00（发上月，北京时间） */

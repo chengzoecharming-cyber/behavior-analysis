@@ -310,25 +310,16 @@ function getCascaderValueFromState(
   return [];
 }
 
-const statStyle: React.CSSProperties = {
-  padding: 20,
-  backgroundColor: "#fff",
-  borderRadius: 16,
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-};
-
 const statLabelStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#72808a",
+  color: "var(--text-tertiary)",
   fontWeight: 500,
 };
 
 const statValueStyle: React.CSSProperties = {
   fontSize: 28,
   fontWeight: 700,
-  color: "#0f1419",
+  color: "var(--text-primary)",
 };
 
 function computeApprovalReportedKm(visits: Visit[]): number {
@@ -1106,16 +1097,17 @@ function ConsolePage() {
 
       {scope === "person" && dateRange[0] === dateRange[1] && selectedDate && (
         <>
-          {/* 统计卡片：移动端 2×2，需纵向间距 */}
-          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+          {/* KPI 指标区：移动端 2×2 折行 */}
+          <div className="kpi-strip kpi-strip-cols">
+          <Row gutter={16} style={{ ...(isMobile ? { rowGap: 16 } : {}) }}>
             <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <span style={statLabelStyle}>拜访点数</span>
                 <span style={statValueStyle}>{overviewGroup.visits.filter((v) => !v.exclude_from_visit_count).length}</span>
               </div>
             </Col>
             <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <div
                   style={{
                     display: "flex",
@@ -1170,13 +1162,13 @@ function ConsolePage() {
               </div>
             </Col>
             <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <span style={statLabelStyle}>Segment 数</span>
                 <span style={statValueStyle}>{overviewGroup.mileage.segmentCount}</span>
               </div>
             </Col>
             <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <span style={statLabelStyle}>估算油费 (元)</span>
                 <span style={statValueStyle}>
                   {overviewGroup.mileage.estimatedFuelCost === 0 &&
@@ -1189,15 +1181,15 @@ function ConsolePage() {
               </div>
             </Col>
           </Row>
+          </div>
 
           {/* Anomalies + Map：移动端纵向流——地图整宽在上，轨迹/异常面板整宽在下 */}
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={isMobile ? 24 : 8} style={isMobile ? { order: 2 } : undefined}>
               <div
+                className="panel-bordered"
                 style={{
                   padding: 20,
-                  backgroundColor: "#fff",
-                  borderRadius: 16,
                   height: "100%",
                   display: "flex",
                   flexDirection: "column",
@@ -1328,10 +1320,9 @@ function ConsolePage() {
             </Col>
             <Col span={isMobile ? 24 : 16} style={isMobile ? { order: 1, marginBottom: 16 } : undefined}>
               <div
+                className="panel-bordered"
                 style={{
                   padding: 20,
-                  backgroundColor: "#fff",
-                  borderRadius: 16,
                   height: isMobile ? "320px" : "500px",
                   display: "flex",
                   flexDirection: "column",
@@ -1359,7 +1350,7 @@ function ConsolePage() {
                         alignItems: "center",
                         backgroundColor: "rgba(255, 255, 255, 0.92)",
                         padding: "6px 12px",
-                        borderRadius: 20,
+                        borderRadius: 8,
                         boxShadow: "0 2px 8px rgba(0, 0, 0, 0.1)",
                       }}
                     >
@@ -1515,9 +1506,10 @@ function OverviewPanel({
         <div style={{ color: "#999" }}>选择时间范围加载数据</div>
       ) : (
         <>
-          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+          <div className="kpi-strip kpi-strip-cols">
+          <Row gutter={16} style={{ ...(isMobile ? { rowGap: 16 } : {}) }}>
             <Col span={isMobile ? 24 : 8}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <div
                   style={{
                     display: "flex",
@@ -1559,7 +1551,7 @@ function OverviewPanel({
               </div>
             </Col>
             <Col span={isMobile ? 24 : 8}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <span style={statLabelStyle}>预估油费</span>
                 <span style={statValueStyle}>
                   {estimatedFuelCost}
@@ -1568,7 +1560,7 @@ function OverviewPanel({
               </div>
             </Col>
             <Col span={isMobile ? 24 : 8}>
-              <div style={statStyle}>
+              <div className="kpi-item">
                 <span style={statLabelStyle}>拜访频率</span>
                 <span style={statValueStyle}>
                   {visitFrequency}
@@ -1577,6 +1569,7 @@ function OverviewPanel({
               </div>
             </Col>
           </Row>
+          </div>
 
           <Row
             gutter={16}
@@ -1592,10 +1585,9 @@ function OverviewPanel({
             )}
             <Col span={isMobile ? 24 : hasAnomalies ? 16 : 24}>
               <div
+                className="panel-bordered"
                 style={{
                   padding: 20,
-                  backgroundColor: "#fff",
-                  borderRadius: 16,
                   height: isMobile ? 300 : 400,
                   display: "flex",
                   flexDirection: "column",
@@ -1623,10 +1615,9 @@ function OverviewPanel({
           <Row gutter={16} style={{ marginBottom: 16 }}>
             <Col span={24}>
               <div
+                className="panel-bordered"
                 style={{
                   padding: 20,
-                  backgroundColor: "#fff",
-                  borderRadius: 16,
                   height: isMobile ? 320 : 460,
                   display: "flex",
                   flexDirection: "column",
@@ -1851,7 +1842,7 @@ function RiskTagsAlert({
       }
       headerStyle={{ borderBottom: "none", padding: "20px 20px 0" }}
       bodyStyle={{ padding: 20, overflowY: "auto", flex: 1, minHeight: 0 }}
-      style={{ borderRadius: 16, height: 400, display: "flex", flexDirection: "column" }}
+      style={{ height: 400, display: "flex", flexDirection: "column" }}
     >
       <div>
         {riskTypes.map((risk) => {

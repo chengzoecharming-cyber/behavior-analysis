@@ -2,24 +2,10 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import {
   Routes,
   Route,
-  Link,
   useLocation,
   Navigate,
   useNavigate,
 } from "react-router-dom";
-import {
-  Home,
-  Bell,
-  User,
-  Menu,
-  MapPin,
-  Settings,
-  RefreshCw,
-  MessageSquareText,
-  Users,
-  LogOut,
-  History,
-} from "lucide-react";
 // 页面级懒加载：按路由拆分 chunk，首屏只下载当前页面所需代码
 const DecisionPage = lazy(() => import("./pages/DecisionPage"));
 const ConsolePage = lazy(() => import("./pages/ConsolePage"));
@@ -31,9 +17,11 @@ const LoginCallbackPage = lazy(() => import("./pages/LoginCallbackPage"));
 const SpecialReportPage = lazy(() => import("./pages/SpecialReportPage"));
 const DataSyncCenterPage = lazy(() => import("./pages/DataSyncCenterPage"));
 const UsersPage = lazy(() => import("./pages/UsersPage"));
+const CustomerAnalysisPage = lazy(() => import("./pages/CustomerAnalysisPage"));
+const CustomersPage = lazy(() => import("./pages/CustomersPage"));
+const CustomerDetailPage = lazy(() => import("./pages/CustomerDetailPage"));
 import { fetchCurrentUser, logoutApi, AuthUser } from "./api";
-import { Dropdown } from "@douyinfe/semi-ui";
-import { useIsMobile } from "./hooks/useIsMobile";
+import AppShell from "./components/layout/AppShell";
 
 // 懒加载页面切换时的占位
 const pageFallback = (
@@ -42,31 +30,11 @@ const pageFallback = (
   </div>
 );
 
-interface NavItem {
-  path: string;
-  label: string;
-  icon: React.ComponentType<{ className?: string }>;
-}
-
-const navItems: NavItem[] = [
-  { path: "/", label: "总览", icon: Home },
-  { path: "/console", label: "数据&分析", icon: MapPin },
-  { path: "/sync", label: "数据同步", icon: RefreshCw },
-  { path: "/rules", label: "规则配置", icon: Settings },
-];
-
-function cn(...classes: (string | boolean | undefined)[]) {
-  return classes.filter(Boolean).join(" ");
-}
-
 function App() {
   const location = useLocation();
   const navigate = useNavigate();
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [checking, setChecking] = useState(true);
-  // 移动端（<768px）：主内容区减小内边距
-  const isMobile = useIsMobile();
 
   useEffect(() => {
     loadCurrentUser();
@@ -128,28 +96,7 @@ function App() {
     );
   }
 
-  const roleText: Record<string, string> = {
-    admin: "管理员",
-    manager: "Leader",
-    staff: "员工",
-  };
-
-  const currentUserLabel = (() => {
-    if (!currentUser) return "未登录";
-    const role = roleText[currentUser.role];
-    if (currentUser.role === "staff" || !role) return currentUser.user_name;
-    return `${currentUser.user_name} - ${role}`;
-  })();
-
-  const itemStyle = { height: 48, lineHeight: "48px", paddingTop: 0, paddingBottom: 0 };
-
-  // 导航按角色收敛：数据同步/规则配置是管理功能，仅 admin 可见；Leader 和员工只看总览和数据&分析
-  const visibleNavItems =
-    currentUser.role === "admin"
-      ? navItems
-      : navItems.filter((item) => item.path === "/" || item.path === "/console");
-
-  // 盛夏战报 H5：全屏独立页面，已登录访问也不渲染顶部导航
+  // 盛夏战报 H5：全屏独立页面，已登录访问也不渲染 App Shell
   if (location.pathname.startsWith("/report/")) {
     return (
       <Suspense fallback={pageFallback}>
@@ -161,244 +108,33 @@ function App() {
   }
 
   return (
-    <div
-      className="flex flex-col min-h-screen"
-      style={{ backgroundColor: "#F6F8FC" }}
-    >
-      {/* Header */}
-      <header className="sticky top-0 z-20 h-16 shrink-0 border-b border-stone-200 bg-white/90 backdrop-blur-xl">
-        <div className="mx-auto flex h-full max-w-7xl items-stretch justify-between gap-5 px-6">
-          {/* Left: Logo + Nav */}
-          <div className="flex min-w-0 items-center">
-            <Link
-              to="/"
-              className="flex h-full shrink-0 items-center gap-2 text-sm font-semibold leading-none tracking-tight text-[#0f1419] transition hover:text-stone-600"
-            >
-              <img
-                src="/logo.png?v=2"
-                alt="销售外勤行为分析系统"
-                className="h-8 w-8 shrink-0 rounded-lg object-contain"
-              />
-              <span className="text-base font-medium">销售外勤行为分析系统</span>
-            </Link>
-
-            {/* Mobile menu button */}
-            <button
-              type="button"
-              className="ml-3 inline-flex size-8 shrink-0 items-center justify-center border-none bg-transparent text-[#536471] transition-colors hover:text-[#0f1419] active:text-[#0f1419] md:hidden"
-              onClick={() => setMobileNavOpen(true)}
-              aria-label="打开导航菜单"
-              title="导航菜单"
-            >
-              <Menu className="size-5" />
-            </button>
-
-            {/* Desktop Nav */}
-            <nav className="ml-8 hidden h-16 min-w-0 items-center gap-7 overflow-x-auto md:flex">
-              {visibleNavItems.map((item) => {
-                const Icon = item.icon;
-                const active =
-                  item.path === "/"
-                    ? location.pathname === "/"
-                    : location.pathname === item.path ||
-                      location.pathname.startsWith(item.path + "/");
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    className={cn(
-                      "flex h-16 shrink-0 items-center gap-2 text-sm leading-6 transition",
-                      active
-                        ? "font-medium text-[#0f1419]"
-                        : "text-stone-500 hover:text-[#0f1419]"
-                    )}
-                  >
-                    <Icon className="size-4" />
-                    <span className="truncate">{item.label}</span>
-                  </Link>
-                );
-              })}
-            </nav>
-          </div>
-
-          {/* Right: Actions */}
-          <div className="my-auto flex h-9 min-w-0 items-center justify-end gap-2 whitespace-nowrap">
-            <div className="flex items-center gap-2">
-              <button
-                className="relative flex h-8 w-8 items-center justify-center rounded-full border-none bg-transparent text-[#536471] transition-colors hover:text-[#0f1419] active:text-[#0f1419]"
-                title="消息通知"
-              >
-                <Bell className="h-4 w-4" />
-              </button>
-
-              <Dropdown
-                trigger="click"
-                position="bottomRight"
-                render={
-                  <Dropdown.Menu>
-                    <Dropdown.Item
-                      disabled
-                      style={itemStyle}
-                    >
-                      <span className="text-sm font-medium text-[#0f1419]">
-                        {currentUserLabel}
-                      </span>
-                    </Dropdown.Item>
-                    <Dropdown.Divider />
-                    {currentUser?.role === "admin" && (
-                      <Dropdown.Item
-                        icon={<History className="h-4 w-4" />}
-                        style={itemStyle}
-                      >
-                        <Link to="/sync-center">数据同步中心</Link>
-                      </Dropdown.Item>
-                    )}
-                    {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
-                      <Dropdown.Item
-                        icon={<Users className="h-4 w-4" />}
-                        style={itemStyle}
-                      >
-                        <Link to="/users">用户管理</Link>
-                      </Dropdown.Item>
-                    )}
-                    <Dropdown.Item
-                      icon={<MessageSquareText className="h-4 w-4" />}
-                      style={itemStyle}
-                    >
-                      <Link to="/feedback">反馈与申诉</Link>
-                    </Dropdown.Item>
-                    <Dropdown.Divider />
-                    <Dropdown.Item
-                      icon={<LogOut className="h-4 w-4" />}
-                      type="danger"
-                      onClick={logout}
-                      style={itemStyle}
-                    >
-                      退出登录
-                    </Dropdown.Item>
-                  </Dropdown.Menu>
-                }
-              >
-                <button
-                  className="relative flex h-8 w-8 items-center justify-center rounded-full border-none bg-transparent text-[#536471] transition-colors hover:text-[#0f1419] active:text-[#0f1419]"
-                  title="用户"
-                >
-                  <User className="h-4 w-4" />
-                </button>
-              </Dropdown>
-            </div>
-          </div>
-        </div>
-      </header>
-
-      {/* Mobile Nav Drawer */}
-      {mobileNavOpen && (
-        <div
-          className="fixed inset-0 z-30 bg-black/40 md:hidden"
-          onClick={() => setMobileNavOpen(false)}
-        >
-          <div
-            className="absolute left-0 top-0 h-full w-64 bg-white p-4 shadow-lg"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="mb-4 flex items-center gap-2 text-lg font-semibold text-[#0f1419]">
-              <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-[#0f1419]">
-                <MapPin className="h-4 w-4 text-white" />
-              </div>
-              销售外勤行为分析系统
-            </div>
-            <nav className="flex flex-col gap-1">
-              {visibleNavItems.map((item) => {
-                const Icon = item.icon;
-                const active =
-                  item.path === "/"
-                    ? location.pathname === "/"
-                    : location.pathname === item.path ||
-                      location.pathname.startsWith(item.path + "/");
-                return (
-                  <Link
-                    key={item.path}
-                    to={item.path}
-                    onClick={() => setMobileNavOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition",
-                      active
-                        ? "bg-[rgb(235,236,237)] font-medium text-[#0f1419]"
-                        : "text-stone-600 hover:bg-stone-50"
-                    )}
-                  >
-                    <Icon className="size-4" />
-                    <span>{item.label}</span>
-                  </Link>
-                );
-              })}
-
-              {/* 桌面端头像 Dropdown 里的入口，移动端在抽屉中按相同权限补充 */}
-              <div className="my-2 border-t border-stone-100" />
-              {currentUser?.role === "admin" && (
-                <Link
-                  to="/sync-center"
-                  onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-stone-50"
-                >
-                  <History className="size-4" />
-                  <span>数据同步中心</span>
-                </Link>
-              )}
-              {(currentUser?.role === "admin" || currentUser?.role === "manager") && (
-                <Link
-                  to="/users"
-                  onClick={() => setMobileNavOpen(false)}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-stone-50"
-                >
-                  <Users className="size-4" />
-                  <span>用户管理</span>
-                </Link>
-              )}
-              <Link
-                to="/feedback"
-                onClick={() => setMobileNavOpen(false)}
-                className="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-stone-600 transition hover:bg-stone-50"
-              >
-                <MessageSquareText className="size-4" />
-                <span>反馈与申诉</span>
-              </Link>
-              <button
-                onClick={logout}
-                className="flex items-center gap-3 rounded-lg border-none bg-transparent px-3 py-2.5 text-left text-sm text-red-600 transition hover:bg-stone-50"
-              >
-                <LogOut className="size-4" />
-                <span>退出登录</span>
-              </button>
-            </nav>
-          </div>
-        </div>
-      )}
-
-      {/* Content */}
-      <main className="flex-1 min-h-0" style={{ padding: isMobile ? 12 : 24 }}>
-        <Suspense fallback={pageFallback}>
-          <Routes>
-            <Route path="/" element={<DecisionPage />} />
-            <Route path="/dashboard" element={<Navigate to="/" replace />} />
-            <Route path="/console" element={<ConsolePage />} />
-            <Route path="/map" element={<Navigate to="/" replace />} />
-            <Route path="/upload" element={<Navigate to="/sync" replace />} />
-            {/* 管理功能页面：非 admin 直访时跳回首页（导航入口已隐藏，这里是第二道守卫） */}
-            <Route path="/sync" element={currentUser.role === "admin" ? <DataSyncPage /> : <Navigate to="/" replace />} />
-            <Route path="/sync-center" element={currentUser.role === "admin" ? <DataSyncCenterPage /> : <Navigate to="/" replace />} />
-            {/* 旧入口统一跳转到数据同步中心 */}
-            <Route path="/sync-health" element={<Navigate to="/sync-center" replace />} />
-            <Route path="/sync-logs" element={<Navigate to="/sync-center" replace />} />
-            <Route path="/data-lineage" element={<Navigate to="/sync-center" replace />} />
-            <Route path="/rules" element={currentUser.role === "admin" ? <RulesConfigPage /> : <Navigate to="/" replace />} />
-            <Route path="/users" element={<UsersPage />} />
-            <Route path="/feedback" element={<FeedbackPage />} />
-            <Route path="/login" element={<LoginPage />} />
-          </Routes>
-        </Suspense>
-      </main>
-    </div>
+    <AppShell currentUser={currentUser} onLogout={logout}>
+      <Suspense fallback={pageFallback}>
+        <Routes>
+          <Route path="/" element={<DecisionPage />} />
+          <Route path="/dashboard" element={<Navigate to="/" replace />} />
+          <Route path="/console" element={<ConsolePage />} />
+          <Route path="/map" element={<Navigate to="/" replace />} />
+          <Route path="/upload" element={<Navigate to="/sync" replace />} />
+          {/* 管理功能页面：非 admin 直访时跳回首页（导航入口已隐藏，这里是第二道守卫） */}
+          <Route path="/sync" element={currentUser.role === "admin" ? <DataSyncPage /> : <Navigate to="/" replace />} />
+          <Route path="/sync-center" element={currentUser.role === "admin" ? <DataSyncCenterPage /> : <Navigate to="/" replace />} />
+          {/* 旧入口统一跳转到数据同步中心 */}
+          <Route path="/sync-health" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/sync-logs" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/data-lineage" element={<Navigate to="/sync-center" replace />} />
+          <Route path="/rules" element={currentUser.role === "admin" ? <RulesConfigPage /> : <Navigate to="/" replace />} />
+          {/* 客户分析：所有登录角色可见，行级数据收敛由后端处理 */}
+          <Route path="/customer-analysis" element={<CustomerAnalysisPage />} />
+          {/* 客户库：第一版仅 admin（含联系人等敏感信息），非 admin 直访跳回首页 */}
+          <Route path="/customers" element={currentUser.role === "admin" ? <CustomersPage /> : <Navigate to="/" replace />} />
+          <Route path="/customers/:id" element={currentUser.role === "admin" ? <CustomerDetailPage /> : <Navigate to="/" replace />} />
+          <Route path="/users" element={<UsersPage />} />
+          <Route path="/feedback" element={<FeedbackPage />} />
+          <Route path="/login" element={<LoginPage />} />
+        </Routes>
+      </Suspense>
+    </AppShell>
   );
 }
 

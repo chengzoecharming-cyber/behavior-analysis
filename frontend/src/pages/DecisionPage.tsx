@@ -68,26 +68,16 @@ function getPresetRange(key: DateRangeMode): [string, string] {
   }
 }
 
-const statStyle: React.CSSProperties = {
-  padding: 20,
-  backgroundColor: "#fff",
-  borderRadius: 16,
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-  height: "100%",
-};
-
 const statLabelStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#72808a",
+  color: "var(--text-tertiary)",
   fontWeight: 500,
 };
 
 const statValueStyle: React.CSSProperties = {
   fontSize: 28,
   fontWeight: 700,
-  color: "#0f1419",
+  color: "var(--text-primary)",
 };
 
 function DecisionPage() {
@@ -264,45 +254,37 @@ function DecisionPage() {
 
       {!loading && data && (
         <>
-          {/* Summary Cards：移动端 2×2，需纵向间距 */}
-          <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
-            <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
-                <span style={statLabelStyle}>总拜访次数</span>
-                <span style={statValueStyle}>
-                  {data.summary.totalVisits}
-                  <span style={{ fontSize: 12, color: "#999" }}>次</span>
-                </span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
-                <span style={statLabelStyle}>活跃员工数</span>
-                <span style={statValueStyle}>
-                  {data.summary.activeEmployees}
-                  <span style={{ fontSize: 12, color: "#999" }}>人</span>
-                </span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
-                <span style={statLabelStyle}>客户覆盖数</span>
-                <span style={statValueStyle}>
-                  {data.summary.customerCoverage}
-                  <span style={{ fontSize: 12, color: "#999" }}>个客户</span>
-                </span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 12 : 6}>
-              <div style={statStyle}>
-                <span style={statLabelStyle}>平均拜访频率</span>
-                <span style={statValueStyle}>
-                  {data.summary.avgVisitFrequency}
-                  <span style={{ fontSize: 12, color: "#999" }}>次/人/周</span>
-                </span>
-              </div>
-            </Col>
-          </Row>
+          {/* KPI 指标区：白底横向条，KPI 间 1px 分隔线；移动端 2×2 折行 */}
+          <div className="kpi-strip">
+            <div className="kpi-item">
+              <span style={statLabelStyle}>总拜访次数</span>
+              <span style={statValueStyle}>
+                {data.summary.totalVisits}
+                <span style={{ fontSize: 12, color: "#999" }}>次</span>
+              </span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>活跃员工数</span>
+              <span style={statValueStyle}>
+                {data.summary.activeEmployees}
+                <span style={{ fontSize: 12, color: "#999" }}>人</span>
+              </span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>客户覆盖数</span>
+              <span style={statValueStyle}>
+                {data.summary.customerCoverage}
+                <span style={{ fontSize: 12, color: "#999" }}>个客户</span>
+              </span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>平均拜访频率</span>
+              <span style={statValueStyle}>
+                {data.summary.avgVisitFrequency}
+                <span style={{ fontSize: 12, color: "#999" }}>次/人/周</span>
+              </span>
+            </div>
+          </div>
 
           {/* Trend: Visits + Mileage（≤14 天按日粒度，更长按周粒度）；移动端单列堆叠 */}
           <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>

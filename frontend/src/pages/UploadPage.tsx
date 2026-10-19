@@ -112,7 +112,7 @@ export function UploadPanel() {
 
       {/* Preview Table */}
       {preview.length > 0 && (
-        <div style={{ padding: 24, backgroundColor: "#fff", borderRadius: 16, marginBottom: 16 }}>
+        <div className="panel-bordered" style={{ padding: 24, marginBottom: 16 }}>
           <div style={{ fontSize: 15, fontWeight: 600, color: "#0f1419", marginBottom: 16 }}>
             <Space>
               <span>解析结果预览（前 10 行）</span>

@@ -174,12 +174,13 @@ function RulesConfigPage() {
           dataSource={rules}
           pagination={false}
           rowKey="rule_key"
-          style={{ backgroundColor: "#fff", borderRadius: 12, padding: 16 }}
+          className="panel-bordered"
+          style={{ padding: 16 }}
           scroll={{ x: "100%" }}
         />
       )}
 
-      <div style={{ marginTop: 24, padding: 16, backgroundColor: "#fff", borderRadius: 12 }}>
+      <div className="panel-bordered" style={{ marginTop: 24, padding: 16 }}>
         <Title heading={5} style={{ marginBottom: 12 }}>
           评分说明
         </Title>

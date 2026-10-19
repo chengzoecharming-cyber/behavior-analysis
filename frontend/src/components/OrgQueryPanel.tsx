@@ -19,25 +19,16 @@ interface OrgQueryPanelProps {
   end: string;
 }
 
-const statStyle: React.CSSProperties = {
-  padding: 20,
-  backgroundColor: "#fff",
-  borderRadius: 16,
-  display: "flex",
-  flexDirection: "column",
-  gap: 4,
-};
-
 const statLabelStyle: React.CSSProperties = {
   fontSize: 13,
-  color: "#72808a",
+  color: "var(--text-tertiary)",
   fontWeight: 500,
 };
 
 const statValueStyle: React.CSSProperties = {
   fontSize: 28,
   fontWeight: 700,
-  color: "#0f1419",
+  color: "var(--text-primary)",
 };
 
 function formatKm(value: number): string {
@@ -435,10 +426,11 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           padding-right: 0 !important;
         }
       `}</style>
-      {/* 指标卡：与个人周期总览保持一致，并补充正向指标卡；移动端 2×2 */}
-      <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
+      {/* KPI 指标区：与个人周期总览保持一致，并补充正向指标；移动端 2×2 */}
+      <div className="kpi-strip kpi-strip-cols">
+      <Row gutter={16} style={{ ...(isMobile ? { rowGap: 16 } : {}) }}>
         <Col span={isMobile ? 12 : 6}>
-          <div style={statStyle}>
+          <div className="kpi-item">
             <span style={statLabelStyle}>填报 / 估算里程</span>
             <span style={statValueStyle}>
               <span>{stats.totalReportedKm}</span>
@@ -449,7 +441,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           </div>
         </Col>
         <Col span={isMobile ? 12 : 6}>
-          <div style={statStyle}>
+          <div className="kpi-item">
             <span style={statLabelStyle}>拜访频率</span>
             <span style={statValueStyle}>
               {visitFrequency}
@@ -458,7 +450,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           </div>
         </Col>
         <Col span={isMobile ? 12 : 6}>
-          <div style={statStyle}>
+          <div className="kpi-item">
             <span style={statLabelStyle}>人均拜访次数</span>
             <span style={statValueStyle}>
               {avgVisitsPerEmployee}
@@ -467,7 +459,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           </div>
         </Col>
         <Col span={isMobile ? 12 : 6}>
-          <div style={statStyle}>
+          <div className="kpi-item">
             <span style={statLabelStyle}>客户覆盖数</span>
             <span style={statValueStyle}>
               {customerCoverage}
@@ -476,14 +468,14 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           </div>
         </Col>
       </Row>
+      </div>
 
       {/* 拜访热力图 + 排行榜；移动端单列堆叠 */}
       <Row gutter={16} style={{ marginBottom: 16, ...(isMobile ? { rowGap: 16 } : {}) }}>
         <Col span={isMobile ? 24 : 12}>
           <div
+            className="panel-bordered"
             style={{
-              backgroundColor: "#fff",
-              borderRadius: 16,
               padding: 20,
               height: isMobile ? 360 : 500,
               display: "flex",
@@ -500,10 +492,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         </Col>
         <Col span={isMobile ? 24 : 12}>
           <div
-            className="org-ranking-card"
+            className="org-ranking-card panel-bordered"
             style={{
-              backgroundColor: "#fff",
-              borderRadius: 16,
               padding: 20,
               height: isMobile ? 360 : 500,
               display: "flex",
@@ -541,9 +531,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         {!isSingleDay && (
           <Col span={isMobile ? 24 : 12}>
             <div
+              className="panel-bordered"
               style={{
-                backgroundColor: "#fff",
-                borderRadius: 16,
                 padding: 20,
                 height: isMobile ? 360 : 500,
                 display: "flex",
@@ -585,9 +574,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         )}
         <Col span={isMobile ? 24 : isSingleDay ? 24 : 12}>
           <div
+            className="panel-bordered"
             style={{
-              backgroundColor: "#fff",
-              borderRadius: 16,
               padding: 20,
               height: isMobile ? 360 : 500,
               display: "flex",

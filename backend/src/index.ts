@@ -16,12 +16,15 @@ import feedbackRouter from "./routes/feedback";
 import authRouter from "./routes/auth";
 import exportRouter from "./routes/export";
 import dataLineageRouter from "./routes/dataLineage";
+import crmAnalyticsRouter from "./routes/crmAnalytics";
+import crmCustomersRouter from "./routes/crmCustomers";
 import specialReportRouter from "./routes/specialReport";
 import {
   startRiskSummaryCacheScheduler,
   startDingTalkSyncScheduler,
   startReportGenerationScheduler,
   startUserReconcileScheduler,
+  startCrmDigestScheduler,
 } from "./services/scheduler";
 
 dotenv.config();
@@ -46,6 +49,8 @@ app.use("/feedback", feedbackRouter);
 app.use("/auth", authRouter);
 app.use("/export", exportRouter);
 app.use("/data-lineage", dataLineageRouter);
+app.use("/crm-analytics", crmAnalyticsRouter);
+app.use("/crm-customers", crmCustomersRouter);
 // 「盛夏战报」：GET /:token 为公开接口（路由内部仅在 POST /push 上挂 authMiddleware）
 app.use("/special-report", specialReportRouter);
 
@@ -69,6 +74,7 @@ async function main() {
       startReportGenerationScheduler();
     }
     startUserReconcileScheduler();
+    startCrmDigestScheduler();
   } else {
     console.log("[Scheduler] SCHEDULER_ENABLED=false，跳过所有定时任务");
   }

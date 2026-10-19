@@ -7,5 +7,6 @@ uploads
 *.log
 backend/clean-report-*.json
 AI_PM_协同契约.md
+我的画像.md
 
 tmp/
