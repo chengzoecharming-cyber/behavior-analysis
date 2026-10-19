@@ -148,10 +148,28 @@ function resolveTripTagMode(items: VisitItem[]): { headingTag: string; perItem: 
   return { headingTag: ` <font color="${c.color}">${c.label}</font>`, perItem: false };
 }
 
-/** 钉钉图片 CDN（OSS）缩略图：原图撑满文档宽，追加 resize 参数生成小图文件 */
+/** 钉钉图片 CDN（OSS）缩略图：无法识别原图尺寸时，保留原有的小图展示兜底 */
 function thumbUrl(url: string, width = 150): string {
   if (!url || !url.includes("dingtalk.com")) return url;
   return `${url}?x-oss-process=image/resize,w_${width}`;
+}
+
+/**
+ * 日报图片使用原图，同时通过 width + height 控制正文显示尺寸。
+ * 钉钉 Markdown 导入会丢弃单独的 width，且预览直接读取 img.src；
+ * 因此必须按原图宽高比同时声明宽高，不能只依赖 OSS 缩略图 URL。
+ */
+function renderDailyPhoto(url: string, width = 150): string {
+  // 钉钉媒体文件名自带原始尺寸：..._1920_1440.jpg / ..._2430_3240.png
+  const match = url.match(/_(\d+)_(\d+)\.(?:jpe?g|png|gif|webp)(?:[?#].*)?$/i);
+  if (!match) return `![](${thumbUrl(url, width)})`;
+
+  const originalWidth = Number(match[1]);
+  const originalHeight = Number(match[2]);
+  if (!originalWidth || !originalHeight) return `![](${thumbUrl(url, width)})`;
+
+  const height = Math.max(1, Math.round((width * originalHeight) / originalWidth));
+  return `<img src="${url}" width="${width}" height="${height}" />`;
 }
 
 function renderVisitItem(
@@ -192,7 +210,7 @@ function renderVisitItem(
       ? item.visit.visit_detail!.accompany_photo![0] || ""
       : "";
 
-  // 纯文本逐行 + 缩略图（两列表格在钉钉 markdown 导入下会爆，2026-10-16 实测不可用）。
+  // 纯文本逐行 + 小图（两列表格在钉钉 markdown 导入下会爆，2026-10-16 实测不可用）。
   // 钉钉会把列表项内连续行合并成一段，所以整个条目合成一行 markdown、用 <br/> 分隔，
   // 保证：标题行 → 地址 → 陪同 → 总结 → 图片 逐行紧凑显示且图片不外脱
   const parts: string[] = [];
@@ -200,7 +218,7 @@ function renderVisitItem(
   if (accompany) parts.push(`<font color="#999">陪同：${accompany}</font>`);
   parts.push(summary);
   // 图片（现场照+陪同合照）同行空格分隔并排显示（钉钉同段 <br/> 分行的第二张图不缩放，2026-10-16 实测）
-  const photoParts = [photoUrl, accompanyPhotoUrl].filter(Boolean).map((u) => `![](${thumbUrl(u)})`);
+  const photoParts = [photoUrl, accompanyPhotoUrl].filter(Boolean).map((u) => renderDailyPhoto(u));
   if (photoParts.length > 0) parts.push(photoParts.join(" "));
   return titleLine + "<br/>" + parts.join("<br/>");
 }

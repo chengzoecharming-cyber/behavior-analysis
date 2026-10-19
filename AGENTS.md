@@ -592,6 +592,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 - 部门名称通过 `department_aliases` 表规范化，当前有 10 个规范部门/分组。
 - **部门归一化（查询时生效，不回填数据）**：部分销售挂在钉钉「销售渠道-华南区域 / 销售渠道-江苏区域 / 销售渠道-浙江区域」顶层渠道部门下，业务主部门是「销售部-华南一部 / 华东昆山 / 华东宁波」。`visits.department` 保留原始值，所有组织归属/聚合/级联选择器口径在查询时归一化：第一段部门名命中 `department_aliases` 且 `canonical_name` 非空时，映射为「销售部-canonical」（canonical 本身含 `-` 则原样），否则保持原始第一段。统一入口在 `departmentAliasService.ts`（JS 侧 `normalizePrimaryDepartment` + `loadDepartmentAliasMap`，SQL 侧 `normalizedPrimaryDeptSql` + `departmentAliasJoinSql`）；`orgService`（组织树/归属多数派/排行榜分组）、`userSyncService.fetchVisitUsers`（users.department 归属）、`companyDashboard`（词云/雷达）、`buildDingTalkOrgTree`（级联选择器树，归一化后补挂到主部门节点）均走该口径。「销售渠道」顶层黑名单（`EXCLUDED_TOP_DEPARTMENTS`）继续保留，归一化后自然不再命中。别名配置脚本：`cd backend && npm run alias:sales-channels`（幂等写入三条 销售渠道-X区域 → 主部门 映射）。纯查询时归一化，改别名配置不需要重算派生数据。
 - 风险摘要缓存策略：历史日期优先读 `risk_summary_cache`，今天及以后实时计算。
+- **钉钉文档日报图片**：使用「原图 `src` + 同时声明 `width`/`height`」实现小图展示、原图预览；只写 `width` 会被导入器丢弃，直接把 OSS 缩略图写入 `src` 会导致电脑端预览模糊。双端测试矩阵与失败案例见 `docs/dingtalk-doc-markdown-compatibility.md`，后续类似兼容性测试应追加到该文档。
 - 钉钉表单中的 `累计里程N` 是截至本次签到的累计值，系统统计时应按 `approval_id` 取 `MAX(reported_distance_km)`，不能直接 `SUM`。
 - 路线计算已按 `approval_id` 分组，控制台地图支持按审批单切换视图。
 - 里程读数异常上限通过环境变量 `MILEAGE_VALIDATION_MAX_KM`（后端）和 `VITE_MILEAGE_MAX_KM`（前端）配置，默认 5000 km。
