@@ -22,6 +22,11 @@ export async function recomputeDerivedDataForVisits(
   pairs: AffectedUserDate[]
 ): Promise<void> {
   if (pairs.length === 0) return;
+  // 大批量历史导入时置 SKIP_DERIVED_RECOMPUTE=1，routes/stops/风险摘要事后分批补算
+  if (process.env.SKIP_DERIVED_RECOMPUTE === "1") {
+    console.log(`[recomputeDerivedDataForVisits] SKIP_DERIVED_RECOMPUTE=1，跳过 ${pairs.length} 个 user+date 的派生计算`);
+    return;
+  }
 
   const uniquePairs = Array.from(
     new Map(pairs.map((p) => [`${p.user_id}|${p.business_date}`, p])).values()

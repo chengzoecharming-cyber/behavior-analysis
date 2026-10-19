@@ -250,6 +250,25 @@ router.get("/available-dates", authMiddleware, async (req: AuthRequest, res: Res
   }
 });
 
+// GET /visits/data-coverage
+// 返回全量拜访数据的业务日期覆盖范围（全局口径，登录即可读），
+// 用于前端日期选择器弹层底部提示「数据覆盖：xxxx-xx-xx ~ xxxx-xx-xx」。
+router.get("/data-coverage", authMiddleware, async (_req: AuthRequest, res: Response) => {
+  try {
+    const result = await pool.query(
+      `SELECT MIN(business_date) AS min_date, MAX(business_date) AS max_date FROM visits`
+    );
+    const row = result.rows[0] || {};
+    res.json({
+      min_date: row.min_date ? formatBeijingDate(row.min_date) : null,
+      max_date: row.max_date ? formatBeijingDate(row.max_date) : null,
+    });
+  } catch (err) {
+    console.error("Failed to fetch data coverage:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
+
 // GET /visits/synced-dates
 // 返回钉钉同步已成功覆盖的日期列表（全局口径，不含用户数据，所有登录角色可读）。
 // 用途：前端日历轴把「已同步但无数据」的日期（如全员未提交审批的周末）展示为置灰，

@@ -33,6 +33,8 @@ import { isMileageRequiredTrip } from "../utils/tripType";
 import {
   fetchAvailableDates,
   fetchSyncedDates,
+  fetchDataCoverage,
+  type DataCoverage,
   fetchVisits,
   fetchStops,
   fetchRoutes,
@@ -416,6 +418,7 @@ function ConsolePage() {
   const [availableDateInfos, setAvailableDateInfos] = useState<AvailableDate[]>([]);
   // 钉钉已同步覆盖的日期（全局），用于日历轴展示「已同步但无数据」的置灰日期
   const [syncedDates, setSyncedDates] = useState<string[]>([]);
+  const [dataCoverage, setDataCoverage] = useState<DataCoverage | null>(null);
   const [selectedDate, setSelectedDate] = useState<string | null>(null);
   const [visits, setVisits] = useState<Visit[]>([]);
   const [stops, setStops] = useState<Stop[]>([]);
@@ -544,6 +547,9 @@ function ConsolePage() {
     fetchSyncedDates()
       .then(setSyncedDates)
       .catch(() => setSyncedDates([]));
+    fetchDataCoverage()
+      .then(setDataCoverage)
+      .catch(() => setDataCoverage(null));
   }, []);
 
   // 当查询范围变化时，加载可用日期列表
@@ -1014,6 +1020,13 @@ function ConsolePage() {
               onChange={(dates) => handleDateRangeChange(dates as Date[] | null)}
               disabledDate={(current) =>
                 !!current && dayjs.tz(current).isAfter(dayjs.tz(), "day")
+              }
+              bottomSlot={
+                dataCoverage?.min_date ? (
+                  <div style={{ padding: "8px 12px", fontSize: 12, color: "#888", borderTop: "1px solid var(--semi-color-border)" }}>
+                    数据覆盖：{dataCoverage.min_date} ~ {dataCoverage.max_date}（更早日期无数据）
+                  </div>
+                ) : undefined
               }
               presets={getDatePickerPresets()}
               presetPosition="left"

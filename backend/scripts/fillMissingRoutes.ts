@@ -21,7 +21,13 @@ async function main() {
        ORDER BY v.business_date, v.user_id`
     );
 
-    const pairs = result.rows as { user_id: string; business_date: Date }[];
+    let pairs = result.rows as { user_id: string; business_date: Date }[];
+    // 可选参数：最多处理前 N 个 user+date（配合分批限流，控制高德日配额消耗）
+    const maxPairs = parseInt(process.argv[2] || "", 10);
+    if (!isNaN(maxPairs) && maxPairs > 0 && pairs.length > maxPairs) {
+      console.log(`限流：共 ${pairs.length} 个待补，本次只跑前 ${maxPairs} 个`);
+      pairs = pairs.slice(0, maxPairs);
+    }
     console.log(`Found ${pairs.length} user/date pairs without routes`);
 
     for (let i = 0; i < pairs.length; i++) {

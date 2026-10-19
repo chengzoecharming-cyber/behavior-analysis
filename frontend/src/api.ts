@@ -90,6 +90,16 @@ export async function fetchSyncedDates(): Promise<string[]> {
   return res.data;
 }
 
+export interface DataCoverage {
+  min_date: string | null;
+  max_date: string | null;
+}
+
+export async function fetchDataCoverage(): Promise<DataCoverage> {
+  const res = await api.get("/visits/data-coverage");
+  return res.data;
+}
+
 export async function fetchVisits(
   userId: string,
   start: string,
