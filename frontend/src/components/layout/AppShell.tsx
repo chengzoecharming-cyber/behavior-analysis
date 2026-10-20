@@ -44,6 +44,32 @@ const SYSTEM_NAV_ITEMS: NavItem[] = [
   { path: "/rules", label: "规则配置", icon: Settings, roles: ["admin"] },
 ];
 
+/** 路由 → 页面标题：utility header 按此映射展示当前页标题 */
+interface PageMeta {
+  path: string;
+  title: string;
+}
+
+const PAGE_META: PageMeta[] = [
+  { path: "/", title: "总览" },
+  { path: "/console", title: "外勤分析" },
+  { path: "/customer-analysis", title: "客户分析" },
+  { path: "/customers", title: "客户库" },
+  { path: "/sync", title: "数据同步" },
+  { path: "/rules", title: "规则配置" },
+  { path: "/sync-center", title: "数据同步中心" },
+  { path: "/users", title: "用户管理" },
+  { path: "/feedback", title: "反馈与申诉" },
+];
+
+/** 按当前路径解析页面标题：/ 精确匹配，其余取最长前缀匹配 */
+function resolvePageMeta(pathname: string): PageMeta | undefined {
+  if (pathname === "/") return PAGE_META[0];
+  return PAGE_META.filter(
+    (m) => m.path !== "/" && (pathname === m.path || pathname.startsWith(m.path + "/"))
+  ).sort((a, b) => b.path.length - a.path.length)[0];
+}
+
 const SIDEBAR_COLLAPSED_KEY = "sidebar_collapsed";
 
 function readInitialCollapsed(): boolean {
@@ -68,6 +94,8 @@ interface SidebarContentProps {
   pathname: string;
   onNavigate?: () => void;
   onToggleCollapse?: () => void;
+  /** 桌面 sidebar 底部的额外区块（通知铃铛 + 用户菜单），移动端抽屉不传 */
+  footerExtras?: ReactNode;
 }
 
 function SidebarContent({
@@ -77,6 +105,7 @@ function SidebarContent({
   pathname,
   onNavigate,
   onToggleCollapse,
+  footerExtras,
 }: SidebarContentProps) {
   const renderItem = (item: NavItem) => {
     const Icon = item.icon;
@@ -135,24 +164,27 @@ function SidebarContent({
         )}
       </div>
 
-      {/* 底部收起/展开 */}
-      {onToggleCollapse && (
+      {/* 底部：通知/用户入口（desktop）+ 收起/展开 */}
+      {(footerExtras || onToggleCollapse) && (
         <div className="sidebar-footer">
-          <button
-            type="button"
-            className="sidebar-item sidebar-toggle"
-            onClick={onToggleCollapse}
-            aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
-          >
-            <span className="sidebar-item-icon">
-              {collapsed ? (
-                <PanelLeftOpen className="size-[18px]" />
-              ) : (
-                <PanelLeftClose className="size-[18px]" />
-              )}
-            </span>
-            <span className="sidebar-item-label">收起</span>
-          </button>
+          {footerExtras}
+          {onToggleCollapse && (
+            <button
+              type="button"
+              className="sidebar-item sidebar-toggle"
+              onClick={onToggleCollapse}
+              aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
+            >
+              <span className="sidebar-item-icon">
+                {collapsed ? (
+                  <PanelLeftOpen className="size-[18px]" />
+                ) : (
+                  <PanelLeftClose className="size-[18px]" />
+                )}
+              </span>
+              <span className="sidebar-item-label">收起</span>
+            </button>
+          )}
         </div>
       )}
     </>
@@ -219,6 +251,73 @@ export default function AppShell({ currentUser, onLogout, children }: AppShellPr
 
   const itemStyle = { height: 48, lineHeight: "48px", paddingTop: 0, paddingBottom: 0 };
 
+  // 当前页标题（按路由映射）
+  const pageMeta = resolvePageMeta(location.pathname);
+
+  // 用户菜单（桌面 sidebar 底部用户入口的 Dropdown 内容）
+  const userMenu = (
+    <Dropdown.Menu>
+      <Dropdown.Item disabled style={itemStyle}>
+        <span className="text-sm font-medium text-[#0f1419]">
+          {currentUserLabel}
+        </span>
+      </Dropdown.Item>
+      <Dropdown.Divider />
+      {role === "admin" && (
+        <Dropdown.Item icon={<History className="h-4 w-4" />} style={itemStyle}>
+          <Link to="/sync-center">数据同步中心</Link>
+        </Dropdown.Item>
+      )}
+      {(role === "admin" || role === "manager") && (
+        <Dropdown.Item icon={<Users className="h-4 w-4" />} style={itemStyle}>
+          <Link to="/users">用户管理</Link>
+        </Dropdown.Item>
+      )}
+      <Dropdown.Item icon={<MessageSquareText className="h-4 w-4" />} style={itemStyle}>
+        <Link to="/feedback">反馈与申诉</Link>
+      </Dropdown.Item>
+      <Dropdown.Divider />
+      <Dropdown.Item
+        icon={<LogOut className="h-4 w-4" />}
+        type="danger"
+        onClick={onLogout}
+        style={itemStyle}
+      >
+        退出登录
+      </Dropdown.Item>
+    </Dropdown.Menu>
+  );
+
+  // 桌面 sidebar 底部：通知铃铛独立一行 + 用户入口一行；折叠态只显示图标
+  const sidebarFooterExtras = (
+    <>
+      <button
+        type="button"
+        className="sidebar-item"
+        title="通知"
+        aria-label="通知"
+      >
+        <span className="sidebar-item-icon">
+          <Bell className="size-[18px]" />
+        </span>
+        <span className="sidebar-item-label">通知</span>
+      </button>
+      <Dropdown trigger="click" position="topLeft" render={userMenu}>
+        <button
+          type="button"
+          className="sidebar-item"
+          title={collapsed ? currentUserLabel : undefined}
+          aria-label="用户菜单"
+        >
+          <span className="sidebar-item-icon">
+            <User className="size-[18px]" />
+          </span>
+          <span className="sidebar-item-label">{currentUserLabel}</span>
+        </button>
+      </Dropdown>
+    </>
+  );
+
   return (
     <div className="app-shell">
       {/* 桌面 Sidebar（<768px 隐藏，走抽屉） */}
@@ -230,6 +329,7 @@ export default function AppShell({ currentUser, onLogout, children }: AppShellPr
             systemItems={systemItems}
             pathname={location.pathname}
             onToggleCollapse={toggleCollapsed}
+            footerExtras={sidebarFooterExtras}
           />
         </aside>
       )}
@@ -303,73 +403,27 @@ export default function AppShell({ currentUser, onLogout, children }: AppShellPr
       )}
 
       <div className="app-main">
-        <header className="utility-header">
-          <div className="utility-header-left">
-            {isMobile && (
-              <button
-                type="button"
-                className="utility-icon-btn"
-                onClick={() => setDrawerOpen(true)}
-                aria-label="打开导航菜单"
-              >
-                <Menu className="size-5" />
-              </button>
-            )}
-          </div>
-          <div className="utility-header-right">
-            <button
-              type="button"
-              className="utility-icon-btn"
-              title="消息通知"
-              aria-label="消息通知"
-            >
-              <Bell className="size-4" />
-            </button>
-            <Dropdown
-              trigger="click"
-              position="bottomRight"
-              render={
-                <Dropdown.Menu>
-                  <Dropdown.Item disabled style={itemStyle}>
-                    <span className="text-sm font-medium text-[#0f1419]">
-                      {currentUserLabel}
-                    </span>
-                  </Dropdown.Item>
-                  <Dropdown.Divider />
-                  {role === "admin" && (
-                    <Dropdown.Item icon={<History className="h-4 w-4" />} style={itemStyle}>
-                      <Link to="/sync-center">数据同步中心</Link>
-                    </Dropdown.Item>
-                  )}
-                  {(role === "admin" || role === "manager") && (
-                    <Dropdown.Item icon={<Users className="h-4 w-4" />} style={itemStyle}>
-                      <Link to="/users">用户管理</Link>
-                    </Dropdown.Item>
-                  )}
-                  <Dropdown.Item icon={<MessageSquareText className="h-4 w-4" />} style={itemStyle}>
-                    <Link to="/feedback">反馈与申诉</Link>
-                  </Dropdown.Item>
-                  <Dropdown.Divider />
-                  <Dropdown.Item
-                    icon={<LogOut className="h-4 w-4" />}
-                    type="danger"
-                    onClick={onLogout}
-                    style={itemStyle}
-                  >
-                    退出登录
-                  </Dropdown.Item>
-                </Dropdown.Menu>
-              }
-            >
-              <button type="button" className="utility-icon-btn" title="用户" aria-label="用户">
-                <User className="h-4 w-4" />
-              </button>
-            </Dropdown>
-          </div>
-        </header>
-
+        {/* Workspace：唯一纵向滚动区；header 作为内容流的一部分随内容滚动，不再是固定栏 */}
         <main className="workspace">
-          <div className="workspace-inner">{children}</div>
+          <div className="workspace-inner">
+            {/* 页面标题 frame：白底卡片样式，与内容卡片同规范 */}
+            <header className="utility-header">
+              {isMobile && (
+                <button
+                  type="button"
+                  className="utility-icon-btn"
+                  onClick={() => setDrawerOpen(true)}
+                  aria-label="打开导航菜单"
+                >
+                  <Menu className="size-5" />
+                </button>
+              )}
+              {pageMeta && (
+                <span className="utility-header-title-main">{pageMeta.title}</span>
+              )}
+            </header>
+            {children}
+          </div>
         </main>
       </div>
     </div>

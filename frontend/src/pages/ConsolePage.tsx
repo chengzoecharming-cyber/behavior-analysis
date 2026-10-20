@@ -61,6 +61,7 @@ import OrgQueryPanel from "../components/OrgQueryPanel";
 import TrajectoryTimeline from "../components/TrajectoryTimeline";
 import { AnomalyItem } from "../components/AnomalyItem";
 import DateAxis from "../components/DateAxis";
+import { statLabelStyle, statValueStyle } from "../components/statStyles";
 import { Suspense, lazy } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 
@@ -309,18 +310,6 @@ function getCascaderValueFromState(
 
   return [];
 }
-
-const statLabelStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "var(--text-tertiary)",
-  fontWeight: 500,
-};
-
-const statValueStyle: React.CSSProperties = {
-  fontSize: 28,
-  fontWeight: 700,
-  color: "var(--text-primary)",
-};
 
 function computeApprovalReportedKm(visits: Visit[]): number {
   const drivingVisits = visits
@@ -968,8 +957,8 @@ function ConsolePage() {
 
   return (
     <div>
-      {/* 顶部查询区 */}
-      <div style={{ paddingBottom: 12 }}>
+      {/* 顶部查询区：两行结构，模块间距统一 16px */}
+      <div>
         {/* 移动端允许换行，避免控件横向溢出 */}
         <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16, ...(isMobile ? { flexWrap: "wrap", rowGap: 8 } : {}) }}>
           <Col style={{ flex: isMobile ? "0 0 100%" : "0 0 auto" }}>
@@ -1037,32 +1026,13 @@ function ConsolePage() {
             )}
             {(scope === "person" ? userId : true) && (
               <button
+                className="btn-export-report"
                 onClick={handleExportConsoleReport}
                 disabled={
                   exportLoading ||
                   (scope === "person" && dateRange[0] !== dateRange[1] && !overviewData) ||
                   (scope !== "person" && (!orgOverviewData || orgOverviewLoading))
                 }
-                style={{
-                  padding: "8px 16px",
-                  backgroundColor:
-                    exportLoading ||
-                    (scope === "person" && dateRange[0] !== dateRange[1] && !overviewData) ||
-                    (scope !== "person" && (!orgOverviewData || orgOverviewLoading))
-                      ? "#e0e0e0"
-                      : "#f0f0f0",
-                  color: "#333",
-                  border: "none",
-                  borderRadius: 9999,
-                  cursor:
-                    exportLoading ||
-                    (scope === "person" && dateRange[0] !== dateRange[1] && !overviewData) ||
-                    (scope !== "person" && (!orgOverviewData || orgOverviewLoading))
-                      ? "not-allowed"
-                      : "pointer",
-                  fontSize: 14,
-                  fontWeight: 500,
-                }}
               >
                 {exportLoading ? "发送中..." : "导出到我的工作通知"}
               </button>
@@ -1071,7 +1041,7 @@ function ConsolePage() {
         </Row>
 
         {dateRange[0] === dateRange[1] && (
-          <Row type="flex" gutter={16} align="middle">
+          <Row type="flex" gutter={16} align="middle" style={{ marginBottom: 16 }}>
             <Col span={24}>
               <DateAxis
                 availableDateInfos={availableDateInfos}
@@ -1097,90 +1067,80 @@ function ConsolePage() {
 
       {scope === "person" && dateRange[0] === dateRange[1] && selectedDate && (
         <>
-          {/* KPI 指标区：移动端 2×2 折行 */}
-          <div className="kpi-strip kpi-strip-cols">
-          <Row gutter={16} style={{ ...(isMobile ? { rowGap: 16 } : {}) }}>
-            <Col span={isMobile ? 12 : 6}>
-              <div className="kpi-item">
-                <span style={statLabelStyle}>拜访点数</span>
-                <span style={statValueStyle}>{overviewGroup.visits.filter((v) => !v.exclude_from_visit_count).length}</span>
+          {/* KPI 指标区：一整块白卡 + 竖向细分隔线；移动端自动 2×2 折行 */}
+          <div className="kpi-strip">
+            <div className="kpi-item">
+              <span style={statLabelStyle}>拜访点数</span>
+              <span style={statValueStyle}>{overviewGroup.visits.filter((v) => !v.exclude_from_visit_count).length}</span>
+            </div>
+            <div className="kpi-item">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                }}
+              >
+                <span style={statLabelStyle}>总里程 vs 估算里程</span>
+                {hasMileageReadingInvalid(overviewGroup.anomalies) && (
+                  <Popover
+                    content={
+                      <MileageAnomalyPopover
+                        anomalies={overviewGroup.anomalies}
+                        userName={
+                          users.find((u) => u.user_id === userId)?.user_name ||
+                          userId ||
+                          ""
+                        }
+                        approvalGroups={approvalGroups}
+                      />
+                    }
+                    position="topRight"
+                  >
+                    <Tag color="orange" style={{ marginLeft: 8, cursor: "pointer" }}>
+                      填报异常
+                    </Tag>
+                  </Popover>
+                )}
               </div>
-            </Col>
-            <Col span={isMobile ? 12 : 6}>
-              <div className="kpi-item">
-                <div
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
-                  }}
-                >
-                  <span style={statLabelStyle}>总里程 vs 估算里程</span>
-                  {hasMileageReadingInvalid(overviewGroup.anomalies) && (
-                    <Popover
-                      content={
-                        <MileageAnomalyPopover
-                          anomalies={overviewGroup.anomalies}
-                          userName={
-                            users.find((u) => u.user_id === userId)?.user_name ||
-                            userId ||
-                            ""
-                          }
-                          approvalGroups={approvalGroups}
-                        />
-                      }
-                      position="topRight"
+              <span style={statValueStyle}>
+                {overviewGroup.mileage.reportedDistanceKm === 0 &&
+                overviewGroup.mileage.totalKm === 0 ? (
+                  <span style={{ color: "#999", fontSize: 16 }}>公共交通/无驾车</span>
+                ) : (
+                  <>
+                    <span
+                      style={{
+                        color: hasMileageReadingInvalid(overviewGroup.anomalies)
+                          ? "#fa8c16"
+                          : overviewGroup.mileage.reportedDistanceKm
+                          ? "#0f1419"
+                          : "#999",
+                      }}
                     >
-                      <Tag color="orange" style={{ marginLeft: 8, cursor: "pointer" }}>
-                        填报异常
-                      </Tag>
-                    </Popover>
-                  )}
-                </div>
-                <span style={statValueStyle}>
-                  {overviewGroup.mileage.reportedDistanceKm === 0 &&
-                  overviewGroup.mileage.totalKm === 0 ? (
-                    <span style={{ color: "#999", fontSize: 16 }}>公共交通/无驾车</span>
-                  ) : (
-                    <>
-                      <span
-                        style={{
-                          color: hasMileageReadingInvalid(overviewGroup.anomalies)
-                            ? "#fa8c16"
-                            : overviewGroup.mileage.reportedDistanceKm
-                            ? "#0f1419"
-                            : "#999",
-                        }}
-                      >
-                        {overviewGroup.mileage.reportedDistanceKm || "未填报"}
-                      </span>
-                      <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
-                      <span>{Math.round(overviewGroup.mileage.totalKm)}</span>
-                    </>
-                  )}
-                </span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 12 : 6}>
-              <div className="kpi-item">
-                <span style={statLabelStyle}>Segment 数</span>
-                <span style={statValueStyle}>{overviewGroup.mileage.segmentCount}</span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 12 : 6}>
-              <div className="kpi-item">
-                <span style={statLabelStyle}>估算油费 (元)</span>
-                <span style={statValueStyle}>
-                  {overviewGroup.mileage.estimatedFuelCost === 0 &&
-                  overviewGroup.mileage.totalKm === 0 ? (
-                    <span style={{ color: "#999" }}>-</span>
-                  ) : (
-                    overviewGroup.mileage.estimatedFuelCost
-                  )}
-                </span>
-              </div>
-            </Col>
-          </Row>
+                      {overviewGroup.mileage.reportedDistanceKm || "未填报"}
+                    </span>
+                    <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>vs</span>
+                    <span>{Math.round(overviewGroup.mileage.totalKm)}</span>
+                  </>
+                )}
+              </span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>Segment 数</span>
+              <span style={statValueStyle}>{overviewGroup.mileage.segmentCount}</span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>估算油费 (元)</span>
+              <span style={statValueStyle}>
+                {overviewGroup.mileage.estimatedFuelCost === 0 &&
+                overviewGroup.mileage.totalKm === 0 ? (
+                  <span style={{ color: "#999" }}>-</span>
+                ) : (
+                  overviewGroup.mileage.estimatedFuelCost
+                )}
+              </span>
+            </div>
           </div>
 
           {/* Anomalies + Map：移动端纵向流——地图整宽在上，轨迹/异常面板整宽在下 */}
@@ -1189,7 +1149,7 @@ function ConsolePage() {
               <div
                 className="panel-bordered"
                 style={{
-                  padding: 20,
+                  padding: "var(--card-padding)",
                   height: "100%",
                   display: "flex",
                   flexDirection: "column",
@@ -1199,7 +1159,7 @@ function ConsolePage() {
               >
                 <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
                   {/* 轨迹内容 */}
-                  <div style={{ marginBottom: 40 }}>
+                  <div style={{ marginBottom: 24 }}>
                     <div
                       onClick={() => setTrajectoryExpanded(!trajectoryExpanded)}
                       style={{
@@ -1322,7 +1282,7 @@ function ConsolePage() {
               <div
                 className="panel-bordered"
                 style={{
-                  padding: 20,
+                  padding: "var(--card-padding)",
                   height: isMobile ? "320px" : "500px",
                   display: "flex",
                   flexDirection: "column",
@@ -1396,7 +1356,7 @@ function ConsolePage() {
                         style={{
                           width: 1,
                           height: 16,
-                          backgroundColor: "#d9d9d9",
+                          backgroundColor: "var(--border-default)",
                           margin: "0 4px",
                         }}
                       />
@@ -1506,69 +1466,61 @@ function OverviewPanel({
         <div style={{ color: "#999" }}>选择时间范围加载数据</div>
       ) : (
         <>
-          <div className="kpi-strip kpi-strip-cols">
-          <Row gutter={16} style={{ ...(isMobile ? { rowGap: 16 } : {}) }}>
-            <Col span={isMobile ? 24 : 8}>
-              <div className="kpi-item">
-                <div
+          <div className="kpi-strip">
+            <div className="kpi-item">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                }}
+              >
+                <span style={statLabelStyle}>填报 / 估算里程</span>
+                {hasMileageReadingInvalid(data?.anomalies ?? []) && (
+                  <Popover
+                    content={
+                      <MileageAnomalyPopover
+                        anomalies={data?.anomalies ?? []}
+                        userName={userName}
+                      />
+                    }
+                    position="topRight"
+                  >
+                    <Tag color="orange" style={{ marginLeft: 8, cursor: "pointer" }}>
+                      填报异常
+                    </Tag>
+                  </Popover>
+                )}
+              </div>
+              <span style={statValueStyle}>
+                <span
                   style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "flex-start",
+                    color: hasMileageReadingInvalid(data?.anomalies ?? [])
+                      ? "#fa8c16"
+                      : "#0f1419",
                   }}
                 >
-                  <span style={statLabelStyle}>填报 / 估算里程</span>
-                  {hasMileageReadingInvalid(data?.anomalies ?? []) && (
-                    <Popover
-                      content={
-                        <MileageAnomalyPopover
-                          anomalies={data?.anomalies ?? []}
-                          userName={userName}
-                        />
-                      }
-                      position="topRight"
-                    >
-                      <Tag color="orange" style={{ marginLeft: 8, cursor: "pointer" }}>
-                        填报异常
-                      </Tag>
-                    </Popover>
-                  )}
-                </div>
-                <span style={statValueStyle}>
-                  <span
-                    style={{
-                      color: hasMileageReadingInvalid(data?.anomalies ?? [])
-                        ? "#fa8c16"
-                        : "#0f1419",
-                    }}
-                  >
-                    {totals?.reported_distance_km ?? 0}
-                  </span>
-                  <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>/</span>
-                  <span>{Math.round(totals?.estimated_distance_km ?? 0)}</span>
-                  <span style={{ fontSize: 12, color: "#999" }}>km</span>
+                  {totals?.reported_distance_km ?? 0}
                 </span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 24 : 8}>
-              <div className="kpi-item">
-                <span style={statLabelStyle}>预估油费</span>
-                <span style={statValueStyle}>
-                  {estimatedFuelCost}
-                  <span style={{ fontSize: 12, color: "#999" }}>元</span>
-                </span>
-              </div>
-            </Col>
-            <Col span={isMobile ? 24 : 8}>
-              <div className="kpi-item">
-                <span style={statLabelStyle}>拜访频率</span>
-                <span style={statValueStyle}>
-                  {visitFrequency}
-                  <span style={{ fontSize: 12, color: "#999" }}>次/天</span>
-                </span>
-              </div>
-            </Col>
-          </Row>
+                <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>/</span>
+                <span>{Math.round(totals?.estimated_distance_km ?? 0)}</span>
+                <span style={{ fontSize: 12, color: "#999" }}>km</span>
+              </span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>预估油费</span>
+              <span style={statValueStyle}>
+                {estimatedFuelCost}
+                <span style={{ fontSize: 12, color: "#999" }}>元</span>
+              </span>
+            </div>
+            <div className="kpi-item">
+              <span style={statLabelStyle}>拜访频率</span>
+              <span style={statValueStyle}>
+                {visitFrequency}
+                <span style={{ fontSize: 12, color: "#999" }}>次/天</span>
+              </span>
+            </div>
           </div>
 
           <Row
@@ -1587,8 +1539,8 @@ function OverviewPanel({
               <div
                 className="panel-bordered"
                 style={{
-                  padding: 20,
-                  height: isMobile ? 300 : 400,
+                  padding: "var(--card-padding)",
+                  height: isMobile ? 300 : 360,
                   display: "flex",
                   flexDirection: "column",
                 }}
@@ -1617,7 +1569,7 @@ function OverviewPanel({
               <div
                 className="panel-bordered"
                 style={{
-                  padding: 20,
+                  padding: "var(--card-padding)",
                   height: isMobile ? 320 : 460,
                   display: "flex",
                   flexDirection: "column",
@@ -1710,7 +1662,7 @@ function MileageDeviationGroup({
                       borderRadius: 4,
                       backgroundColor: "#f5f5f5",
                       color: "#666",
-                      border: "1px solid #d9d9d9",
+                      border: "1px solid var(--border-default)",
                       fontSize: 12,
                       alignSelf: "flex-start",
                     }}
@@ -1780,7 +1732,7 @@ function RiskTagsAlert({
               borderRadius: 4,
               backgroundColor: "#f5f5f5",
               color: "#666",
-              border: "1px solid #d9d9d9",
+              border: "1px solid var(--border-default)",
               fontSize: 12,
             }}
           >
@@ -1799,7 +1751,7 @@ function RiskTagsAlert({
             borderRadius: 4,
             backgroundColor: "#f5f5f5",
             color: "#666",
-            border: "1px solid #d9d9d9",
+            border: "1px solid var(--border-default)",
             fontSize: 12,
             alignSelf: "flex-start",
           }}
@@ -1841,8 +1793,8 @@ function RiskTagsAlert({
         <span style={{ fontSize: 15, fontWeight: 600 }}>周期风险</span>
       }
       headerStyle={{ borderBottom: "none", padding: "20px 20px 0" }}
-      bodyStyle={{ padding: 20, overflowY: "auto", flex: 1, minHeight: 0 }}
-      style={{ height: 400, display: "flex", flexDirection: "column" }}
+      bodyStyle={{ padding: "var(--card-padding)", overflowY: "auto", flex: 1, minHeight: 0 }}
+      style={{ height: 360, display: "flex", flexDirection: "column" }}
     >
       <div>
         {riskTypes.map((risk) => {

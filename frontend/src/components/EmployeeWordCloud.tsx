@@ -33,8 +33,9 @@ export default function EmployeeWordCloud({
       data: [{ id: "words", values }],
       nameField: "name",
       valueField: "value",
-      seriesField: "name",
-      fontSizeRange: [14, 48],
+      // 减少颜色数量与最大字号：紫系三档，降低视觉噪声
+      color: ["#4B24E3", "#7A5BF0", "#B3A5F7"],
+      fontSizeRange: [12, 32],
       padding: { top: 0, bottom: 0, left: 0, right: 0 },
       tooltip: {
         visible: true,

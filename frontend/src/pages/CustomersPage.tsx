@@ -14,7 +14,7 @@ import { IconSearch } from "@douyinfe/semi-icons";
 import { fetchCrmCustomers } from "../api";
 import type { CrmCustomerListItem, CrmCustomerListResponse } from "../types";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const CUSTOMER_TYPE_LABELS: Record<string, string> = {
   enterprise_domestic: "国内企业",
@@ -127,7 +127,6 @@ export default function CustomersPage() {
   return (
     <div style={{ backgroundColor: "#fff", padding: 24, minHeight: "100%" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", flexWrap: "wrap", gap: 8 }}>
-        <Title heading={4} style={{ margin: 0 }}>客户库</Title>
         <Text type="tertiary" size="small">
           CRM 数据快照：{data?.snapshot_date || "未知"}（手工导入，非实时）
         </Text>

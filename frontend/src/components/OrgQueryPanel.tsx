@@ -4,7 +4,8 @@ import { IconInfoCircle } from "@douyinfe/semi-icons";
 import dayjs from "dayjs";
 import { fetchOrgOverview, OrgOverviewResponse, OrgRankingItem } from "../api";
 import HeatMapContainer from "./HeatMapContainer";
-import ProvinceDonutChart from "./ProvinceDonutChart";
+import ProvinceBarChart from "./ProvinceBarChart";
+import { statLabelStyle, statValueStyle } from "./statStyles";
 import { Suspense, lazy } from "react";
 import { useIsMobile } from "../hooks/useIsMobile";
 
@@ -18,18 +19,6 @@ interface OrgQueryPanelProps {
   start: string;
   end: string;
 }
-
-const statLabelStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "var(--text-tertiary)",
-  fontWeight: 500,
-};
-
-const statValueStyle: React.CSSProperties = {
-  fontSize: 28,
-  fontWeight: 700,
-  color: "var(--text-primary)",
-};
 
 function formatKm(value: number): string {
   return `${Math.round(value)}`;
@@ -48,9 +37,30 @@ function buildConsoleHref(record: OrgRankingItem, start: string, end: string): s
   return `/console?${params.toString()}`;
 }
 
+/**
+ * 「较昨日」环比徽标：previous 为 null/0（昨日无数据）时不显示。
+ * 三段式：箭头与 ±% 带涨跌色（升绿降红），「较昨日」文字为灰色。
+ */
+function DeltaBadge({ current, previous }: { current: number; previous: number | null }) {
+  if (previous == null || previous === 0) return null;
+  const pct = ((current - previous) / previous) * 100;
+  const up = pct >= 0;
+  return (
+    <span className={`delta-badge ${up ? "up" : "down"}`}>
+      <span className="delta-badge-arrow">{up ? "▲" : "▼"}</span>
+      <span className="delta-badge-label">较昨日</span>
+      <span className="delta-badge-value">
+        {up ? "+" : ""}{pct.toFixed(1)}%
+      </span>
+    </span>
+  );
+}
+
 function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
   const [loading, setLoading] = useState(false);
   const [data, setData] = useState<OrgOverviewResponse | null>(null);
+  // 单日模式下的前一天数据（用于 KPI 卡「较昨日」环比徽标）；多日/个人视角不请求
+  const [prevDayData, setPrevDayData] = useState<OrgOverviewResponse | null>(null);
   // 移动端（<768px）：指标卡 2×2、图表卡单列
   const isMobile = useIsMobile();
 
@@ -137,6 +147,26 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
 
   const isSingleDay = dayCount === 1;
 
+  // 单日模式：额外拉取前一天总览，供「较昨日」环比徽标使用；昨日无数据/请求失败则不显示
+  useEffect(() => {
+    if (!isSingleDay) {
+      setPrevDayData(null);
+      return;
+    }
+    const prevDay = dayjs.tz(start).subtract(1, "day").format("YYYY-MM-DD");
+    let cancelled = false;
+    fetchOrgOverview(scope, nodeName, prevDay, prevDay)
+      .then((res) => {
+        if (!cancelled) setPrevDayData(res);
+      })
+      .catch(() => {
+        if (!cancelled) setPrevDayData(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [scope, nodeName, start, isSingleDay]);
+
   const visitFrequency = useMemo(() => {
     if (!data || dayCount <= 0) return "0";
     return (data.stats.totalVisits / dayCount).toFixed(2);
@@ -151,6 +181,16 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     if (!data) return "0";
     return String(data.stats.totalCustomers);
   }, [data]);
+
+  // 「较昨日」环比基数：仅单日模式取前一天数据；昨日无数据/为 0 时徽标自动隐藏
+  const prevStats = isSingleDay ? prevDayData?.stats ?? null : null;
+  const prevReportedKm = prevStats ? prevStats.totalReportedKm : null;
+  const prevTotalVisits = prevStats ? prevStats.totalVisits : null;
+  const prevAvgVisitsPerEmployee =
+    prevStats && prevStats.totalEmployees > 0
+      ? prevStats.totalVisits / prevStats.totalEmployees
+      : null;
+  const prevCustomers = prevStats ? prevStats.totalCustomers : null;
 
   // 懒加载下一级数据
   const loadChildren = useCallback(
@@ -199,28 +239,6 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     [loadChildren]
   );
 
-  const renderName = useCallback(
-    (record: OrgRankingItem) => {
-      const href = buildConsoleHref(record, start, end);
-      return (
-        <a
-          href={href}
-          onClick={(e) => {
-            e.preventDefault();
-            window.open(href, "_blank");
-          }}
-        >
-          {record.level === "person" ? (
-            <span style={{ color: "#0066ff" }}>{record.name}</span>
-          ) : (
-            <Tag style={{ cursor: "pointer" }}>{record.name}</Tag>
-          )}
-        </a>
-      );
-    },
-    [start, end]
-  );
-
   // 名称列按层级缩进：每深一级缩进 20px
   const getNameIndent = useCallback(
     (record: OrgRankingItem) => {
@@ -242,13 +260,37 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
     [scope]
   );
 
-  // 名称列内容最大宽度：固定列宽 170 - 左右 padding 32 - 缩进 - 展开图标 12 - 图标与文字间距 8
+  // 名称列：普通文本 + 层级字重/颜色（父级稍粗深色、子级常规），人员行用品牌紫链接
+  const renderName = useCallback(
+    (record: OrgRankingItem) => {
+      const href = buildConsoleHref(record, start, end);
+      const levelClass = `ranking-name-level-${Math.min(getRelativeLevel(record), 2)}`;
+      return (
+        <a
+          href={href}
+          onClick={(e) => {
+            e.preventDefault();
+            window.open(href, "_blank");
+          }}
+        >
+          {record.level === "person" ? (
+            <span style={{ color: "var(--primary)" }}>{record.name}</span>
+          ) : (
+            <span className={levelClass}>{record.name}</span>
+          )}
+        </a>
+      );
+    },
+    [start, end, getRelativeLevel]
+  );
+
+  // 名称列内容最大宽度：固定列宽 150 - 左右 padding 32 - 缩进 - 展开图标 12 - 图标与文字间距 8
   const getNameMaxWidth = useCallback(
     (record: OrgRankingItem) => {
       const indent = getNameIndent(record);
       const iconWidth = record.hasChildren ? 12 : 0;
       const gap = record.hasChildren ? 8 : 0;
-      return 170 - 32 - indent - iconWidth - gap;
+      return 150 - 32 - indent - iconWidth - gap;
     },
     [getNameIndent]
   );
@@ -258,7 +300,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
       {
         title: "名称",
         dataIndex: "name",
-        width: 170,
+        width: 150,
         render: (_: any, record: OrgRankingItem) => (
           <div
             style={{
@@ -284,43 +326,31 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           </span>
         ),
         dataIndex: "visitCount",
-        width: 130,
+        width: 108,
+        align: "left" as const,
+        className: "num-cell",
         sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
           (a?.visitCount ?? 0) - (b?.visitCount ?? 0),
-        render: (_: any, record: OrgRankingItem) =>
-          record.accompanyCount > 0
-            ? `${record.visitCount}（${record.accompanyCount}）`
-            : `${record.visitCount}`,
+        render: (_: any, record: OrgRankingItem) => (
+          <span style={{ whiteSpace: "nowrap" }}>
+            {record.visitCount}
+            {record.accompanyCount > 0 && (
+              <span style={{ color: "#999" }}>（{record.accompanyCount}）</span>
+            )}
+          </span>
+        ),
       },
       {
         title: "填报/估算里程",
         dataIndex: "reportedKm",
+        align: "left" as const,
+        className: "num-cell",
         render: (_: any, record: OrgRankingItem) => (
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <Tag
-              size="small"
-              style={{
-                backgroundColor: "#f5f5f5",
-                border: "1px solid #d9d9d9",
-                color: "#333333",
-                fontSize: 12,
-              }}
-            >
-              {formatKm(record.reportedKm)}
-            </Tag>
-            <span style={{ color: "#999" }}>/</span>
-            <Tag
-              size="small"
-              style={{
-                backgroundColor: "#f5f5f5",
-                border: "1px solid #d9d9d9",
-                color: "#333333",
-                fontSize: 12,
-              }}
-            >
-              {formatKm(record.estimatedKm)}
-            </Tag>
-          </div>
+          <span style={{ whiteSpace: "nowrap" }}>
+            {formatKm(record.reportedKm)}
+            <span style={{ color: "#999", margin: "0 6px" }}>/</span>
+            {formatKm(record.estimatedKm)}
+          </span>
         ),
         sorter: (a?: OrgRankingItem, b?: OrgRankingItem) =>
           (a?.reportedKm ?? 0) - (b?.reportedKm ?? 0),
@@ -328,7 +358,6 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
       {
         title: "风险标签",
         dataIndex: "riskTags",
-        width: 140,
         className: "risk-tag-cell",
         render: (_: any, record: OrgRankingItem) => {
           const allTags = [
@@ -339,28 +368,30 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           ].filter((t) => record[t.key]);
 
           const visibleTags = allTags.slice(0, 2);
-          const hiddenCount = allTags.length - visibleTags.length;
+          const hiddenTags = allTags.slice(2);
 
           return (
-            <div style={{ display: "flex", flexWrap: "nowrap", gap: 4, paddingRight: 16 }}>
+            <div style={{ display: "flex", flexWrap: "nowrap", gap: 4 }}>
               {visibleTags.map((t) => (
                 <Tag key={t.key} size="small" color={t.color} style={{ marginRight: 0, flexShrink: 0 }}>
                   {t.label}
                 </Tag>
               ))}
-              {hiddenCount > 0 && (
-                <Tag
-                  size="small"
-                  style={{
-                    backgroundColor: "#f5f5f5",
-                    border: "1px solid #e8e8e8",
-                    color: "#666",
-                    marginRight: 0,
-                    flexShrink: 0,
-                  }}
-                >
-                  +{hiddenCount}
-                </Tag>
+              {hiddenTags.length > 0 && (
+                <Tooltip content={hiddenTags.map((t) => t.label).join("、")}>
+                  <Tag
+                    size="small"
+                    style={{
+                      backgroundColor: "transparent",
+                      border: "1px solid var(--border-default)",
+                      color: "var(--text-tertiary)",
+                      marginRight: 0,
+                      flexShrink: 0,
+                    }}
+                  >
+                    +{hiddenTags.length}
+                  </Tag>
+                </Tooltip>
               )}
             </div>
           );
@@ -382,7 +413,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
         );
       }
       return (
-        <div>
+        <div style={{ width: "100%" }}>
           <Table
             columns={rankingColumns}
             dataSource={children}
@@ -390,7 +421,6 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             rowKey="key"
             size="small"
             showHeader={false}
-            scroll={{ x: "100%" }}
             expandedRowRender={expandedRowRender}
             rowExpandable={(r?: OrgRankingItem) => !!r?.hasChildren}
             expandedRowKeys={Array.from(expandedKeys)}
@@ -421,53 +451,45 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
 
   return (
     <div>
-      <style>{`
-        .risk-tag-cell .semi-table-cell {
-          padding-right: 0 !important;
-        }
-      `}</style>
-      {/* KPI 指标区：与个人周期总览保持一致，并补充正向指标；移动端 2×2 */}
-      <div className="kpi-strip kpi-strip-cols">
-      <Row gutter={16} style={{ ...(isMobile ? { rowGap: 16 } : {}) }}>
-        <Col span={isMobile ? 12 : 6}>
-          <div className="kpi-item">
-            <span style={statLabelStyle}>填报 / 估算里程</span>
-            <span style={statValueStyle}>
-              <span>{stats.totalReportedKm}</span>
-              <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>/</span>
-              <span>{Math.round(stats.totalEstimatedKm)}</span>
-              <span style={{ fontSize: 12, color: "#999" }}>km</span>
-            </span>
-          </div>
-        </Col>
-        <Col span={isMobile ? 12 : 6}>
-          <div className="kpi-item">
-            <span style={statLabelStyle}>拜访频率</span>
-            <span style={statValueStyle}>
-              {visitFrequency}
-              <span style={{ fontSize: 12, color: "#999" }}>次/天</span>
-            </span>
-          </div>
-        </Col>
-        <Col span={isMobile ? 12 : 6}>
-          <div className="kpi-item">
-            <span style={statLabelStyle}>人均拜访次数</span>
-            <span style={statValueStyle}>
-              {avgVisitsPerEmployee}
-              <span style={{ fontSize: 12, color: "#999" }}>次/人</span>
-            </span>
-          </div>
-        </Col>
-        <Col span={isMobile ? 12 : 6}>
-          <div className="kpi-item">
-            <span style={statLabelStyle}>客户覆盖数</span>
-            <span style={statValueStyle}>
-              {customerCoverage}
-              <span style={{ fontSize: 12, color: "#999" }}>个客户</span>
-            </span>
-          </div>
-        </Col>
-      </Row>
+      {/* KPI 指标区：一整块白卡 + 竖向细分隔线；单日模式显示「较昨日」环比徽标 */}
+      <div className="kpi-strip">
+        <div className="kpi-item">
+          <span style={statLabelStyle}>填报 / 估算里程</span>
+          <span style={statValueStyle}>
+            <span>{stats.totalReportedKm}</span>
+            <span style={{ fontSize: 14, color: "#999", margin: "0 4px" }}>/</span>
+            <span>{Math.round(stats.totalEstimatedKm)}</span>
+            <span style={{ fontSize: 12, color: "#999" }}>km</span>
+          </span>
+          <DeltaBadge current={stats.totalReportedKm} previous={prevReportedKm} />
+        </div>
+        <div className="kpi-item">
+          <span style={statLabelStyle}>拜访频率</span>
+          <span style={statValueStyle}>
+            {visitFrequency}
+            <span style={{ fontSize: 12, color: "#999" }}>次/天</span>
+          </span>
+          <DeltaBadge current={stats.totalVisits} previous={prevTotalVisits} />
+        </div>
+        <div className="kpi-item">
+          <span style={statLabelStyle}>人均拜访次数</span>
+          <span style={statValueStyle}>
+            {avgVisitsPerEmployee}
+            <span style={{ fontSize: 12, color: "#999" }}>次/人</span>
+          </span>
+          <DeltaBadge
+            current={stats.totalEmployees > 0 ? stats.totalVisits / stats.totalEmployees : 0}
+            previous={prevAvgVisitsPerEmployee}
+          />
+        </div>
+        <div className="kpi-item">
+          <span style={statLabelStyle}>客户覆盖数</span>
+          <span style={statValueStyle}>
+            {customerCoverage}
+            <span style={{ fontSize: 12, color: "#999" }}>个客户</span>
+          </span>
+          <DeltaBadge current={stats.totalCustomers} previous={prevCustomers} />
+        </div>
       </div>
 
       {/* 拜访热力图 + 排行榜；移动端单列堆叠 */}
@@ -476,8 +498,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           <div
             className="panel-bordered"
             style={{
-              padding: 20,
-              height: isMobile ? 360 : 500,
+              padding: "var(--card-padding)",
+              height: isMobile ? 340 : 400,
               display: "flex",
               flexDirection: "column",
             }}
@@ -494,8 +516,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           <div
             className="org-ranking-card panel-bordered"
             style={{
-              padding: 20,
-              height: isMobile ? 360 : 500,
+              padding: "var(--card-padding)",
+              height: isMobile ? 340 : 400,
               display: "flex",
               flexDirection: "column",
             }}
@@ -512,8 +534,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
                 pagination={false}
                 rowKey="key"
                 size="small"
-                scroll={{ x: "100%" }}
-                expandedRowRender={expandedRowRender}
+                  expandedRowRender={expandedRowRender}
                 rowExpandable={(record?: OrgRankingItem) => !!record?.hasChildren}
                 expandedRowKeys={Array.from(expandedKeys)}
                 onExpand={handleExpand}
@@ -533,8 +554,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
             <div
               className="panel-bordered"
               style={{
-                padding: 20,
-                height: isMobile ? 360 : 500,
+                padding: "var(--card-padding)",
+                height: isMobile ? 300 : 340,
                 display: "flex",
                 flexDirection: "column",
               }}
@@ -576,8 +597,8 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
           <div
             className="panel-bordered"
             style={{
-              padding: 20,
-              height: isMobile ? 360 : 500,
+              padding: "var(--card-padding)",
+              height: isMobile ? 300 : 340,
               display: "flex",
               flexDirection: "column",
             }}
@@ -586,7 +607,7 @@ function OrgQueryPanel({ scope, nodeName, start, end }: OrgQueryPanelProps) {
               拜访省份分布
             </Title>
             <div style={{ flex: 1, minHeight: 0 }}>
-              <ProvinceDonutChart data={data?.provinceDistribution ?? []} />
+              <ProvinceBarChart data={data?.provinceDistribution ?? []} />
             </div>
           </div>
         </Col>

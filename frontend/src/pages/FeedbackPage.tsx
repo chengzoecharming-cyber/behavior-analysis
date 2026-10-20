@@ -22,7 +22,7 @@ import {
   FeedbackItem,
 } from "../api";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const statusMap: Record<string, { label: string; color: string }> = {
   pending: { label: "待审批", color: "orange" },
@@ -194,14 +194,6 @@ export default function FeedbackPage() {
           justifyContent: "space-between",
         }}
       >
-        <div>
-          <Title heading={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
-            反馈与申诉
-          </Title>
-          <Text type="tertiary">
-            对系统判定结果有异议？可提交日期区间申诉；审批通过后该区间内的异常将不再展示。
-          </Text>
-        </div>
         <Button
           theme="solid"
           style={{ backgroundColor: xhsRed, borderColor: xhsRed }}

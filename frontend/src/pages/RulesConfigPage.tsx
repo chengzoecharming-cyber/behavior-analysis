@@ -148,15 +148,6 @@ function RulesConfigPage() {
 
   return (
     <div>
-      <div style={{ marginBottom: 24 }}>
-        <Title heading={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
-          异常规则配置
-        </Title>
-        <Text type="tertiary" style={{ fontSize: 14 }}>
-          调整异常检测权重与阈值，修改后实时生效
-        </Text>
-      </div>
-
       <div style={{ marginBottom: 16, display: "flex", gap: 12 }}>
         <Button icon={<IconRefresh />} onClick={loadRules} loading={loading}>
           刷新

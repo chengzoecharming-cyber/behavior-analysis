@@ -1,45 +1,62 @@
 import "./vchartSetup";
 import { VChart } from "@visactor/react-vchart";
-import type { IPieChartSpec } from "@visactor/vchart";
+import type { IBarChartSpec } from "@visactor/vchart";
 
-interface ProvinceDonutChartProps {
+interface ProvinceBarChartProps {
+  /** 后端已按拜访次数降序排列，尾部为「其他」桶，前端保持传入顺序 */
   data: { name: string; count: number }[];
   height?: number | string;
 }
 
-export default function ProvinceDonutChart({
+/** 拜访省份分布：柱状图，按拜访次数降序横排，柱上标数值 */
+export default function ProvinceBarChart({
   data,
   height = "100%",
-}: ProvinceDonutChartProps) {
-  const spec: IPieChartSpec = {
-    type: "pie",
+}: ProvinceBarChartProps) {
+  const spec: IBarChartSpec = {
+    type: "bar",
     data: [
       {
         id: "province",
         values: data,
       },
     ],
-    categoryField: "name",
-    valueField: "count",
-    innerRadius: 0.45,
-    outerRadius: 0.6,
-    label: {
-      visible: true,
+    xField: "name",
+    yField: "count",
+    barMaxWidth: 36,
+    bar: {
       style: {
-        fontSize: 12,
+        fill: "#4B24E3",
+        cornerRadius: [4, 4, 0, 0],
       },
     },
-    legends: {
+    label: {
       visible: true,
-      orient: "right",
-      item: {
+      position: "outside",
+      style: {
+        fontSize: 12,
+        fill: "#60646C",
+      },
+    },
+    axes: [
+      {
+        orient: "bottom",
         label: {
           style: {
             fontSize: 12,
           },
         },
       },
-    },
+      {
+        orient: "left",
+        label: {
+          visible: false,
+        },
+        grid: {
+          visible: false,
+        },
+      },
+    ],
     tooltip: {
       visible: true,
       mark: {

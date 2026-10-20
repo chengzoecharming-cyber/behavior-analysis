@@ -54,26 +54,6 @@ export default function DateAxis({
     });
   };
 
-  const jumpMonth = (direction: "prev" | "next") => {
-    if (!selectedDate || availableDateInfos.length === 0) return;
-    const current = dayjs.tz(selectedDate);
-    const targetMonth =
-      direction === "prev" ? current.subtract(1, "month") : current.add(1, "month");
-    const datesInMonth = availableDateInfos
-      .map((i) => i.date)
-      .filter((d) => {
-        const dt = dayjs.tz(d);
-        return dt.year() === targetMonth.year() && dt.month() === targetMonth.month();
-      })
-      .sort();
-    if (datesInMonth.length === 0) return;
-    const target =
-      direction === "prev"
-        ? datesInMonth[datesInMonth.length - 1]
-        : datesInMonth[0];
-    onSelectDate(target);
-  };
-
   const handleToday = () => {
     if (availableDateInfos.length === 0) return;
     const today = dayjs.tz().format("YYYY-MM-DD");
@@ -112,47 +92,27 @@ export default function DateAxis({
     return <div style={{ color: "#999" }}>{emptyText}</div>;
   }
 
+  // 结构：左滚动箭头、今天、右滚动箭头在日期序列前面，随后是日期块（跳月按钮已移除）
+  const navBtnStyle: React.CSSProperties = {
+    backgroundColor: "#fff",
+    border: "1px solid #F0F1F3",
+    borderRadius: 6,
+    padding: "4px 10px",
+    cursor: "pointer",
+    fontSize: 13,
+    flexShrink: 0,
+  };
+
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <button
-        onClick={handleToday}
-        style={{
-          backgroundColor: "#fff",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
-          padding: "4px 12px",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-      >
+      <button className="date-axis-nav" onClick={() => scrollDateAxis("left")} style={navBtnStyle}>
+        &lt;
+      </button>
+      <button className="date-axis-nav" onClick={handleToday} style={{ ...navBtnStyle, padding: "4px 12px" }}>
         今天
       </button>
-      <button
-        onClick={() => jumpMonth("prev")}
-        title="上一月"
-        style={{
-          backgroundColor: "#fff",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
-          padding: "4px 10px",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-      >
-        &lt;&lt;
-      </button>
-      <button
-        onClick={() => scrollDateAxis("left")}
-        style={{
-          backgroundColor: "#fff",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
-          padding: "4px 10px",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-      >
-        &lt;
+      <button className="date-axis-nav" onClick={() => scrollDateAxis("right")} style={navBtnStyle}>
+        &gt;
       </button>
       <div
         ref={dateAxisRef}
@@ -175,6 +135,7 @@ export default function DateAxis({
           return (
             <button
               key={info.date}
+              className={`date-axis-day${isActive ? " active" : ""}`}
               data-date={info.date}
               onClick={() => selectDate(info.date)}
               disabled={!hasData}
@@ -185,7 +146,7 @@ export default function DateAxis({
                 padding: "6px 0",
                 borderRadius: 8,
                 border: "none",
-                backgroundColor: isActive ? "#1890ff" : hasData ? "#fff" : "#f5f5f5",
+                backgroundColor: isActive ? "#4B24E3" : hasData ? "#fff" : "#F7F8FA",
                 color: isActive ? "#fff" : hasData ? "#0f1419" : "#bbb",
                 cursor: hasData ? "pointer" : "not-allowed",
                 display: "flex",
@@ -196,8 +157,8 @@ export default function DateAxis({
                 position: "relative",
               }}
             >
-              <span>{weekdayLabels[d.day()]}</span>
-              <span style={{ fontSize: 14, fontWeight: 600 }}>{d.format("MM-DD")}</span>
+              <span style={{ fontWeight: 400, color: isActive ? "rgba(255,255,255,0.85)" : "var(--text-tertiary)" }}>{weekdayLabels[d.day()]}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{d.format("MM-DD")}</span>
               {info.has_anomaly && (
                 <span
                   style={{
@@ -215,33 +176,6 @@ export default function DateAxis({
           );
         })}
       </div>
-      <button
-        onClick={() => scrollDateAxis("right")}
-        style={{
-          backgroundColor: "#fff",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
-          padding: "4px 10px",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-      >
-        &gt;
-      </button>
-      <button
-        onClick={() => jumpMonth("next")}
-        title="下一月"
-        style={{
-          backgroundColor: "#fff",
-          border: "1px solid #d9d9d9",
-          borderRadius: 6,
-          padding: "4px 10px",
-          cursor: "pointer",
-          fontSize: 13,
-        }}
-      >
-        &gt;&gt;
-      </button>
     </div>
   );
 }

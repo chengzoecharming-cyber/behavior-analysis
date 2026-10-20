@@ -23,7 +23,7 @@ import {
   updateUserRole,
 } from "../api";
 
-const { Title, Text } = Typography;
+const { Text } = Typography;
 
 const roleColor: Record<string, "amber" | "blue" | "grey"> = {
   admin: "amber",
@@ -296,9 +296,6 @@ export default function UsersPage() {
   return (
     <div>
       <div className="mb-4 flex items-center justify-between">
-        <Title heading={4} style={{ margin: 0 }}>
-          用户管理
-        </Title>
         {isAdmin && (
           <Button
             theme="solid"

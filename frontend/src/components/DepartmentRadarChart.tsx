@@ -56,6 +56,9 @@ export default function DepartmentRadarChart({
       categoryField: "dimension",
       valueField: "value",
       seriesField: "department",
+      // 放大有效绘图区：外半径拉大、外围留白收窄
+      outerRadius: 0.8,
+      padding: { top: 8, right: 12, bottom: 0, left: 12 },
       point: {
         visible: true,
       },
@@ -81,6 +84,7 @@ export default function DepartmentRadarChart({
       legends: {
         visible: true,
         orient: "bottom",
+        padding: 0,
       },
       tooltip: {
         visible: true,

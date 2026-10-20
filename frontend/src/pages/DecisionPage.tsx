@@ -1,8 +1,9 @@
 import { useEffect, useState, useMemo, lazy, Suspense } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Button, Typography, Spin, Row, Col, Card, Table, Tag } from "@douyinfe/semi-ui";
+import { Button, Spin, Row, Col, Card, Table, Tag } from "@douyinfe/semi-ui";
 import { IconSearch } from "@douyinfe/semi-icons";
 import { useIsMobile } from "../hooks/useIsMobile";
+import { statLabelStyle, statValueStyle } from "../components/statStyles";
 import {
   fetchCompanyDashboard,
   fetchCurrentUser,
@@ -30,7 +31,7 @@ import {
   getPastNMonthsRange,
 } from "../utils/businessPeriod";
 
-const { Title, Text } = Typography;
+
 
 type DateRangeMode =
   | "current_week"
@@ -67,18 +68,6 @@ function getPresetRange(key: DateRangeMode): [string, string] {
       return getCurrentBusinessWeekRange();
   }
 }
-
-const statLabelStyle: React.CSSProperties = {
-  fontSize: 13,
-  color: "var(--text-tertiary)",
-  fontWeight: 500,
-};
-
-const statValueStyle: React.CSSProperties = {
-  fontSize: 28,
-  fontWeight: 700,
-  color: "var(--text-primary)",
-};
 
 function DecisionPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -202,16 +191,6 @@ function DecisionPage() {
 
   return (
     <div>
-      {/* Title */}
-      <div style={{ marginBottom: 12 }}>
-        <Title heading={2} style={{ marginBottom: 8, fontWeight: 600, color: "#0f1419" }}>
-          销售外勤行为分析系统
-        </Title>
-        <Text type="tertiary" style={{ fontSize: 14 }}>
-          公司级 Dashboard：快速掌握外勤整体情况与风险分布
-        </Text>
-      </div>
-
       {/* Filter Bar */}
       <div style={{ marginBottom: 16 }}>
         <div className="flex flex-wrap items-center gap-3" style={{ marginBottom: 12 }}>
@@ -293,7 +272,7 @@ function DecisionPage() {
                 title="拜访趋势"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
+                bodyStyle={{ padding: "var(--card-padding)", height: isMobile ? 300 : 340 }}
               >
                 <Suspense fallback={chartFallback}>
                   <VisitCountTrendChart data={trendData} />
@@ -305,7 +284,7 @@ function DecisionPage() {
                 title="里程趋势"
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
+                bodyStyle={{ padding: "var(--card-padding)", height: isMobile ? 300 : 340 }}
               >
                 <Suspense fallback={chartFallback}>
                   <MileageAreaChart data={trendData} />
@@ -330,7 +309,7 @@ function DecisionPage() {
                 }
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
+                bodyStyle={{ padding: "var(--card-padding)", height: isMobile ? 300 : 340 }}
               >
                 {data.employeeWordCloud.length === 0 ? (
                   <div style={{ color: "#999", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -360,7 +339,7 @@ function DecisionPage() {
                 }
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, height: isMobile ? 360 : 500 }}
+                bodyStyle={{ padding: "var(--card-padding)", height: isMobile ? 300 : 340 }}
               >
                 {data.departmentRadar.length === 0 ? (
                   <div style={{ color: "#999", height: "100%", display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -382,7 +361,7 @@ function DecisionPage() {
                 title={`同客户高频拜访（${freqList.length}）`}
                 headerLine={false}
                 headerStyle={{ paddingBottom: 0 }}
-                bodyStyle={{ padding: 12, maxHeight: 400, overflowY: "auto" }}
+                bodyStyle={{ padding: "var(--card-padding)", maxHeight: 400, overflowY: "auto" }}
               >
                 {freqList.length === 0 ? (
                   <div style={{ color: "#999", padding: 24, textAlign: "center" }}>

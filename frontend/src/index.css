@@ -27,10 +27,28 @@ a {
   --text-primary: #24262B;
   --text-secondary: #60646C;
   --text-tertiary: #8A8D94;
-  --border-default: #E9EAED;
+  /* 边框统一调浅：default 与 light 同量级，层级靠留白+间距而非描边深度 */
+  --border-default: #F0F1F3;
   --border-light: #F0F1F3;
-  --primary: #5B3FFF;
-  --nav-active-bg: #F0EDFF;
+  --primary: #4B24E3;
+  /* 全局卡片内边距规范：内容距卡片 frame 上下左右 16px（指标卡/地图卡/排行榜卡/各 panel-bordered 统一引用） */
+  --card-padding: 16px;
+  --nav-active-bg: #EFEBFD;
+}
+
+/* Semi 品牌色统一为紫（与登录页 .login-dark 同款的 CSS 变量覆盖方式）：
+   Semi 的 token 定义在 body 上，CDN 样式先于 index.css 加载，此处同优先级后定义即生效 */
+body {
+  --semi-color-primary: #4B24E3;
+  --semi-color-primary-hover: #5C38E9;
+  --semi-color-primary-active: #3C1CBA;
+  --semi-color-primary-light-default: #EFEBFD;
+  --semi-color-primary-light-hover: #E3DDFB;
+  --semi-color-primary-light-active: #D6CDF8;
+  /* 表格等组件使用的最浅边框 token，同步调浅 */
+  --semi-color-border-0: #F0F1F3;
+  /* 普通筛选控件/按钮圆角统一 6px */
+  --semi-border-radius-small: 6px;
 }
 
 /* 全局背景色 */
@@ -54,13 +72,11 @@ a {
   border-bottom: 1px solid var(--border-default);
 }
 
-/* KPI 指标区：白底横向条，上下细分隔线，KPI 之间 1px 分隔线（移动端 2×2 折行不画竖线） */
+/* KPI 指标区：每个指标一张独立白卡，卡片间 gap 16（移动端 2×2 折行） */
 .kpi-strip {
   display: flex;
-  background: var(--surface-bg);
-  border-top: 1px solid var(--border-light);
-  border-bottom: 1px solid var(--border-light);
-  margin-bottom: 24px;
+  gap: 16px;
+  margin-bottom: 16px;
 }
 
 .kpi-strip > * {
@@ -72,13 +88,10 @@ a {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding: 16px 20px;
-}
-
-@media (min-width: 768px) {
-  .kpi-item + .kpi-item {
-    border-left: 1px solid var(--border-light);
-  }
+  padding: var(--card-padding);
+  background: var(--surface-bg);
+  border: 1px solid var(--border-default);
+  border-radius: 10px;
 }
 
 @media (max-width: 767px) {
@@ -86,10 +99,7 @@ a {
     flex-wrap: wrap;
   }
   .kpi-strip > * {
-    flex: 1 1 50%;
-  }
-  .kpi-item:nth-child(n + 3) {
-    border-top: 1px solid var(--border-light);
+    flex: 1 1 calc(50% - 8px);
   }
 }
 
@@ -97,38 +107,17 @@ a {
 .panel-bordered {
   background: var(--surface-bg);
   border: 1px solid var(--border-default);
-  border-radius: 6px;
+  border-radius: 10px;
 }
 
-/* KPI 指标区的 Row/Col 嵌套版（Semi/AntD Col 包裹 .kpi-item 时，竖线画在 Col 边界） */
-.kpi-strip-cols {
-  display: block;
-  padding: 4px 0;
-}
-
-.kpi-strip-cols > * {
-  flex: initial;
-}
-
-@media (min-width: 768px) {
-  .kpi-strip-cols .semi-col + .semi-col .kpi-item,
-  .kpi-strip-cols .ant-col + .ant-col .kpi-item {
-    border-left: 1px solid var(--border-light);
-  }
-}
-
-@media (max-width: 767px) {
-  .kpi-strip-cols .kpi-item {
-    border-left: none;
-    border-top: none;
-  }
-}
+/* KPI 指标条请直接以 .kpi-strip > .kpi-item 平铺（竖线用 .kpi-item + .kpi-item 兄弟选择器），
+   不要再套 Row/Col —— 旧 .kpi-strip-cols 方案依赖 .semi-col 兄弟选择器 hack，已移除 */
 
 /* 覆盖 Ant Design 默认样式 */
 .ant-card {
   border: 1px solid var(--border-default) !important;
   box-shadow: none !important;
-  border-radius: 6px !important;
+  border-radius: 10px !important;
 }
 
 .ant-card-head {
@@ -188,7 +177,7 @@ a {
 .semi-card {
   border: 1px solid var(--border-default) !important;
   box-shadow: none !important;
-  border-radius: 6px !important;
+  border-radius: 10px !important;
 }
 
 /* 个人轨迹时间轴：让 dot 与内容间距和异常事件列表的 icon-title 间距一致（10px） */
@@ -242,6 +231,11 @@ a {
   background-color: var(--surface-muted) !important;
 }
 
+/* 日期选择器左侧快捷选项：单列纵向排列（默认是两列 grid） */
+.semi-datepicker-quick-control-left-content {
+  grid-template-columns: minmax(76.5px, 84px);
+}
+
 /* 控制台级联选择器：单选圆点样式 */
 .console-scope-cascader .semi-cascader-option-icon {
   display: inline-flex;
@@ -271,6 +265,12 @@ a {
   display: none;
 }
 
+/* 排行榜表头：不换行、字重 500 */
+.org-ranking-card .semi-table-thead .semi-table-row-head {
+  white-space: nowrap;
+  font-weight: 500;
+}
+
 /* 排行榜卡片：固定表格布局，确保父子表格列宽一致 */
 .org-ranking-card .semi-table {
   table-layout: fixed !important;
@@ -286,32 +286,133 @@ a {
   padding-left: 16px !important;
 }
 .org-ranking-card .semi-table-tbody > .semi-table-row.ranking-row-level-1 > .semi-table-row-cell:first-child {
-  padding-left: 36px !important;
+  padding-left: 30px !important;
 }
 .org-ranking-card .semi-table-tbody > .semi-table-row.ranking-row-level-2 > .semi-table-row-cell:first-child {
-  padding-left: 56px !important;
+  padding-left: 44px !important;
 }
 
-/* 排行榜卡片：展开行容器背景使用很浅的灰色、去掉内边距 */
+/* 排行榜卡片：展开行容器白底（与主表一致） */
+/* 覆盖 Semi 展开行内容容器的 sticky/flex 布局，保证子表宽度与父表一致、列对齐 */
+.org-ranking-card .semi-table-expand-inner {
+  display: block !important;
+  margin-left: 0 !important;
+  margin-right: 0 !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
 .org-ranking-card .semi-table-tbody > .semi-table-row.semi-table-row-expand > .semi-table-row-cell {
-  background-color: #fafafa !important;
+  background-color: #fff !important;
   padding: 0 !important;
 }
 
-/* 展开行内的子表格单元格同样使用很浅灰色 */
 .org-ranking-card .semi-table-row-expand .semi-table-tbody > .semi-table-row > .semi-table-row-cell {
-  background-color: #fafafa;
-}
-
-/* 子表格 hover 时使用 Semi hover 灰，确保仍有 hover 反馈 */
-.org-ranking-card .semi-table-row-expand .semi-table-tbody > .semi-table-row:hover > .semi-table-row-cell {
-  background-color: var(--semi-color-bg-0);
-  background-image: linear-gradient(0deg, var(--semi-color-fill-0), var(--semi-color-fill-0));
+  background-color: #fff;
 }
 
 /* 排行榜卡片：末列单元格右内边距置零，让内容严格对齐卡片 20px 右内边距 */
 .org-ranking-card .semi-table-row-cell:last-child {
   padding-right: 0 !important;
+}
+
+/* 排行榜行高 44–48px（覆盖 Semi small 尺寸的过密行高） */
+.org-ranking-card .semi-table-row-cell {
+  padding-top: 10px !important;
+  padding-bottom: 10px !important;
+}
+
+/* 排行榜数值列：右对齐 + 等宽数字，避免大数字被截断时难以读 */
+.org-ranking-card .num-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 排行榜层级文字：父级稍粗/深色，子级常规 */
+.org-ranking-card .ranking-name-level-0 {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.org-ranking-card .ranking-name-level-1 {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.org-ranking-card .ranking-name-level-2 {
+  font-weight: 400;
+  color: var(--text-secondary);
+}
+
+/* 排行榜行 hover：极浅灰，降低视觉噪声（展开容器行保持白底） */
+.org-ranking-card .semi-table-tbody > .semi-table-row:not(.semi-table-row-expand):hover > .semi-table-row-cell {
+  background: var(--surface-muted) !important;
+  background-image: none !important;
+}
+
+/* 排行榜「风险标签」列：标签自身带右间距，去掉单元格右内边距避免双重间距 */
+.risk-tag-cell .semi-table-cell {
+  padding-right: 0 !important;
+}
+
+/* 日历轴按钮 hover：极浅灰底（选中的日期块保持紫底） */
+.date-axis-nav:hover {
+  background: var(--surface-muted) !important;
+}
+
+.date-axis-day:hover:not(:disabled):not(.active) {
+  background: var(--surface-muted) !important;
+}
+
+/* 控制台「导出到我的工作通知」按钮：白底细边框简洁按钮 */
+.btn-export-report {
+  padding: 6px 16px;
+  background: #fff;
+  color: var(--text-primary);
+  border: 1px solid var(--border-default);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: background-color 150ms ease;
+}
+
+.btn-export-report:hover:not(:disabled) {
+  background: var(--surface-muted);
+}
+
+.btn-export-report:disabled {
+  color: var(--text-tertiary);
+  background: var(--surface-muted);
+  cursor: not-allowed;
+}
+
+/* 组织单日 KPI 卡「较昨日」环比徽标：升绿降红 */
+.delta-badge {
+  display: inline-block;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  vertical-align: middle;
+}
+
+.delta-badge.up,
+.delta-badge.down {
+  background: none;
+}
+
+.delta-badge .delta-badge-arrow,
+.delta-badge .delta-badge-value {
+  color: #0FAA5C;
+}
+
+.delta-badge.down .delta-badge-arrow,
+.delta-badge.down .delta-badge-value {
+  color: #F54C5C;
+}
+
+.delta-badge .delta-badge-label {
+  color: var(--text-tertiary);
+  margin: 0 4px;
 }
 
 /* ============ PRD-008 App Shell：左侧 Sidebar + Utility Header + Workspace ============ */
@@ -327,8 +428,8 @@ a {
   flex: 0 0 var(--sidebar-width);
   width: var(--sidebar-width);
   min-width: 0;
-  background: #fff;
-  border-right: 1px solid #E9EAED;
+  /* 浅灰底与白底内容区靠底色区分，不再用右边框描边 */
+  background: var(--surface-muted);
   display: flex;
   flex-direction: column;
   transition: width 180ms ease, flex-basis 180ms ease;
@@ -411,7 +512,7 @@ a {
   gap: 10px;
   height: 40px;
   padding: 0 12px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 13.5px;
   font-weight: 500;
   color: #60646C;
@@ -429,14 +530,14 @@ a {
 }
 
 .sidebar-item.active {
-  background: #F0EDFF;
-  color: #5B3FFF;
+  background: #EFEBFD;
+  color: #4B24E3;
   font-weight: 600;
 }
 
 /* 键盘焦点样式与 hover 区分 */
 .sidebar-item:focus-visible {
-  outline: 2px solid #5B3FFF;
+  outline: 2px solid #4B24E3;
   outline-offset: -2px;
 }
 
@@ -465,7 +566,7 @@ a {
 
 .sidebar-footer {
   flex-shrink: 0;
-  border-top: 1px solid #E9EAED;
+  border-top: 1px solid var(--border-light);
   padding: 8px 10px;
   display: flex;
   flex-direction: column;
@@ -507,22 +608,13 @@ a {
   min-height: 0;
 }
 
+/* 页面标题：随内容流滚动（不吸顶），无边框无背景，padding 0 */
 .utility-header {
-  flex-shrink: 0;
-  height: 56px;
-  background: #fff;
-  border-bottom: 1px solid #E9EAED;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 0 16px;
-}
-
-.utility-header-left,
-.utility-header-right {
-  display: flex;
-  align-items: center;
-  gap: 4px;
+  gap: 8px;
+  padding: 8px 0;
+  margin-bottom: 24px;
 }
 
 .utility-icon-btn {
@@ -545,8 +637,16 @@ a {
 }
 
 .utility-icon-btn:focus-visible {
-  outline: 2px solid #5B3FFF;
+  outline: 2px solid #4B24E3;
   outline-offset: -2px;
+}
+
+/* 页面标题：28px / 600 */
+.utility-header-title-main {
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--text-primary);
+  line-height: 1.3;
 }
 
 /* Workspace：唯一纵向滚动区 */
