@@ -33,7 +33,8 @@ export default function EmployeeWordCloud({
       data: [{ id: "words", values }],
       nameField: "name",
       valueField: "value",
-      // 不配置颜色：使用图表默认调色板（Semi 风格多色），避免单色系糊成一片
+      // Semi 官方色板分类色（默认调色板是蓝色系渐变，会糊成一片，需显式给多色相）
+      color: ["#1664FF", "#00B2B2", "#00B42A", "#FF8800", "#722ED1", "#F5319D", "#F7B500"],
       fontSizeRange: [12, 32],
       padding: { top: 0, bottom: 0, left: 0, right: 0 },
       tooltip: {
