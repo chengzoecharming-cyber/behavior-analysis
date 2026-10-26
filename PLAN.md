@@ -1406,6 +1406,29 @@ CREATE TABLE fuel_records (
 
 ---
 
+## OA 订单执行单接入（订单执行 / 【代理商】订单执行，2026-10-20）
+
+背景与设计见 PRD-002/PRD-006 及实施设计（真实字段调查 2026-10-20 完成）。成交事实以 OA 两张订单执行单为准；普通单与代理商单分开建模（「客户名称」= 终端客户，「要发货的代理商名称」= 代理商）。
+
+**上线步骤（代码与数据是一次变更的两半）**：
+
+1. 服务器 `.env` 添加：
+   - `DINGTALK_PROCESS_CODE_ORDER=PROC-C7E24D17-88EB-4AE1-BA2E-1B96B45B7AC0`
+   - `DINGTALK_PROCESS_CODE_ORDER_AGENT=PROC-EB1872CE-B31A-4228-8D79-E839808959A7`
+2. 部署代码（后端启动时自动幂等建 `oa_orders` / `oa_order_items` / `oa_order_sync_windows` 三表；订单调度自动注册，与拜访同步隔离）。
+3. **部署后立即执行历史回拉**：`docker exec sales-map-backend npm run backfill:oa-orders`（30 天分窗断点续跑，上限 365 天；预计普通单 ~1042 + 代理商单 ~800，每 code 约 15-25 分钟）。失败窗口重跑同一命令续跑。
+4. 抽样核验：抽查 20 单与 OA 后台对照（客户名、合同号、产品明细、OA 状态）。
+5. 每次 CRM Excel 导入后执行 `docker exec sales-map-backend npm run rematch:oa-orders`（存量订单客户重匹配，只升级不降级）。
+
+**注意事项**：
+
+- 钉钉 listids 实测仅支持 365 天窗口（超过报 400003），更早订单为数据缺口，页面已标注 history_since。
+- 订单绝不进入 visits：`getAllProcessCodes()` 不含订单 code，`parseApprovalInstance` 顶部有防御拦截；上线前后需对比 visits 总数/business_date 分布快照。
+- 「审批通过 ≠ 已发货」：delivery_status 仅从交付日期/交付图片/物流文本保守推导。
+- 表单无金额字段，成交金额分析需后续接「订单」PROC-17C8AF50 或合同表单（待业务决策）。
+
+---
+
 ## 待讨论 / 低优先级
 
 - [ ] Dashboard 字段命名：「停留点数」「停留时长」是否改名/移除

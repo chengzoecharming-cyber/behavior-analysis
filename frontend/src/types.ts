@@ -466,6 +466,98 @@ export interface CrmCustomerInsights {
   approving: boolean;
 }
 
+/** 订单业务里程碑条目（milestone-v1，证据源 oa_order_events） */
+export interface OaMilestoneEntry {
+  at: string | null;
+  node: string | null;
+  operator_userid: string | null;
+  remark_excerpt: string | null;
+  confidence: "node_confirmed" | "comment_confirmed" | "comment_negated";
+}
+
+export interface OaOrderMilestones {
+  rule_version: string;
+  final_status: { oa_status: string; oa_result: string | null; valid: boolean };
+  items: {
+    contract_received: OaMilestoneEntry | null;
+    erp_entered: OaMilestoneEntry | null;
+    erp_pushed: OaMilestoneEntry | null;
+    erp_closed: OaMilestoneEntry | null;
+  };
+}
+
+/** OA 订单产品明细行 */
+export interface OaOrderItem {
+  product_category: string;
+  product_key: string;
+  quantity: number | null;
+  extra: Record<string, string>;
+}
+
+/** OA 订单执行单（可靠关联：matched_by_verified_id / matched_by_exact_name） */
+export interface OaOrder {
+  id: number;
+  process_instance_id: string;
+  order_type: "direct" | "agent";
+  /** 该客户在本单中的角色：终端客户 / 代理商 */
+  role: "customer" | "agent";
+  contract_entity: string | null;
+  contract_no_raw: string | null;
+  contract_nos: string[] | null;
+  demand_type: string | null;
+  order_note: string | null;
+  agent_name_raw: string | null;
+  agent_delivery_progress: string | null;
+  factory_region: string | null;
+  delivery_address_raw: string | null;
+  logistics_note: string | null;
+  installer_name: string | null;
+  delivery_date: string | null;
+  delivery_service_note: string | null;
+  oa_status: string;
+  oa_result: string | null;
+  delivery_status: "unknown" | "pending" | "shipped" | "delivered" | "unverified";
+  /** 交付状态推导来源（证据组合） */
+  delivery_status_basis: string | null;
+  crm_status_snapshot: string | null;
+  customer_name_raw: string | null;
+  customer_match_status: string;
+  originator_name: string | null;
+  originator_dept: string | null;
+  oa_create_time: string | null;
+  oa_finish_time: string | null;
+  synced_at: string;
+  /** 业务里程碑（milestone-v1 派生，证据源 oa_order_events；未回填时为 null） */
+  milestones: OaOrderMilestones | null;
+  contract_attachments: unknown;
+  requirement_attachments: unknown;
+  delivery_photos: unknown;
+  acceptance_attachments: unknown;
+  items: OaOrderItem[];
+}
+
+/** 无法确认关联的候选订单（核查用，不计成交） */
+export interface OaOrderCandidate {
+  id: number;
+  process_instance_id: string;
+  order_type: "direct" | "agent";
+  customer_name_raw: string | null;
+  agent_name_raw: string | null;
+  customer_match_status: string;
+  customer_match_candidates: unknown;
+  agent_match_candidates: unknown;
+  contract_no_raw: string | null;
+  oa_status: string;
+  oa_create_time: string | null;
+  originator_name: string | null;
+}
+
+export type OaOrdersStatus =
+  | "pending_oa_sync"
+  | "synced_with_orders"
+  | "synced_no_orders"
+  | "has_unconfirmed_candidates";
+
 /** GET /crm-customers/:id 返回 */
 export interface CrmCustomerDetailResponse {
   customer: CrmCustomerFull;
@@ -473,8 +565,12 @@ export interface CrmCustomerDetailResponse {
   follow_records: CrmFollowRecordItem[];
   visits: CrmCustomerVisitItem[];
   insights: CrmCustomerInsights;
-  /** 订单预留：OA 订单同步接入前固定为空数组 */
-  orders: unknown[];
-  orders_status: "pending_oa_sync";
+  /** OA 订单（可靠关联才计入；同步未配置时为空） */
+  orders: OaOrder[];
+  orders_status: OaOrdersStatus;
+  /** 未确认关联的候选订单（核查区块展示，不计成交） */
+  unconfirmed_order_candidates: OaOrderCandidate[];
+  /** 订单历史数据起点（钉钉 listids 365 天窗口限制），未同步为 null */
+  orders_history_since: string | null;
   snapshot_date: string | null;
 }

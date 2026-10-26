@@ -41,7 +41,7 @@ export async function queryRecoveryList(opts: {
   limit: number;
 }): Promise<RecoveryListResult> {
   const params: unknown[] = [RECOVERY_STAGES as unknown as string[]];
-  const where: string[] = ["is_in_pool = true", "follow_status = ANY($1)"];
+  const where: string[] = ["is_in_pool = true", "follow_status = ANY($1)", "NOT COALESCE(is_deleted, false)"];
   if (opts.stage) {
     params.push(opts.stage);
     where.push(`follow_status = $${params.length}`);
@@ -59,7 +59,7 @@ export async function queryRecoveryList(opts: {
     ),
     pool.query<{ follow_status: string; n: string }>(
       `SELECT follow_status, COUNT(*)::text AS n FROM crm_customers
-       WHERE is_in_pool = true AND follow_status = ANY($1) GROUP BY follow_status`,
+       WHERE is_in_pool = true AND NOT COALESCE(is_deleted, false) AND follow_status = ANY($1) GROUP BY follow_status`,
       [RECOVERY_STAGES as unknown as string[]]
     ),
     pool.query<{
@@ -128,12 +128,12 @@ export async function queryPoolHealth(): Promise<PoolHealthResult> {
               COUNT(*) FILTER (WHERE latest_follow_up_time IS NULL
                                  OR latest_follow_up_time < NOW() - INTERVAL '30 days') AS stale_30d
        FROM crm_customers
-       WHERE NOT is_in_pool AND owner_name IS NOT NULL AND owner_name <> ''
+       WHERE NOT is_in_pool AND NOT COALESCE(is_deleted, false) AND owner_name IS NOT NULL AND owner_name <> ''
        GROUP BY owner_name
      ), drp AS (
        SELECT last_owner, COUNT(*) AS dropped
        FROM crm_customers
-       WHERE is_in_pool AND COALESCE(return_pool_times, 0) > 0
+       WHERE is_in_pool AND NOT COALESCE(is_deleted, false) AND COALESCE(return_pool_times, 0) > 0
          AND last_owner IS NOT NULL AND last_owner <> ''
        GROUP BY last_owner
      )
@@ -169,7 +169,8 @@ export async function queryPoolHealth(): Promise<PoolHealthResult> {
        COUNT(*) FILTER (WHERE NOT is_in_pool AND (latest_follow_up_time IS NULL
                           OR latest_follow_up_time < NOW() - INTERVAL '30 days'))::text AS stale_30d,
        COUNT(*) FILTER (WHERE is_in_pool AND COALESCE(return_pool_times, 0) > 0)::text AS dropped
-     FROM crm_customers`
+     FROM crm_customers
+     WHERE NOT COALESCE(is_deleted, false)`
   );
   const t = totalRes.rows[0];
   const priv = parseInt(t.private_count, 10);
@@ -205,7 +206,7 @@ export async function queryFunnel(): Promise<FunnelResult> {
       `SELECT COALESCE(NULLIF(TRIM(follow_status), ''), '无阶段') AS stage,
               COUNT(*) FILTER (WHERE NOT is_in_pool)::text AS private_count,
               COUNT(*) FILTER (WHERE is_in_pool)::text AS pool_count
-       FROM crm_customers GROUP BY 1`
+       FROM crm_customers WHERE NOT COALESCE(is_deleted, false) GROUP BY 1`
     ),
     pool.query<{ ts: Date | null }>(`SELECT MAX(created_at) AS ts FROM crm_import_batches`),
   ]);
@@ -279,7 +280,7 @@ export async function buildCrmDigestMarkdown(): Promise<string> {
   lines.push("#### 三、阶段漏斗速览（私海数）", "");
   lines.push(fixed.join(" → ") || "暂无数据");
   lines.push("");
-  lines.push(`---`, `CRM 数据快照 ${funnel.snapshot_date ?? "未知"}（手工导出导入，非实时）`);
+  lines.push(`---`, `CRM 数据快照 ${funnel.snapshot_date ?? "未知"}（MCP 定时同步，非实时）`);
 
   return lines.join("\n");
 }

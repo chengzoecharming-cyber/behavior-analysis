@@ -123,6 +123,50 @@ export async function fetchAccompanyTypes(
   return res.data.types || {};
 }
 
+/** 拜访客户 → OA 订单状态速览（admin-only；names 可传整串，后端拆分去占位） */
+export interface VisitOrderStatusOrder {
+  process_instance_id: string;
+  order_type: "direct" | "agent";
+  match_status: string;
+  oa_status: string;
+  oa_result: string | null;
+  delivery_status: string;
+  oa_create_time: string | null;
+  contract_received_at: string | null;
+  erp_entered_at: string | null;
+  erp_pushed_at: string | null;
+  erp_closed_at: string | null;
+}
+
+export interface VisitOrderStatus {
+  status: "has_orders" | "pending_review" | "no_orders";
+  customer_id: string | null;
+  customer_name: string | null;
+  reliable_count: number;
+  direct_count: number;
+  agent_count: number;
+  has_exact_name_match: boolean;
+  candidate_count: number;
+  orders: VisitOrderStatusOrder[];
+  crm_stage: string | null;
+  crm_in_pool: boolean | null;
+  crm_owner: string | null;
+  stage_maybe_outdated: boolean;
+}
+
+export interface VisitOrderStatusResponse {
+  results: Record<string, VisitOrderStatus>;
+  coverage_from: string | null;
+}
+
+export async function fetchVisitOrderStatus(
+  names: string[]
+): Promise<VisitOrderStatusResponse> {
+  if (names.length === 0) return { results: {}, coverage_from: null };
+  const res = await api.post("/visits/order-status", { names });
+  return res.data;
+}
+
 export async function fetchStops(
   userId: string,
   start: string,
@@ -745,6 +789,82 @@ export async function forceSyncDateRange(
   endDate: string
 ): Promise<DingTalkSyncResult> {
   const res = await api.post("/dingtalk/sync-force", { startDate, endDate });
+  return res.data;
+}
+
+// ===== CRM MCP 同步 =====
+
+export interface CrmSyncEntityStats {
+  fetched: number;
+  inserted: number;
+  updated: number;
+  failed: number;
+  marked_deleted?: number;
+  remote_total?: number;
+  local_count?: number;
+  drift?: number;
+  customers_refreshed?: number;
+  backstop_customers?: number;
+}
+
+export interface CrmSyncLogStats {
+  customers: Record<string, CrmSyncEntityStats>;
+  contacts: CrmSyncEntityStats;
+  follows: CrmSyncEntityStats;
+  images: { downloaded: number; failed: number; skipped_old: number };
+  duration_ms?: number;
+}
+
+export interface CrmSyncLog {
+  id: number;
+  run_id: string;
+  trigger_source: string;
+  status: "running" | "success" | "partial" | "failed";
+  full_sync: boolean;
+  stats: CrmSyncLogStats;
+  error_message: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface CrmSyncLogsResponse {
+  success: boolean;
+  total: number;
+  page: number;
+  pageSize: number;
+  logs: CrmSyncLog[];
+}
+
+export async function fetchCrmSyncLogs(params: {
+  page?: number;
+  pageSize?: number;
+  status?: string;
+}): Promise<CrmSyncLogsResponse> {
+  const res = await api.get("/crm-mcp/sync-logs", { params });
+  return res.data;
+}
+
+export interface CrmSyncStatusResponse {
+  success: boolean;
+  configured: boolean;
+  sync_enabled: boolean;
+  latest: CrmSyncLog | null;
+  watermarks: Array<{
+    form_key: string;
+    last_update_time: string | null;
+    last_run_at: string | null;
+    last_total: number | null;
+    last_status: string | null;
+  }>;
+}
+
+export async function fetchCrmSyncStatus(): Promise<CrmSyncStatusResponse> {
+  const res = await api.get("/crm-mcp/sync-status");
+  return res.data;
+}
+
+export async function triggerCrmSync(full: boolean): Promise<{ success: boolean; message: string }> {
+  const res = await api.post("/crm-mcp/sync", { full });
   return res.data;
 }
 

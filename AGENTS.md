@@ -78,6 +78,10 @@ map/
 │   │       ├── riskSummaryService.ts
 │   │       ├── departmentAliasService.ts
 │   │       ├── crmCustomerDirectory.ts # 客户库列表/详情查询（PRD-007）：筛选分页、联系人/跟进名称桥接、visits 归并匹配拜访、派生判断信号
+│   │       ├── crmMcpClient.ts         # 探迹 CRM MCP 只读客户端（SSE 解析/游标分页/限流/record_ref 提取记录 ID，2026-10-23 接入，仅只读）
+│   │       ├── orderExecutionParser.ts # OA 订单执行单解析器（普通/代理商两表单，relateId 解码 CRM instanceId，TableField 产品子表）
+│   │       ├── orderCustomerMatch.ts   # 订单→CRM 客户匹配状态机：verified_id / exact_name / ambiguous / unmatched，只升级不降级
+│   │       ├── orderSyncService.ts     # 订单独立同步管线（复用 listids/详情/raw_approvals；只进 oa_orders，不进 visits）
 │   │       └── scheduler.ts
 │   ├── scripts/
 │   │   ├── seed.ts                       # 从 data/mock-visits.xlsx 导入模拟数据
@@ -86,6 +90,9 @@ map/
 │   │   ├── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
 │   │   ├── reparseApproval.ts        # 销售修改钉钉表单后重录指定审批单（重拉实例→重解析替换 visits→重算派生数据，--dry 预览）
 │   │   ├── importCrmExcel.ts         # 探迹 CRM Excel 导入（客户/联系人/跟进记录 → crm_* 表）
+│   │   ├── auditCrmMcp.ts            # CRM MCP 只读对账（npm run audit:crm-mcp，只 SELECT + MCP 只读调用，不写库）
+│   │   ├── backfillOaOrders.ts       # OA 订单历史回拉（30 天分窗断点续跑，上限 365 天，npm run backfill:oa-orders）
+│   │   ├── rematchOaOrders.ts        # OA 订单客户重匹配（CRM 快照更新后存量升级，npm run rematch:oa-orders）
 │   │   └── addSalesChannelAliases.ts # 销售渠道-X区域 → 销售部主部门 别名归一化配置（幂等，npm run alias:sales-channels）
 │   ├── schema.sql              # P1 早期架构文档（仅供参考，实际以 db.ts 为准）
 │   ├── uploads/                # Excel 上传临时文件
@@ -160,6 +167,7 @@ map/
 | 钉钉同步 | `dingtalk_departments`、`dingtalk_users` | 钉钉通讯录同步缓存 |
 | 报告生成 | `report_generation_logs` | 自动报告生成日志（同一次 run 共享 `run_id`，含状态/耗时/文档链接） |
 | 探迹 CRM | `raw_crm_rows`、`crm_import_batches`、`crm_customers`、`crm_contacts`、`crm_follow_records`、`crm_customer_geocode` | CRM Excel 导入批次与原始行、客户主表、联系人、跟进记录、客户地址地理编码缓存 |
+| OA 订单 | `oa_orders`、`oa_order_items`、`oa_order_sync_windows`、`oa_order_events` | 订单执行/【代理商】订单执行单（NORMALIZED）、产品明细子表、历史回拉断点窗口、OA 操作证据（operationRecords 原文 + 派生里程碑归属）；RAW 复用 `raw_approvals`（按 process_code 区分） |
 
 **注意**：`backend/schema.sql` 是早期 P1 文档，只包含基础表。真实建表逻辑在 `backend/src/db.ts` 中，通过 `CREATE TABLE IF NOT EXISTS` 和 `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` 做幂等初始化。项目中没有独立的迁移框架。
 
@@ -258,6 +266,22 @@ map/
 6. **报告生成**：日报每天 9:00（生成昨天）、周报周日 18:00（生成本周一~当天）、月报每月 1 日 9:00（生成上月）。启动时补跑缺失的报告（`catchUpReportGeneration`，trigger_source 记 `catchup`）；单维度失败重试 1 次、不中断整个 run；每次 run 写入 `report_generation_logs` 并发一条汇总消息（优先走 `DINGTALK_EXPORT_CHAT_ID` 应用机器人 /chat/send，未配置时回退自定义机器人 webhook，webhook 受群安全关键词限制）。报告的客户数统计与客户拜访列表通过 `users.home_address`（`addressWhitelistService`）排除员工住址，并通过 `company_addresses` 表排除公司地址签到（对全体员工生效），拜访轨迹不受影响。客户列表最多展示 Top 50（钉钉文档 API 对内容大小有限制）。**个人报告消息推送（日/周/月报通用，2026-10-16 起周报月报也推）**：仅 trigger_source=`scheduler` 推送（manual 不推；catchup 仅日报补跑「昨天」时推，周月报 catchup 不推避免刷消息）——**优先走应用机器人单聊**（`/v1.0/robot/oToMessages/batchSend`，**必须走 `api.dingtalk.com` 域名**——误用 `oapi.dingtalk.com` 会返回 HTTP 200 + `{"errcode":404}` 旧版错误体，消息实际未发送且代码检查不到（2026-08-21 假成功事故）；`sendRobotMarkdownToUsers` 已同时检查 `code` 与 `errcode`。robotCode 默认取 `DINGTALK_APP_KEY`，可用 `DINGTALK_ROBOT_CODE` 覆盖；消息以机器人 1 对 1 会话出现在消息列表），失败自动回退工作通知（`DINGTALK_AGENT_ID`）：本人收个人版（拜访数/里程/异常数/陪同数 + 报告链接，0 拜访也推）；区总/负责人每层级一条汇总（「生成 N 份、成功 X、失败 Y、总拜访 Z 次」+ 入口链接：区总→该区、部门负责人→部门、「公司」配置人→公司）。**推送去重（2026-10-16）：每人只收层级最高的一条**（公司接收人 > 部门负责人 > 区总 > 个人），已是上级接收人的成员不再收个人版。接收人解析：`REPORT_DEPT_LEADERS`（格式 `华南一部:李朝晖;软件产品线:洪晨备`，姓名按 `users.user_name` 解析，兜底查 `dingtalk_users` 通讯录缓存，也可直接配 userid）**配了就以配置为准**，未配置的子部门/部门回退为 role=manager 的用户；`REPORT_PUSH_ENABLED=false` 时文档照常生成、推送全跳（灰度开关）；发送失败不影响生成结果。
 
 7. **CRM 摘要周报**：每周一 9:20（北京时间，避开 9:00 日报/整点任务）执行 `startCrmDigestScheduler` → `crmDigestService.sendCrmDigest`：生成 markdown 摘要（①公海挽回 Top 10 + 高阶段客户总数；②私海健康度预警 Top 5——掉保率最高且私海数 ≥ 10 的负责人；③阶段漏斗私海数一行速览，末尾注明 CRM 数据快照日期），经 `sendReportMessageToUsers`（机器人单聊优先、失败回退工作通知）推送。**灰度接收机制**：接收人只由环境变量 `CRM_DIGEST_RECIPIENTS`（逗号/分号分隔姓名或 userid，姓名按 `users.user_name` 解析、兜底 `dingtalk_users`、纯数字直接当 userid，复用 `resolveLeaderUserIds`）决定；**为空则任务完全不执行**（不生成内容，日志一行跳过）；解析不到的接收人只 warn 不中断。手动触发入口 `POST /crm-analytics/digest/send`（admin）。
+8. **OA 订单同步**：`startOrderSyncScheduler`（`orderSyncService.ts`，与拜访同步严格隔离、独立互斥锁、失败只记日志不影响拜访）：每天 9:20/12:20/15:20/18:20/21:20 同步近 7 天 + 每日 4:30 同步近 90 天（订单单生命周期长，RUNNING 单字段会被供应链/服务同事持续后补）。仅当 `DINGTALK_PROCESS_CODE_ORDER`/`_ORDER_AGENT` 已配置时注册。**订单绝不进入 visits、不触发派生数据重算**：订单 code 不在 `getAllProcessCodes()`（拜访列表），`parseApprovalInstance` 顶部有防御拦截；解析产物只进 `oa_orders`/`oa_order_items`，RAW 复用 `raw_approvals`（process_code 区分），`locked_approvals` 同样生效。历史回拉 `cd backend && npm run backfill:oa-orders`（30 天分窗断点续跑，**钉钉 listids 实测上限 365 天**，更早为数据缺口）；CRM 快照更新后 `npm run rematch:oa-orders` 存量重匹配（只升级不降级）。
+
+#### OA 订单执行单口径（订单执行 / 【代理商】订单执行，2026-10-20 接入）
+
+- 两张表单 process_code 分流（`isOrderProcessCode`）：普通单 `DINGTALK_PROCESS_CODE_ORDER`（order_type='direct'），代理商单 `DINGTALK_PROCESS_CODE_ORDER_AGENT`（'agent'）。字段结构几乎一致；代理商单无「签约主体」，附件/收货地址字段名不同。
+- **「客户名称」（OpenDataField）在两张表单里都是终端客户**；「要发货的代理商名称」才是代理商（且存在简称「楚联」「四川博尔特」，名称模糊匹配一律 ambiguous）。ext_value 的 `dataList[0].relateId`（base64）解码出 CRM `instanceId`，**已抽样实证与 `crm_customers.id` 同源**。
+- 客户匹配四态（`orderCustomerMatch.ts`）：`matched_by_verified_id`（instanceId 命中，唯一自动确认通道）/ `matched_by_exact_name`（名称精确唯一命中，写入但页面标注待复核）/ `ambiguous`（模糊候选，不写 customer_id，候选依据存 `customer_match_candidates`，**不计成交**）/ `unmatched`。约 40% 订单客户是 OA 新建、尚未进本地手工 CRM 快照的，走名称匹配或待核查。
+- **「审批通过(agree) ≠ 已发货」**：`delivery_status` 仅从交付日期/服务交付图片（delivered）、物流信息文本（shipped）保守推导，agree 且无交付字段 = pending。表单无金额字段、无独立签约日期。
+- 客户详情页（admin-only）成交事实只认 verified + exact（后者标注）；ambiguous/unmatched 进「待核查候选」区块。`orders_status` 状态机：pending_oa_sync / synced_no_orders / synced_with_orders / has_unconfirmed_candidates。
+
+#### OA 订单业务里程碑（milestone-v1，2026-10-20）
+
+- 证据层 `oa_order_events`：新版工作流 API（`api.dingtalk.com/v1.0/workflow/processInstances`，token 走 `v1.0/oauth2/accessToken`）拉取 operationRecords 原文落库；**节点名取 operationRecords.showName**（tasks 里无节点名；activityId 模板编辑即变，仅用于当次实例内关联）；幂等键 `idem_key = md5(type|date|remark)`。回填 `npm run backfill:oa-order-events`（`--only-missing` 续跑）；增量在订单 upsert 有变化时自动刷新（`orderSyncService` 内 fire 式调用，失败不影响订单本体）。
+- 里程碑识别（`orderMilestoneService.ts` 的 `deriveMilestones`，纯函数可重放）：contract_received（节点「确认收到合同」末次 AGREE；评论含「未回传合同」降为 comment_negated）、erp_entered（ERP 规则 C：`EXECUTE_TASK_NORMAL+AGREE` + 窄确认句式 + **子句级否定**——不做整条评论全局否定过滤，「已录ERP+合同未回传」混合评论保留 ERP 确认；2026-10-20 标注 180 条样本 P=1.0/R=1.0）、erp_pushed（节点「ERP下推发货单/ERP下推出发货单」末次 AGREE）、erp_closed（节点「关闭ERP订单」末次 AGREE）。TERMINATED/refuse 单里程碑保留但 `final_status.valid=false`。
+- 语义红线：合同接收≠盖章归档；ERP 录入确认≠ERP 系统校验；下推≠实物出库；关闭≠履约完成。`delivery_status='delivered'`（date+photos+completed）仅表示「交付资料较完整（待核实）」，前端不得显示「已交付」、不得计入确定性交付数。
+- 统计边界：合同数（规范化 contract_nos 去重）≠ OA 执行单数 ≠ 发货批次数；一张框架合同最多拆 22 张执行单（每单一个终端客户一次发货）。
 
 ### 同步数据校验
 
@@ -319,6 +343,10 @@ DINGTALK_APP_SECRET=YOUR_DINGTALK_APP_SECRET
 DINGTALK_PROCESS_CODE=YOUR_DINGTALK_PROCESS_CODE
 # 新审批表单（v2「用车里程登记&拜访客户签到」）process_code；为空则只同步旧表单
 DINGTALK_PROCESS_CODE_V2=
+# OA 订单执行单（普通客户）process_code；走独立订单同步管线，绝不进入 visits。为空则不同步
+DINGTALK_PROCESS_CODE_ORDER=
+# OA【代理商】订单执行单 process_code；「客户名称」为终端客户，「要发货的代理商名称」为代理商
+DINGTALK_PROCESS_CODE_ORDER_AGENT=
 
 # 钉钉扫码登录允许的前端回调 origin（逗号分隔），回调地址为 <origin>/login/callback
 DINGTALK_LOGIN_ALLOWED_ORIGINS=http://localhost:5173,http://8.219.97.3:5173
@@ -357,6 +385,14 @@ CRM_DIGEST_RECIPIENTS=
 
 # 日报推送开关：置 false 时日报文档照常生成到钉钉知识库，仅跳过本人/区总汇总推送（灰度验证用），默认推送
 REPORT_PUSH_ENABLED=true
+
+# 探迹 CRM MCP 接入（2026-10-23 只读对账阶段）：streamable-http 端点 + Bearer token
+# 当前仅 audit:crm-mcp 只读对账使用；正式写库同步与 CRM_MCP_SYNC_ENABLED 调度尚未启用
+CRM_MCP_URL=https://dingcrm.eapps.dingtalkcloud.com/open/mcp/v1/
+CRM_MCP_TOKEN=
+CRM_MCP_SYNC_ENABLED=false
+# 联系人同步开关（2026-10-23 产品决策默认关闭：联系人价值低，只同步客户+跟进）
+CRM_MCP_SYNC_CONTACTS=false
 ```
 
 ### 前端 `frontend/.env.example`
@@ -427,6 +463,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET | `/visits/users` | 获取所有员工列表 |
 | GET | `/visits/available-dates?user=` | 某员工有数据的日期列表 |
 | GET | `/visits/synced-dates` | 钉钉同步已成功覆盖的日期列表（全局口径，所有登录角色可读；前端日历轴据此把「已同步但无数据」的日期置灰展示，与「未同步」区分） |
+| POST | `/visits/order-status` | 拜访客户名 → OA 订单状态速览（仅 admin；body `{names: [...]}` ≤50，后端按 splitRealCustomerNames 口径拆分去占位）。控制台时间线/地图详情卡的客户名订单 Tag 数据源：has_orders / pending_review / no_orders 三态 + 可靠订单明细（OA 状态、申请创建时间、ERP 里程碑时间），复用 orderCustomerMatch 四态结论，不做模糊包含命中；语义红线禁用「已成交/已交付/已回款」文案 |
 | POST | `/visits/:id/coordinates` | 手动修正拜访点坐标 |
 | GET | `/stops?user=&start=&end=` | 查询停留点（范围模式） |
 | GET | `/stops?user=&date=` | 计算并持久化停留点（单日模式） |
@@ -603,6 +640,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 
 ## 已知问题与注意事项
 
+- **探迹 CRM MCP 已接入只读对账（2026-10-23）**：`crmMcpClient.ts` + `npm run audit:crm-mcp`，审计结论归档在 `docs/crm-mcp-audit-2026-10-23.md`。关键结论：① token 权限覆盖全量（与 CRM 后台对账一致）；② 客户分 4 张表单（国内企业/国内代理商/海外代理商/海外终端），与 `customer_type` 四枚举一一对应；③ 公海=负责人为空；④ `latest_recycle_time` 掉保时间是**预计掉保截止日**（未来日期），不是历史事件，历史事件看 `latest_return_pool_time`，保护期规则待业务核实；⑤ 跟进记录表级查询不返回所属客户，只能按客户维度 `crm_get_customer_followups` 拉取；新增跟进会 bump 客户 `update_time`（10/10 样本验证），编辑跟进未验证；⑥ 跟进无创建人字段；⑦ 图片 URL 签名约 24h 过期且老记录不重新签名，历史图片已不可下载，正式同步间隔必须 ≤24h；⑧ 正式同步时需对本地多出而远端不存在的客户打标（Excel 快照从不删除导致 ~5884 条僵尸数据）。**目前未做任何写库同步与定时调度。**
 - `backend/schema.sql` 与 `backend/src/db.ts` 不同步，实际 schema 以 `db.ts` 为准。
 - **v2 行的 `visit_note`/`visit_detail.ai` 现由自建 LLM 总结生成**（`llmSummaryService.ts`，OpenAI 兼容接口，`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` 走环境变量，默认 DeepSeek），替代已失效的钉钉 DDAIField「AI总结」字段；同步成功后经 `recomputeDerivedDataForVisits` fire-and-forget 补写。未配置 key、调用失败、有效内容过短（comm+issues 去标点后 < 8 字，如只填「公司办公」「。」）或模型返回拒绝语（「信息不足/无法生成/内容为空/请提供」）时维持原始兜底拼接（「沟通内容：...；存在问题：...」），存量回填执行 `cd backend && npm run backfill:ai-summary`（`--dry` 预览）。回写时保留 visit_note 末尾的里程备注后缀（如「[缺少终点里程读数]」）。
 - 权限系统已完成收口（见「认证方式」章节）：核心接口均按角色过滤数据，越权返回 403。

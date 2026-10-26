@@ -26,6 +26,10 @@ export interface DingTalkConfig {
   processCode: string;
   // 新审批表单（v2）process_code；空表示未启用，仅同步旧表单
   processCodeV2: string;
+  // OA 订单执行单 process_code；空表示未启用。绝不进入拜访同步列表
+  processCodeOrder: string;
+  // OA【代理商】订单执行单 process_code
+  processCodeOrderAgent: string;
 }
 
 export function getDingTalkConfig(): DingTalkConfig {
@@ -33,13 +37,28 @@ export function getDingTalkConfig(): DingTalkConfig {
   const appSecret = process.env.DINGTALK_APP_SECRET || "";
   const processCode = process.env.DINGTALK_PROCESS_CODE || "";
   const processCodeV2 = process.env.DINGTALK_PROCESS_CODE_V2 || "";
-  return { appKey, appSecret, processCode, processCodeV2 };
+  const processCodeOrder = process.env.DINGTALK_PROCESS_CODE_ORDER || "";
+  const processCodeOrderAgent = process.env.DINGTALK_PROCESS_CODE_ORDER_AGENT || "";
+  return { appKey, appSecret, processCode, processCodeV2, processCodeOrder, processCodeOrderAgent };
 }
 
-// 所有已配置、需要同步的 process_code 列表（旧表单 v1 + 新表单 v2）
+// 所有已配置、需要同步的拜访 process_code 列表（旧表单 v1 + 新表单 v2）
+// 注意：订单执行单绝不加入此列表，否则会被 v1 通用回退解析成垃圾 visits
 export function getAllProcessCodes(): string[] {
   const cfg = getDingTalkConfig();
   return [cfg.processCode, cfg.processCodeV2].filter((c) => !!c);
+}
+
+// 已配置的订单执行单 process_code 列表（普通 + 代理商），走独立订单同步管线
+export function getOrderProcessCodes(): string[] {
+  const cfg = getDingTalkConfig();
+  return [cfg.processCodeOrder, cfg.processCodeOrderAgent].filter((c) => !!c);
+}
+
+// 判断 process_code 是否为订单执行单（订单同步分流与拜访解析防御拦截依据）
+export function isOrderProcessCode(processCode?: string | null): boolean {
+  if (!processCode) return false;
+  return getOrderProcessCodes().includes(processCode);
 }
 
 export function isDingTalkConfigured(): boolean {
@@ -1045,6 +1064,11 @@ function extractReadableName(value: string): string {
 // 其他调用方（数据血缘重新解析）经 raw_approvals.process_code 传入
 export async function parseApprovalInstance(instance: any, processCode?: string): Promise<ParsedVisit[]> {
   const code = processCode || instance.process_code || instance.processCode || "";
+  // 防御拦截：订单执行单绝不进入拜访解析（否则会被通用回退解析成垃圾 visits）
+  if (isOrderProcessCode(code)) {
+    console.warn(`[parseApprovalInstance] 订单 process_code ${code} 误入拜访解析，已拦截`);
+    return [];
+  }
   if (isV2ProcessCode(code)) {
     return parseApprovalInstanceV2(instance);
   }

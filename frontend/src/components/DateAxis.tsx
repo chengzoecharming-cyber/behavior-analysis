@@ -146,7 +146,7 @@ export default function DateAxis({
                 padding: "6px 0",
                 borderRadius: 8,
                 border: "none",
-                backgroundColor: isActive ? "#4B24E3" : hasData ? "#fff" : "#F7F8FA",
+                backgroundColor: isActive ? "#1664FF" : hasData ? "#fff" : "#F7F8FA",
                 color: isActive ? "#fff" : hasData ? "#0f1419" : "#bbb",
                 cursor: hasData ? "pointer" : "not-allowed",
                 display: "flex",

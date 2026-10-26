@@ -1215,6 +1215,7 @@ function ConsolePage() {
                                 visits={g.visits}
                                 routes={g.routes}
                                 anomalies={g.anomalies}
+                                showOrderStatus={currentUser?.role === "admin"}
                               />
                             </div>
                           ))
@@ -1223,6 +1224,7 @@ function ConsolePage() {
                             visits={overviewGroup.visits}
                             routes={overviewGroup.routes}
                             anomalies={overviewGroup.anomalies}
+                            showOrderStatus={currentUser?.role === "admin"}
                           />
                         )}
                       </div>
@@ -1297,6 +1299,7 @@ function ConsolePage() {
                     stops={overviewGroup.stops}
                     anomalies={overviewGroup.anomalies}
                     progressMap={routeProgressMap}
+                    showOrderStatus={currentUser?.role === "admin"}
                   />
                   {routeGroups.length > 0 && (
                     <div

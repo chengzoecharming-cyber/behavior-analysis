@@ -30,12 +30,16 @@ import {
 import dayjs, { Dayjs } from "dayjs";
 import {
   ackSyncAlert,
+  CrmSyncLog,
+  fetchCrmSyncLogs,
+  fetchCrmSyncStatus,
   fetchReportGenerationLogs,
   fetchSyncAlerts,
   fetchSyncHealth,
   fetchSyncLogs,
   forceSyncDateRange,
   retrySyncLog,
+  triggerCrmSync,
   ReportGenerationLog,
 } from "../api";
 import { DingTalkSyncLog, SyncAlert, SyncHealthItem } from "../types";
@@ -640,6 +644,231 @@ function ReportGenerationTab() {
   );
 }
 
+/** Tab4 CRM 同步：探迹 CRM MCP 同步记录（各实体条数/对账差值/耗时/错误信息） */
+function CrmSyncTab() {
+  const [logs, setLogs] = useState<CrmSyncLog[]>([]);
+  const [total, setTotal] = useState(0);
+  const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [configured, setConfigured] = useState<boolean | null>(null);
+  const [syncEnabled, setSyncEnabled] = useState<boolean>(false);
+  const [triggering, setTriggering] = useState(false);
+
+  const loadData = async (nextPage = page, nextPageSize = pageSize) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const [logRes, statusRes] = await Promise.all([
+        fetchCrmSyncLogs({ page: nextPage, pageSize: nextPageSize }),
+        fetchCrmSyncStatus(),
+      ]);
+      setLogs(logRes.logs);
+      setTotal(logRes.total);
+      setPage(logRes.page);
+      setPageSize(logRes.pageSize);
+      setConfigured(statusRes.configured);
+      setSyncEnabled(statusRes.sync_enabled);
+    } catch (err: any) {
+      setError(err.response?.data?.error || err.message || "加载 CRM 同步记录失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadData(1, 20);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleTrigger = async (full: boolean) => {
+    setTriggering(true);
+    try {
+      await triggerCrmSync(full);
+      message.success(full ? "全量同步已触发，稍候刷新查看结果" : "增量同步已触发，稍候刷新查看结果");
+    } catch (err: any) {
+      message.error(err.response?.data?.error || err.message || "触发失败");
+    } finally {
+      setTriggering(false);
+    }
+  };
+
+  const entitySummary = (log: CrmSyncLog): string => {
+    const s = log.stats;
+    if (!s) return "-";
+    const cust = Object.values(s.customers ?? {}).reduce(
+      (acc, c) => ({ fetched: acc.fetched + c.fetched, inserted: acc.inserted + c.inserted, updated: acc.updated + c.updated }),
+      { fetched: 0, inserted: 0, updated: 0 }
+    );
+    return `客户 +${cust.inserted}/~${cust.updated} · 联系人 +${s.contacts?.inserted ?? 0}/~${s.contacts?.updated ?? 0} · 跟进 +${s.follows?.inserted ?? 0}/~${s.follows?.updated ?? 0}`;
+  };
+
+  const driftSummary = (log: CrmSyncLog): number => {
+    const s = log.stats;
+    if (!s) return 0;
+    let drift = Math.abs(s.follows?.drift ?? 0) + Math.abs(s.contacts?.drift ?? 0);
+    for (const c of Object.values(s.customers ?? {})) drift += Math.abs(c.drift ?? 0);
+    return drift;
+  };
+
+  const columns = [
+    { title: "ID", dataIndex: "id", width: 60 },
+    {
+      title: "触发方式",
+      dataIndex: "trigger_source",
+      width: 90,
+      render: (v: string) => triggeredByMap[v] || reportTriggerMap[v] || v,
+    },
+    {
+      title: "状态",
+      dataIndex: "status",
+      width: 90,
+      render: (v: string) => {
+        const map: Record<string, { text: string; color: string }> = {
+          ...logStatusMap,
+          partial: { text: "部分成功", color: "warning" },
+        };
+        const { text, color } = map[v] || { text: v, color: "default" };
+        return <Tag color={color}>{text}</Tag>;
+      },
+    },
+    {
+      title: "模式",
+      dataIndex: "full_sync",
+      width: 70,
+      render: (v: boolean) => (v ? <Tag color="blue">全量</Tag> : <Tag>增量</Tag>),
+    },
+    {
+      title: "实体条数",
+      key: "entities",
+      width: 260,
+      render: (_: unknown, record: CrmSyncLog) => (
+        <Text style={{ fontSize: 12 }}>{entitySummary(record)}</Text>
+      ),
+    },
+    {
+      title: "对账差值",
+      key: "drift",
+      width: 90,
+      render: (_: unknown, record: CrmSyncLog) => {
+        const d = driftSummary(record);
+        return <Text type={d > 0 ? "warning" : "secondary"}>{d}</Text>;
+      },
+    },
+    {
+      title: "图片",
+      key: "images",
+      width: 100,
+      render: (_: unknown, record: CrmSyncLog) => {
+        const img = record.stats?.images;
+        if (!img) return "-";
+        return (
+          <Text style={{ fontSize: 12 }}>
+            {img.downloaded} 下载{img.failed > 0 ? ` / ${img.failed} 失败` : ""}
+          </Text>
+        );
+      },
+    },
+    {
+      title: "开始时间",
+      dataIndex: "started_at",
+      width: 165,
+      render: (v: string) => dayjs(v).format("YYYY-MM-DD HH:mm:ss"),
+    },
+    {
+      title: "耗时",
+      key: "duration",
+      width: 80,
+      render: (_: unknown, record: CrmSyncLog) => {
+        if (!record.finished_at) return "-";
+        const seconds = dayjs(record.finished_at).diff(dayjs(record.started_at), "second");
+        return seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`;
+      },
+    },
+    {
+      title: "错误信息",
+      dataIndex: "error_message",
+      ellipsis: true,
+      render: (v: string | null) =>
+        v ? (
+          <Text type="danger" title={v}>
+            {v}
+          </Text>
+        ) : null,
+    },
+  ];
+
+  return (
+    <div>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+          marginBottom: 16,
+          flexWrap: "wrap",
+          gap: 8,
+        }}
+      >
+        <Space size={12} wrap>
+          <Space size={6}>
+            <RefreshCw size={16} />
+            <Text strong>CRM 同步</Text>
+          </Space>
+          <Text type="secondary" style={{ fontSize: 12 }}>
+            探迹 CRM → 本地客户库：客户/联系人/跟进记录，定时增量（每 2 小时）
+            {syncEnabled ? "已开启" : "未开启"}
+          </Text>
+        </Space>
+        <Space>
+          <Button size="small" loading={triggering} onClick={() => handleTrigger(false)} disabled={configured === false}>
+            手动增量
+          </Button>
+          <Button size="small" loading={triggering} onClick={() => handleTrigger(true)} disabled={configured === false}>
+            手动全量
+          </Button>
+          <Button size="small" icon={<RefreshCw className="h-4 w-4" />} loading={loading} onClick={() => loadData()}>
+            刷新
+          </Button>
+        </Space>
+      </div>
+
+      {configured === false && (
+        <Alert
+          message="CRM MCP 未配置（CRM_MCP_TOKEN 为空），同步不会执行"
+          type="warning"
+          showIcon
+          style={{ marginBottom: 16 }}
+        />
+      )}
+      {error && (
+        <Alert message={error} type="error" showIcon style={{ marginBottom: 16 }} closable onClose={() => setError(null)} />
+      )}
+
+      <Spin spinning={loading}>
+        <Table
+          rowKey="id"
+          columns={columns}
+          dataSource={logs}
+          size="small"
+          bordered
+          scroll={{ x: 1100 }}
+          locale={{ emptyText: "暂无 CRM 同步记录" }}
+          pagination={{
+            current: page,
+            pageSize,
+            total,
+            showSizeChanger: true,
+            showTotal: (t) => `共 ${t} 条`,
+            onChange: (p, ps) => loadData(p, ps),
+          }}
+        />
+      </Spin>
+    </div>
+  );
+}
+
 export default function DataSyncCenterPage() {
   const [activeTab, setActiveTab] = useState<string>("overview");
   // 血缘 Tab 的日期过滤：由「同步概览」行跳转时注入
@@ -696,6 +925,16 @@ export default function DataSyncCenterPage() {
                 </Space>
               ),
               children: <ReportGenerationTab />,
+            },
+            {
+              key: "crm-sync",
+              label: (
+                <Space size={6}>
+                  <RefreshCw size={14} />
+                  CRM 同步
+                </Space>
+              ),
+              children: <CrmSyncTab />,
             },
           ]}
         />

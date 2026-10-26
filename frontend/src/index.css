@@ -30,21 +30,14 @@ a {
   /* 边框统一调浅：default 与 light 同量级，层级靠留白+间距而非描边深度 */
   --border-default: #F0F1F3;
   --border-light: #F0F1F3;
-  --primary: #4B24E3;
+  --primary: #1664FF;
   /* 全局卡片内边距规范：内容距卡片 frame 上下左右 16px（指标卡/地图卡/排行榜卡/各 panel-bordered 统一引用） */
   --card-padding: 16px;
-  --nav-active-bg: #EFEBFD;
+  --nav-active-bg: rgba(22, 100, 255, 0.08);
 }
 
-/* Semi 品牌色统一为紫（与登录页 .login-dark 同款的 CSS 变量覆盖方式）：
-   Semi 的 token 定义在 body 上，CDN 样式先于 index.css 加载，此处同优先级后定义即生效 */
+/* Semi 品牌色使用官方默认蓝，不做覆盖；此处仅保留边框/圆角等局部 token 调整 */
 body {
-  --semi-color-primary: #4B24E3;
-  --semi-color-primary-hover: #5C38E9;
-  --semi-color-primary-active: #3C1CBA;
-  --semi-color-primary-light-default: #EFEBFD;
-  --semi-color-primary-light-hover: #E3DDFB;
-  --semi-color-primary-light-active: #D6CDF8;
   /* 表格等组件使用的最浅边框 token，同步调浅 */
   --semi-color-border-0: #F0F1F3;
   /* 普通筛选控件/按钮圆角统一 6px */
@@ -530,14 +523,14 @@ body {
 }
 
 .sidebar-item.active {
-  background: #EFEBFD;
-  color: #4B24E3;
+  background: rgba(22, 100, 255, 0.08);
+  color: var(--primary);
   font-weight: 600;
 }
 
 /* 键盘焦点样式与 hover 区分 */
 .sidebar-item:focus-visible {
-  outline: 2px solid #4B24E3;
+  outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
 
@@ -637,7 +630,7 @@ body {
 }
 
 .utility-icon-btn:focus-visible {
-  outline: 2px solid #4B24E3;
+  outline: 2px solid var(--primary);
   outline-offset: -2px;
 }
 

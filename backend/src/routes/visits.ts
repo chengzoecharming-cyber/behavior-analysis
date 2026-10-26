@@ -16,8 +16,30 @@ import {
   FORBIDDEN_MESSAGE,
 } from "../services/permission";
 import { normalizeCustomerName } from "../services/normalization";
+import { resolveVisitOrderStatus } from "../services/visitOrderStatusService";
 
 const router = Router();
+
+// 拜访客户名 → OA 订单状态速览（admin-only，控制台订单 Tag/Quick Preview 数据源）。
+// POST 避免长 URL；body.names 支持整串（后端按 splitRealCustomerNames 口径拆分去占位）。
+router.post("/order-status", authMiddleware, requireRole("admin"), async (req: AuthRequest, res: Response) => {
+  const names = req.body?.names;
+  if (!Array.isArray(names) || names.length === 0) {
+    res.json({ results: {}, coverage_from: null });
+    return;
+  }
+  if (names.length > 50) {
+    res.status(400).json({ error: "names 最多 50 个" });
+    return;
+  }
+  try {
+    const data = await resolveVisitOrderStatus(names.map((n) => String(n)));
+    res.json(data);
+  } catch (err) {
+    console.error("Failed to resolve visit order status:", err);
+    res.status(500).json({ error: "Database error" });
+  }
+});
 
 // 手动补坐标（admin/manager，且目标成员在可见范围内）
 router.post("/:id/coordinates", authMiddleware, requireRole("admin", "manager"), async (req: AuthRequest, res: Response) => {
@@ -88,7 +110,7 @@ router.get("/accompany-types", authMiddleware, async (req: AuthRequest, res: Res
     if (rest.length > 0) {
       const normPairs = rest.map((n) => ({ name: n, norm: normalizeCustomerName(n) }));
       const crmRes = await pool.query(
-        `SELECT name_norm, customer_type FROM crm_customers WHERE name_norm = ANY($1)`,
+        `SELECT name_norm, customer_type FROM crm_customers WHERE name_norm = ANY($1) AND NOT COALESCE(is_deleted, false)`,
         [normPairs.map((p) => p.norm)]
       );
       const crmMap = new Map<string, string>(

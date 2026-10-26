@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { Spin, Table } from "@douyinfe/semi-ui";
+import { Spin, Table, Popover } from "@douyinfe/semi-ui";
 import { IconArrowLeft, IconChevronDown, IconChevronRight } from "@douyinfe/semi-icons";
 import { fetchCrmCustomerDetail } from "../api";
 import type {
   CrmCustomerDetailResponse,
   CrmCustomerRelation,
+  OaOrderMilestones,
 } from "../types";
 import { useIsMobile } from "../hooks/useIsMobile";
 
@@ -75,6 +76,110 @@ function fmtTime(t: string | null): string {
 
 function fmtDate(t: string | null): string {
   return t ? t.slice(0, 10) : "—";
+}
+
+const OA_STATUS_TONES: Record<string, TagTone> = {
+  RUNNING: "blue",
+  COMPLETED: "green",
+  TERMINATED: "neutral",
+};
+
+const DELIVERY_STATUS_LABELS: Record<string, string> = {
+  unknown: "交付未知",
+  pending: "待发货",
+  shipped: "已发货",
+  // 语义修正（2026-10-20）：date+photos+completed 仅为 OA 表单自述证据组合，
+  // 不足以证实实际交付，统一展示为「交付资料较完整（待核实）」，不计入确定性已交付
+  delivered: "交付资料较完整（待核实）",
+  unverified: "待核实",
+};
+
+const DELIVERY_STATUS_TONES: Record<string, TagTone> = {
+  unknown: "neutral",
+  pending: "orange",
+  shipped: "blue",
+  delivered: "blue",
+  unverified: "orange",
+};
+
+/** 交付状态推导来源的可读说明（A1 保守口径） */
+const DELIVERY_BASIS_LABELS: Record<string, string> = {
+  "date+photos+completed": "依据：OA 表单填写的交付日期+交付图片+审批完结（非交付系统回执）",
+  approved_only: "依据：仅审批通过",
+  none: "无交付证据",
+};
+
+/** 附件/图片计数（合同、需求附件、交付图片、验收资料） */
+function attachmentCount(o: {
+  contract_attachments: unknown;
+  requirement_attachments: unknown;
+  delivery_photos: unknown;
+  acceptance_attachments: unknown;
+}): number {
+  const len = (v: unknown) => (Array.isArray(v) ? v.length : 0);
+  return len(o.contract_attachments) + len(o.requirement_attachments) + len(o.delivery_photos) + len(o.acceptance_attachments);
+}
+
+// ---- 订单业务里程碑（milestone-v1） ----
+
+const MILESTONE_DEFS: Array<{ key: keyof OaOrderMilestones["items"]; label: string }> = [
+  { key: "contract_received", label: "合同接收" },
+  { key: "erp_entered", label: "ERP 录入" },
+  { key: "erp_pushed", label: "ERP 下推发货单" },
+  { key: "erp_closed", label: "ERP 订单关闭" },
+];
+
+const CONFIDENCE_LABELS: Record<string, string> = {
+  node_confirmed: "节点确认",
+  comment_confirmed: "评论确认",
+  comment_negated: "评论含否定信息，待核实",
+};
+
+/** 里程碑证据 Chips：已确认的节点可点击查看证据；未出现节点显示「未找到确认记录」 */
+function MilestoneChips({ milestones }: { milestones: OaOrderMilestones | null }) {
+  if (!milestones) {
+    return <span style={{ fontSize: 12, color: C.textTertiary }}>操作证据未同步</span>;
+  }
+  const invalid = !milestones.final_status.valid;
+  return (
+    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+      {invalid ? (
+        <SoftTag tone="red">
+          单据已{milestones.final_status.oa_status === "TERMINATED" ? "撤销" : "拒绝"}，以下为历史操作证据
+        </SoftTag>
+      ) : null}
+      {MILESTONE_DEFS.map((def) => {
+        const entry = milestones.items[def.key];
+        if (!entry) {
+          return (
+            <span key={def.key} style={{ fontSize: 12, color: C.textTertiary }}>
+              {def.label}：未找到确认记录
+            </span>
+          );
+        }
+        const tone: TagTone = entry.confidence === "comment_negated" ? "orange" : invalid ? "neutral" : "green";
+        return (
+          <Popover
+            key={def.key}
+            content={
+              <div style={{ maxWidth: 320, fontSize: 12, lineHeight: "20px" }}>
+                <div>节点：{entry.node || "—"}</div>
+                <div>时间：{entry.at ? fmtTime(entry.at) : "—"}</div>
+                <div>确认方式：{CONFIDENCE_LABELS[entry.confidence] || entry.confidence}</div>
+                {entry.remark_excerpt ? (
+                  <div style={{ wordBreak: "break-word", color: "#60646C" }}>评论摘要：{entry.remark_excerpt}</div>
+                ) : null}
+              </div>
+            }
+          >
+            <span style={{ cursor: "pointer", opacity: invalid ? 0.6 : 1 }}>
+              <SoftTag tone={tone}>{def.label} ✓</SoftTag>
+            </span>
+          </Popover>
+        );
+      })}
+    </div>
+  );
 }
 
 /** 主内容 section：标题 + 细分隔线 + 内容（无厚 Card/阴影/大圆角） */
@@ -198,7 +303,16 @@ export default function CustomerDetailPage() {
     );
   }
 
-  const { customer, contacts, insights, snapshot_date } = detail;
+  const {
+    customer,
+    contacts,
+    insights,
+    snapshot_date,
+    orders,
+    orders_status,
+    unconfirmed_order_candidates,
+    orders_history_since,
+  } = detail;
 
   const extraEntries = Object.entries(customer.extra || {}).filter(
     ([, v]) => v !== null && v !== undefined && v !== ""
@@ -229,7 +343,7 @@ export default function CustomerDetailPage() {
     },
   ];
 
-  // 跟进 × 外勤 × 订单链路三节点（口径不变，OA 仍为待接入）
+  // 跟进 × 外勤 × 订单链路三节点
   const chainNodes = [
     {
       title: "CRM 跟进",
@@ -243,8 +357,20 @@ export default function CustomerDetailPage() {
     },
     {
       title: "OA 订单",
-      value: <span style={{ color: C.textTertiary }}>待接入</span>,
-      sub: "成交事实未来以 OA 订单执行单为准",
+      value:
+        orders_status === "pending_oa_sync" ? (
+          <span style={{ color: C.textTertiary }}>未接入</span>
+        ) : (
+          `${orders.length} 单`
+        ),
+      sub:
+        orders_status === "pending_oa_sync"
+          ? "订单同步未配置"
+          : orders_status === "has_unconfirmed_candidates"
+          ? `含 ${unconfirmed_order_candidates.length} 条待核查候选`
+          : orders.length > 0
+          ? `最近：${fmtDate(orders[0]?.oa_create_time ?? null)}`
+          : "已同步，暂无订单",
     },
   ];
 
@@ -407,12 +533,128 @@ export default function CustomerDetailPage() {
           </Section>
 
           <Section title="订单执行">
-            <div style={{ padding: "12px 0 4px" }}>
-              <div style={{ fontSize: 13, color: C.textTertiary }}>待 OA 订单同步接入</div>
-              <div style={{ fontSize: 12, color: C.textTertiary, marginTop: 4 }}>
-                订单成交事实将以 OA 两张订单执行单为准，接入前此处不展示任何订单数据。
+            {orders_status === "pending_oa_sync" ? (
+              <div style={{ padding: "12px 0 4px" }}>
+                <div style={{ fontSize: 13, color: C.textTertiary }}>订单同步未配置</div>
+                <div style={{ fontSize: 12, color: C.textTertiary, marginTop: 4 }}>
+                  配置 DINGTALK_PROCESS_CODE_ORDER / DINGTALK_PROCESS_CODE_ORDER_AGENT 并执行回拉后，此处展示真实订单。
+                </div>
               </div>
-            </div>
+            ) : (
+              <div>
+                {orders_history_since ? (
+                  <div style={{ fontSize: 12, color: C.textTertiary, marginBottom: 12 }}>
+                    OA 订单历史数据自 {orders_history_since} 起（钉钉接口 365 天窗口限制，更早订单为数据缺口）。
+                  </div>
+                ) : null}
+                {orders.length === 0 ? (
+                  <div style={{ fontSize: 13, color: C.textTertiary }}>已同步，当前客户暂无可靠关联订单</div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    {orders.map((o) => (
+                      <div
+                        key={o.id}
+                        style={{
+                          border: `1px solid ${C.border}`,
+                          borderRadius: 6,
+                          padding: "12px 16px",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                          <span style={{ fontSize: 14, fontWeight: 600, color: C.textPrimary }}>
+                            {o.contract_no_raw || "（无合同编号）"}
+                          </span>
+                          {o.role === "agent" ? <SoftTag tone="purple">本客户为代理商</SoftTag> : null}
+                          {o.order_type === "agent" && o.role === "customer" ? (
+                            <SoftTag tone="blue">代理商单 · {o.agent_name_raw || "代理商未填"}</SoftTag>
+                          ) : null}
+                          <SoftTag tone={OA_STATUS_TONES[o.oa_status] || "neutral"}>
+                            {o.oa_status}
+                            {o.oa_result === "refuse" ? "·已拒绝" : ""}
+                          </SoftTag>
+                          <SoftTag tone={DELIVERY_STATUS_TONES[o.delivery_status] || "neutral"}>
+                            {DELIVERY_STATUS_LABELS[o.delivery_status] || o.delivery_status}
+                          </SoftTag>
+                          {o.delivery_status === "unverified" || o.delivery_status === "delivered" ? (
+                            <span style={{ fontSize: 12, color: C.textTertiary }}>
+                              {DELIVERY_BASIS_LABELS[o.delivery_status_basis || ""] ||
+                                `证据不足（${o.delivery_status_basis || "无"}），以原始字段为准`}
+                            </span>
+                          ) : null}
+                          {o.customer_match_status === "matched_by_exact_name" ? (
+                            <SoftTag tone="orange">名称匹配 · 待复核</SoftTag>
+                          ) : null}
+                        </div>
+                        <div style={{ marginTop: 8 }}>
+                          <MilestoneChips milestones={o.milestones} />
+                        </div>
+                        <div style={{ marginTop: 8, fontSize: 13, color: C.textSecondary, lineHeight: "22px" }}>
+                          {o.items.length > 0 ? (
+                            <div>
+                              需求产品：
+                              {o.items
+                                .map((it) => `${it.product_category} × ${it.quantity ?? "?"}`)
+                                .join("；")}
+                              {o.demand_type ? `（${o.demand_type}）` : ""}
+                            </div>
+                          ) : null}
+                          <div style={{ color: C.textTertiary, fontSize: 12 }}>
+                            {[
+                              o.contract_entity ? `签约主体：${o.contract_entity}` : null,
+                              o.originator_name ? `提交：${o.originator_name}` : null,
+                              o.oa_create_time ? `提单：${fmtTime(o.oa_create_time)}` : null,
+                              o.delivery_date ? `交付日期：${o.delivery_date}` : null,
+                              o.installer_name ? `安装：${o.installer_name}` : null,
+                            ]
+                              .filter(Boolean)
+                              .join("　")}
+                          </div>
+                          {o.logistics_note ? <div>物流：{o.logistics_note}</div> : null}
+                          {o.agent_delivery_progress ? <div>代理商发货进度：{o.agent_delivery_progress}</div> : null}
+                          {o.order_note ? (
+                            <div style={{ color: C.textTertiary, wordBreak: "break-word" }}>订单说明：{o.order_note}</div>
+                          ) : null}
+                          {attachmentCount(o) > 0 ? (
+                            <div style={{ fontSize: 12, color: C.textTertiary }}>附件/图片：{attachmentCount(o)} 个</div>
+                          ) : null}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {unconfirmed_order_candidates.length > 0 ? (
+                  <div style={{ marginTop: 20 }}>
+                    <div style={{ fontSize: 13, fontWeight: 600, color: C.textPrimary, marginBottom: 8 }}>
+                      待核查候选（未确认关联，不计入成交）
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {unconfirmed_order_candidates.map((c) => (
+                        <div
+                          key={c.id}
+                          style={{
+                            border: `1px dashed ${C.border}`,
+                            borderRadius: 6,
+                            padding: "10px 16px",
+                            fontSize: 13,
+                            color: C.textSecondary,
+                          }}
+                        >
+                          <span style={{ fontWeight: 500 }}>{c.customer_name_raw || "（客户名缺失）"}</span>
+                          {c.order_type === "agent" ? (
+                            <span style={{ color: C.textTertiary }}>　代理商：{c.agent_name_raw || "—"}</span>
+                          ) : null}
+                          <span style={{ color: C.textTertiary }}>
+                            　{c.contract_no_raw || "无合同号"}　{c.oa_status}　{fmtDate(c.oa_create_time)}　
+                            {c.originator_name || ""}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            )}
           </Section>
         </main>
 

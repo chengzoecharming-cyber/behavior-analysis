@@ -591,6 +591,39 @@ export async function initDB(): Promise<void> {
       CREATE INDEX IF NOT EXISTS idx_crm_follow_records_customer_norm
         ON crm_follow_records(customer_name_norm);
 
+      -- MCP 正式同步（2026-10-23）：远端已删除客户打标（不物理删，保留历史关联）
+      ALTER TABLE crm_customers ADD COLUMN IF NOT EXISTS is_deleted BOOLEAN NOT NULL DEFAULT false;
+      CREATE INDEX IF NOT EXISTS idx_crm_customers_not_deleted
+        ON crm_customers(is_deleted);
+      -- MCP 跟进同步 upsert 用（Excel 时代无该列）
+      ALTER TABLE crm_follow_records ADD COLUMN IF NOT EXISTS update_time TIMESTAMPTZ;
+
+      -- CRM MCP 同步水位线：每个 form 一行（form_key 如 customer:enterprise_domestic / contacts）
+      CREATE TABLE IF NOT EXISTS crm_mcp_sync_state (
+        form_key TEXT PRIMARY KEY,
+        last_update_time TIMESTAMPTZ,
+        last_run_at TIMESTAMPTZ,
+        last_total INTEGER,
+        last_status TEXT
+      );
+
+      -- CRM MCP 同步记录（仿 dingtalk_sync_logs，同步中心「CRM 同步」Tab 数据源）
+      CREATE TABLE IF NOT EXISTS crm_sync_logs (
+        id SERIAL PRIMARY KEY,
+        run_id TEXT NOT NULL,
+        trigger_source VARCHAR(16) NOT NULL DEFAULT 'manual',
+        status VARCHAR(16) NOT NULL DEFAULT 'running'
+          CHECK (status IN ('running', 'success', 'partial', 'failed')),
+        full_sync BOOLEAN NOT NULL DEFAULT false,
+        stats JSONB DEFAULT '{}',
+        error_message TEXT,
+        started_at TIMESTAMPTZ DEFAULT NOW(),
+        finished_at TIMESTAMPTZ
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_crm_sync_logs_started
+        ON crm_sync_logs(started_at DESC);
+
       -- 缓存：CRM 客户地址地理编码结果（高德限流；失败记录带 attempts 计数，< 5 次可重试）
       CREATE TABLE IF NOT EXISTS crm_customer_geocode (
         customer_id TEXT PRIMARY KEY,
@@ -599,6 +632,130 @@ export async function initDB(): Promise<void> {
       );
       ALTER TABLE crm_customer_geocode ADD COLUMN IF NOT EXISTS attempts INTEGER NOT NULL DEFAULT 0;
       ALTER TABLE crm_customer_geocode ADD COLUMN IF NOT EXISTS last_attempt_at TIMESTAMPTZ;
+
+      -- NORMALIZED 层：OA 订单执行单（订单执行 / 【代理商】订单执行 两张表单）
+      -- 客户匹配状态：matched_by_verified_id（CRM instanceId 实证命中，唯一自动确认通道）
+      --   / matched_by_exact_name（名称精确唯一命中，写入但标注待复核）
+      --   / ambiguous（模糊候选，不写 customer_id，不计成交）/ unmatched
+      CREATE TABLE IF NOT EXISTS oa_orders (
+        id SERIAL PRIMARY KEY,
+        process_instance_id TEXT NOT NULL UNIQUE,
+        business_id TEXT,
+        process_code TEXT NOT NULL,
+        order_type TEXT NOT NULL,
+        customer_name_raw TEXT,
+        crm_instance_id TEXT,
+        customer_id TEXT,
+        customer_match_status TEXT NOT NULL DEFAULT 'unmatched',
+        customer_match_candidates JSONB,
+        customer_matched_at TIMESTAMPTZ,
+        agent_name_raw TEXT,
+        agent_customer_id TEXT,
+        agent_match_status TEXT,
+        agent_match_candidates JSONB,
+        contract_entity TEXT,
+        contract_no_raw TEXT,
+        contract_nos TEXT[],
+        factory_region TEXT,
+        demand_type TEXT,
+        radio_module_removed TEXT,
+        order_note TEXT,
+        agent_delivery_progress TEXT,
+        custom_review_ref TEXT,
+        delivery_address_raw TEXT,
+        logistics_note TEXT,
+        installer_name TEXT,
+        installer_userid TEXT,
+        delivery_date DATE,
+        delivery_service_note TEXT,
+        delivery_status_basis TEXT,
+        contract_attachments JSONB,
+        requirement_attachments JSONB,
+        jjy_attachments JSONB,
+        delivery_photos JSONB,
+        acceptance_attachments JSONB,
+        oa_status TEXT NOT NULL,
+        oa_result TEXT,
+        delivery_status TEXT NOT NULL DEFAULT 'unknown',
+        -- 交付状态推导来源（A1 保守口径）：记录证据组合，如 date+photos+completed / date_only / photos_only / logistics_text / approved_only / none
+        crm_status_snapshot TEXT,
+        originator_userid TEXT,
+        originator_name TEXT,
+        originator_dept TEXT,
+        oa_create_time TIMESTAMPTZ,
+        oa_finish_time TIMESTAMPTZ,
+        form_json JSONB,
+        parse_version TEXT NOT NULL,
+        synced_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_oa_orders_customer
+        ON oa_orders(customer_id);
+      CREATE INDEX IF NOT EXISTS idx_oa_orders_agent
+        ON oa_orders(agent_customer_id);
+      CREATE INDEX IF NOT EXISTS idx_oa_orders_match
+        ON oa_orders(customer_match_status);
+      CREATE INDEX IF NOT EXISTS idx_oa_orders_create
+        ON oa_orders(oa_create_time);
+      -- 见下方 ALTER（delivery_status_basis / milestones）
+      ALTER TABLE oa_orders ADD COLUMN IF NOT EXISTS delivery_status_basis TEXT;
+      -- 订单业务里程碑派生（证据源在 oa_order_events，此列只是展示缓存）
+      ALTER TABLE oa_orders ADD COLUMN IF NOT EXISTS milestones JSONB;
+
+      -- 订单产品明细（TableField 子表，一行一产品）
+      CREATE TABLE IF NOT EXISTS oa_order_items (
+        id SERIAL PRIMARY KEY,
+        order_id INTEGER NOT NULL REFERENCES oa_orders(id) ON DELETE CASCADE,
+        row_number TEXT,
+        product_category TEXT,
+        product_key TEXT,
+        quantity NUMERIC,
+        extra JSONB,
+        UNIQUE(order_id, row_number)
+      );
+
+      -- OA 订单操作证据表（operationRecords 原始事实 + 派生里程碑，里程碑规则升级可重放）
+      -- 幂等标识：idem_key = md5(operation_type | operation_time | remark)，表级唯一约束
+      CREATE TABLE IF NOT EXISTS oa_order_events (
+        id SERIAL PRIMARY KEY,
+        process_instance_id TEXT NOT NULL REFERENCES oa_orders(process_instance_id) ON DELETE CASCADE,
+        idem_key TEXT NOT NULL,
+        activity_id TEXT,
+        node_name TEXT,
+        operation_type TEXT NOT NULL,
+        operation_result TEXT,
+        operator_userid TEXT,
+        operation_time TIMESTAMPTZ,
+        remark TEXT,
+        raw JSONB,
+        milestone TEXT,
+        milestone_rule_version TEXT,
+        confidence TEXT,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        CONSTRAINT uq_oa_order_events_idem UNIQUE (process_instance_id, idem_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_oa_order_events_pid
+        ON oa_order_events(process_instance_id);
+
+      -- 订单历史回拉断点续跑窗口
+      CREATE TABLE IF NOT EXISTS oa_order_sync_windows (
+        id SERIAL PRIMARY KEY,
+        process_code TEXT NOT NULL,
+        window_start TIMESTAMPTZ NOT NULL,
+        window_end TIMESTAMPTZ NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        listed_count INTEGER,
+        detail_ok INTEGER,
+        detail_fail INTEGER,
+        error TEXT,
+        run_id TEXT,
+        created_at TIMESTAMPTZ DEFAULT now(),
+        updated_at TIMESTAMPTZ DEFAULT now(),
+        UNIQUE(process_code, window_start, window_end)
+      );
     `);
 
     // 初始化数据质量监控表

@@ -118,8 +118,8 @@ router.get("/cross", authMiddleware, async (req: AuthRequest, res: Response) => 
       loadFollowRecordCounts(),
     ]);
 
-    // CRM 客户（按可见负责人收敛）
-    const where: string[] = ["name_norm IS NOT NULL", "name_norm <> ''"];
+    // CRM 客户（按可见负责人收敛；排除 MCP 同步标记的已删除僵尸客户）
+    const where: string[] = ["name_norm IS NOT NULL", "name_norm <> ''", "NOT COALESCE(is_deleted, false)"];
     const params: unknown[] = [];
     appendOwnerFilter(where, params, visibleNames, "owner_name");
     const customers = await pool.query<{
@@ -273,7 +273,7 @@ router.get("/wordcloud", authMiddleware, async (_req: AuthRequest, res: Response
 router.get("/opportunity-map", authMiddleware, async (req: AuthRequest, res: Response) => {
   try {
     const visibleNames = await getVisibleUserNames(req);
-    const where: string[] = ["address IS NOT NULL", "address <> ''"];
+    const where: string[] = ["address IS NOT NULL", "address <> ''", "NOT COALESCE(is_deleted, false)"];
     const params: unknown[] = [];
     appendOwnerFilter(where, params, visibleNames, "owner_name");
     const customers = await pool.query<{
@@ -369,7 +369,7 @@ router.get("/stuck", authMiddleware, async (req: AuthRequest, res: Response) => 
     const [lastTimes, allCrm] = await Promise.all([
       loadVisitNameLastTimes(),
       pool.query<{ name_norm: string }>(
-        `SELECT DISTINCT name_norm FROM crm_customers WHERE name_norm IS NOT NULL AND name_norm <> ''`
+        `SELECT DISTINCT name_norm FROM crm_customers WHERE NOT COALESCE(is_deleted, false) AND name_norm IS NOT NULL AND name_norm <> ''`
       ),
     ]);
     const crmNorms = allCrm.rows.map((r) => r.name_norm);
@@ -383,7 +383,7 @@ router.get("/stuck", authMiddleware, async (req: AuthRequest, res: Response) => 
     }
 
     // 审批卡死：审批中且创建时间超过 7 天
-    const whereA: string[] = ["process_status = '审批中'", "created_time < NOW() - INTERVAL '7 days'"];
+    const whereA: string[] = ["process_status = '审批中'", "created_time < NOW() - INTERVAL '7 days'", "NOT COALESCE(is_deleted, false)"];
     const paramsA: unknown[] = [];
     appendOwnerFilter(whereA, paramsA, visibleNames, "owner_name");
     const approvals = await pool.query<{
@@ -398,6 +398,7 @@ router.get("/stuck", authMiddleware, async (req: AuthRequest, res: Response) => 
     // 躺尸：私海且（从未跟进 或 最近跟进早于 30 天前），且近 30 天无实际拜访
     const whereZ: string[] = [
       "is_in_pool = false",
+      "NOT COALESCE(is_deleted, false)",
       "(follow_times = 0 OR latest_follow_up_time < NOW() - INTERVAL '30 days')",
     ];
     const paramsZ: unknown[] = [];
@@ -478,10 +479,11 @@ router.get("/overview", authMiddleware, async (_req: AuthRequest, res: Response)
          COUNT(*) FILTER (WHERE follow_times = 0)::text AS unfollowed,
          COUNT(*) FILTER (WHERE process_status = '审批中')::text AS approving,
          COUNT(*) FILTER (WHERE created_time >= NOW() - INTERVAL '30 days')::text AS new_30d
-       FROM crm_customers`
+       FROM crm_customers
+       WHERE NOT COALESCE(is_deleted, false)`
     );
     const byType = await pool.query<{ customer_type: string; n: string }>(
-      `SELECT customer_type, COUNT(*)::text AS n FROM crm_customers GROUP BY customer_type`
+      `SELECT customer_type, COUNT(*)::text AS n FROM crm_customers WHERE NOT COALESCE(is_deleted, false) GROUP BY customer_type`
     );
     // CRM 数据快照日期：最近一次手工导入批次时间（crm_import_batches.created_at）
     const snapshot = await pool.query<{ ts: Date | null }>(

@@ -26,7 +26,7 @@ export default function ProvinceBarChart({
     barMaxWidth: 36,
     bar: {
       style: {
-        fill: "#4B24E3",
+        fill: "#1664FF",
         cornerRadius: [4, 4, 0, 0],
       },
     },

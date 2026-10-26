@@ -4,13 +4,23 @@ import { useEffect, useMemo, useState } from "react";
 import { formatBeijingHHmm } from "../utils/time";
 import { isMileageRequiredTrip } from "../utils/tripType";
 import { Visit, Route, Anomaly } from "../types";
-import { fetchAccompanyTypes, AccompanyType } from "../api";
+import { fetchAccompanyTypes, AccompanyType, fetchVisitOrderStatus, VisitOrderStatus } from "../api";
 import { AnomalyItem } from "./AnomalyItem";
+import OrderStatusTag from "./OrderStatusTag";
 
 interface TrajectoryTimelineProps {
   visits: Visit[];
   routes: Route[];
   anomalies: Anomaly[];
+  /** admin 时挂载 OA 订单状态 Tag（非 admin 不请求不渲染） */
+  showOrderStatus?: boolean;
+}
+
+function splitVisitCustomerNames(name?: string | null): string[] {
+  return (name || "")
+    .split(/[,，、]/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 interface TimelineNode {
@@ -100,6 +110,7 @@ export default function TrajectoryTimeline({
   visits,
   routes,
   anomalies,
+  showOrderStatus,
 }: TrajectoryTimelineProps) {
   // 收集本时间线出现的全部陪同对象名，一次性识别类型（同事/客户/代理商）
   const accompanyNamesKey = useMemo(() => {
@@ -121,6 +132,31 @@ export default function TrajectoryTimeline({
       .catch(() => { /* 类型识别失败不影响展示 */ });
     return () => { cancelled = true; };
   }, [accompanyNamesKey]);
+
+  // admin：批量解析本时间线客户名的 OA 订单状态（一次 POST）
+  const customerNamesKey = useMemo(() => {
+    if (!showOrderStatus) return "";
+    const set = new Set<string>();
+    for (const v of visits) {
+      splitVisitCustomerNames(v.customer_name).forEach((n) => set.add(n));
+    }
+    return Array.from(set).join("\n");
+  }, [visits, showOrderStatus]);
+  const [orderStatuses, setOrderStatuses] = useState<Record<string, VisitOrderStatus>>({});
+  const [orderCoverageFrom, setOrderCoverageFrom] = useState<string | null>(null);
+  useEffect(() => {
+    if (!showOrderStatus || !customerNamesKey) return;
+    let cancelled = false;
+    const names = customerNamesKey.split("\n");
+    fetchVisitOrderStatus(names)
+      .then((r) => {
+        if (cancelled) return;
+        setOrderStatuses(r.results || {});
+        setOrderCoverageFrom(r.coverage_from);
+      })
+      .catch(() => { /* 订单状态解析失败不影响展示 */ });
+    return () => { cancelled = true; };
+  }, [customerNamesKey, showOrderStatus]);
 
   if (visits.length === 0) {
     return <div style={{ color: "#999", fontSize: 14 }}>暂无轨迹数据</div>;
@@ -287,6 +323,23 @@ export default function TrajectoryTimeline({
                       陪
                     </Tag>
                   )}
+                  {showOrderStatus &&
+                    (() => {
+                      // 每次拜访只挂一个主状态 Tag：可靠订单 > 待核查 > 未发现订单
+                      const infos = splitVisitCustomerNames(v.customer_name)
+                        .map((n) => orderStatuses[n])
+                        .filter((i): i is VisitOrderStatus => !!i);
+                      if (infos.length === 0) return null;
+                      const best =
+                        infos.find((i) => i.status === "has_orders") ||
+                        infos.find((i) => i.status === "pending_review") ||
+                        infos[0];
+                      return (
+                        <span style={{ marginLeft: 6 }}>
+                          <OrderStatusTag info={best} coverageFrom={orderCoverageFrom} />
+                        </span>
+                      );
+                    })()}
                 </div>
               )}
 

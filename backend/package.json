@@ -28,7 +28,14 @@
     "reparse:approval": "ts-node scripts/reparseApproval.ts",
     "backfill:ai-summary": "ts-node scripts/backfillAiSummary.ts",
     "import:crm": "ts-node scripts/importCrmExcel.ts",
-    "dryrun:daily-report": "ts-node scripts/dryRunDailyReportMarkdown.ts"
+    "dryrun:daily-report": "ts-node scripts/dryRunDailyReportMarkdown.ts",
+    "backfill:oa-orders": "ts-node scripts/backfillOaOrders.ts",
+    "rematch:oa-orders": "ts-node scripts/rematchOaOrders.ts",
+    "reparse:oa-orders": "ts-node scripts/reparseOaOrders.ts",
+    "backfill:oa-order-events": "ts-node scripts/backfillOaOrderEvents.ts",
+    "remark:oa-order-events": "ts-node scripts/remarkOaOrderEvents.ts",
+    "audit:crm-mcp": "ts-node scripts/auditCrmMcp.ts",
+    "sync:crm-mcp": "ts-node scripts/syncCrmMcp.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

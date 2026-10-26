@@ -4,6 +4,8 @@ import { Visit, Stop, Route, Anomaly } from "../types";
 import { formatBeijingHHmm, formatBeijingTime } from "../utils/time";
 import { isMileageRequiredTrip } from "../utils/tripType";
 import { Card, Descriptions, Button, Tag, Image } from "@douyinfe/semi-ui";
+import { fetchVisitOrderStatus, VisitOrderStatus } from "../api";
+import OrderStatusTag from "./OrderStatusTag";
 
 export interface RouteGroup {
   key: string;
@@ -21,6 +23,8 @@ interface MapContainerProps {
   anomalies?: Anomaly[];
   progress?: number;
   progressMap?: Record<string, number>;
+  /** admin 时在拜访详情卡客户名旁挂 OA 订单状态 Tag（非 admin 不请求不渲染） */
+  showOrderStatus?: boolean;
 }
 
 const AMAP_KEY = import.meta.env.VITE_AMAP_KEY || "YOUR_AMAP_KEY";
@@ -190,6 +194,7 @@ export default function MapContainer({
   anomalies = EMPTY_ANOMALIES,
   progress = 1,
   progressMap,
+  showOrderStatus,
 }: MapContainerProps) {
   const mapRef = useRef<HTMLDivElement>(null);
   const mapInstance = useRef<any>(null);
@@ -202,6 +207,30 @@ export default function MapContainer({
   const [loaded, setLoaded] = useState(false);
   const [loadError, setLoadError] = useState(false);
   const [selectedVisit, setSelectedVisit] = useState<Visit | null>(null);
+
+  // admin：选中拜访点时解析其客户名的 OA 订单状态
+  const [orderStatus, setOrderStatus] = useState<VisitOrderStatus | null>(null);
+  const [orderCoverageFrom, setOrderCoverageFrom] = useState<string | null>(null);
+  useEffect(() => {
+    setOrderStatus(null);
+    if (!showOrderStatus || !selectedVisit?.customer_name) return;
+    let cancelled = false;
+    fetchVisitOrderStatus([selectedVisit.customer_name])
+      .then((r) => {
+        if (cancelled) return;
+        setOrderCoverageFrom(r.coverage_from);
+        const infos = Object.values(r.results || {});
+        // 只挂一个主状态：可靠订单 > 待核查 > 未发现订单
+        const best =
+          infos.find((i) => i.status === "has_orders") ||
+          infos.find((i) => i.status === "pending_review") ||
+          infos[0] ||
+          null;
+        setOrderStatus(best);
+      })
+      .catch(() => { /* 订单状态解析失败不影响展示 */ });
+    return () => { cancelled = true; };
+  }, [selectedVisit, showOrderStatus]);
 
   const { displayGroups, activeProgressMap } = useMemo(() => {
     const multi = routeGroups && routeGroups.length > 0;
@@ -605,6 +634,11 @@ export default function MapContainer({
               {selectedVisit.customer_name && (
                 <DescItem label={isV2VisitForm(selectedVisit) ? "拜访客户" : "客户名称"}>
                   {selectedVisit.customer_name}
+                  {orderStatus && (
+                    <span style={{ marginLeft: 6 }}>
+                      <OrderStatusTag info={orderStatus} coverageFrom={orderCoverageFrom} />
+                    </span>
+                  )}
                 </DescItem>
               )}
               {/* v2：按表单字段原样展示（沟通内容详情/存在问题点/AI总结）；v1：本次拜访情况 */}

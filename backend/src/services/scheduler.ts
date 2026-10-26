@@ -10,6 +10,8 @@ import {
 import { checkAndSendAlerts, sendDailySyncSummary, sendRobotMarkdown } from "./syncCheckService";
 import { reconcileUsers } from "./userSyncService";
 import { sendCrmDigest } from "./crmDigestService";
+import { syncRecentOrders, syncRunningOrders } from "./orderSyncService";
+import { getOrderProcessCodes } from "./dingtalk";
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -338,6 +340,59 @@ export function startDingTalkSyncScheduler(): Promise<void> | undefined {
   return catchup;
 }
 
+/**
+ * OA 订单执行单同步调度（与拜访同步严格隔离）。
+ * 失败只记日志，绝不影响同进程拜访任务；互斥锁在 syncRecentOrders 内部。
+ */
+export function startOrderSyncScheduler(): void {
+  if (!isDingTalkConfigured() || getOrderProcessCodes().length === 0) {
+    console.log("[Scheduler] Order sync skipped: order process codes not configured");
+    return;
+  }
+
+  // 增量：每天 9:20 / 12:20 / 15:20 / 18:20 / 21:20 同步近 7 天（错开拜访同步整点）
+  const recentSyncSlots = [9, 12, 15, 18, 21];
+  for (const hour of recentSyncSlots) {
+    const scheduleRecent = () => {
+      const ms = getMillisecondsUntil(hour, 20);
+      console.log(
+        `[Scheduler] Order recent sync will run at ${hour}:20 in ${Math.round(ms / 1000 / 60)} minutes`
+      );
+      setTimeout(() => {
+        syncRecentOrders(7).catch((err) => console.error("[Scheduler] Order recent sync failed:", err));
+        scheduleRecent();
+      }, ms);
+    };
+    scheduleRecent();
+  }
+
+  // 每日 4:30 同步近 90 天，覆盖长期 RUNNING 单的状态流转与字段后补
+  const scheduleLongWindow = () => {
+    const ms = getMillisecondsUntil(4, 30);
+    console.log(
+      `[Scheduler] Order 90-day sync will run at 4:30 in ${Math.round(ms / 1000 / 60)} minutes`
+    );
+    setTimeout(() => {
+      syncRecentOrders(90).catch((err) => console.error("[Scheduler] Order 90-day sync failed:", err));
+      scheduleLongWindow();
+    }, ms);
+  };
+  scheduleLongWindow();
+
+  // 每日 4:50 RUNNING 长单补偿：创建超 90 天仍在 RUNNING 的单按 id 逐条重拉（A2）
+  const scheduleRunningBackstop = () => {
+    const ms = getMillisecondsUntil(4, 50);
+    console.log(
+      `[Scheduler] Order RUNNING backstop will run at 4:50 in ${Math.round(ms / 1000 / 60)} minutes`
+    );
+    setTimeout(() => {
+      syncRunningOrders().catch((err) => console.error("[Scheduler] Order RUNNING backstop failed:", err));
+      scheduleRunningBackstop();
+    }, ms);
+  };
+  scheduleRunningBackstop();
+}
+
 function isReportGenerationConfigured(): boolean {
   return !!process.env.DINGTALK_OPERATOR_USERID;
 }
@@ -515,4 +570,45 @@ export function startReportGenerationScheduler(): void {
   catchUpReportGeneration().catch((err) => {
     console.error("[Scheduler] Report catch-up failed:", err);
   });
+}
+
+/** 计算距离下一个「偶数小时 :40」（北京时间）的毫秒数：0:40, 2:40, ..., 22:40 */
+function getMillisecondsUntilNextEvenHour40(): number {
+  const now = new Date();
+  const bj = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const hour = bj.getUTCHours();
+  const minute = bj.getUTCMinutes();
+  // 当前偶数小时的 :40 还在未来 → 就用它；否则推到下一个偶数小时
+  const addHours = hour % 2 === 0 && minute < 40 ? 0 : hour % 2 === 0 ? 2 : 1;
+  const target = new Date(
+    Date.UTC(bj.getUTCFullYear(), bj.getUTCMonth(), bj.getUTCDate(), hour + addHours, 40, 0) - 8 * 60 * 60 * 1000
+  );
+  return target.getTime() - now.getTime();
+}
+
+/**
+ * CRM MCP 增量同步调度：每 2 小时的 :40 分（北京时间）跑一轮增量。
+ * 仅当 CRM_MCP_SYNC_ENABLED=true 且 CRM_MCP_TOKEN 已配置时注册；
+ * 互斥锁与失败隔离在 syncCrmFromMcp 内部。
+ */
+export function startCrmMcpSyncScheduler(): void {
+  if (process.env.CRM_MCP_SYNC_ENABLED !== "true" || !process.env.CRM_MCP_TOKEN) {
+    console.log("[Scheduler] CRM MCP sync skipped: CRM_MCP_SYNC_ENABLED/CRM_MCP_TOKEN not configured");
+    return;
+  }
+  const schedule = () => {
+    const ms = getMillisecondsUntilNextEvenHour40();
+    console.log(`[Scheduler] CRM MCP incremental sync will run in ${Math.round(ms / 1000 / 60)} minutes`);
+    safeSetTimeout(async () => {
+      console.log("[Scheduler] Running CRM MCP incremental sync");
+      try {
+        const { syncCrmFromMcp } = await import("./crmMcpSyncService");
+        await syncCrmFromMcp({ triggerSource: "scheduler" });
+      } catch (err) {
+        console.error("[Scheduler] CRM MCP sync failed:", err);
+      }
+      schedule();
+    }, ms);
+  };
+  schedule();
 }
