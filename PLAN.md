@@ -1429,6 +1429,19 @@ CREATE TABLE fuel_records (
 
 ---
 
+## CRM 主数据源切换 MCP + 订单 Tag 名称归并（2026-10-26）
+
+背景：控制台客户 Tag「无 CRM」误报——CRM 数据此前是 2026-09-08 的 Excel 手工快照，且 `visitOrderStatusService` 只做 name_norm 精确匹配。本次：① Excel 导入停用（`importCrmExcel.ts` 需 `--force-deprecated-excel` 才执行，数据不删）；② Tag 的 CRM 阶段/公海/负责人展示接入三层归并（复用 `customerMatch.ts` 的 `resolveCrmName`，与 cross/stuck 同口径；订单关联口径不变）；③ 开启 MCP 定时增量同步。
+
+**上线步骤**：
+
+1. 服务器 `.env` 设置 `CRM_MCP_SYNC_ENABLED=true`（`CRM_MCP_TOKEN` 已配）。
+2. 部署代码（前端词云 seriesField 修复随同一镜像上线）。
+3. 清理进程重启遗留的僵尸日志：`docker exec -i sales-map-postgres psql -U sales -d sales_map -c "UPDATE crm_sync_logs SET status='failed', error_message='进程重启遗留' WHERE status='running'"`
+4. 验证：后端日志出现 `CRM MCP incremental sync will run in ...`；下一轮 :40 后查 `crm_sync_logs` 新增 success 记录；控制台抽几个之前显示「无 CRM」的拜访确认 Tag 出现 CRM 阶段。
+
+---
+
 ## 待讨论 / 低优先级
 
 - [ ] Dashboard 字段命名：「停留点数」「停留时长」是否改名/移除

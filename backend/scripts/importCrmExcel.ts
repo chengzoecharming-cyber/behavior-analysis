@@ -1,7 +1,12 @@
 /**
  * 探迹 CRM Excel 导入脚本（幂等，可重复执行）
  *
- * 用法：cd backend && npm run import:crm
+ * ⚠️ 已停用（2026-10-26 起）：CRM 主数据源已切换为探迹 MCP 同步
+ * （crmMcpSyncService，手动 POST /crm-mcp/sync 或 CRM_MCP_SYNC_ENABLED=true 定时增量）。
+ * Excel 快照是过期数据，直接跑会覆盖 MCP 同步结果。确需导入历史 Excel 时，
+ * 显式加 --force-deprecated-excel 参数才会执行。
+ *
+ * 用法：cd backend && npm run import:crm -- --force-deprecated-excel
  *
  * - RAW 层：raw_crm_rows 按 (batch_id, row_index) 唯一去重，batch_id = 文件名:md5，
  *   同一文件重跑不会产生重复原始行；
@@ -323,6 +328,15 @@ async function importFollowFile(rows: Row[]): Promise<{ success: number }> {
 }
 
 async function main(): Promise<void> {
+  if (!process.argv.includes("--force-deprecated-excel")) {
+    console.error(
+      "[import:crm] Excel 导入已停用：CRM 主数据源为探迹 MCP 同步" +
+        "（POST /crm-mcp/sync 或 CRM_MCP_SYNC_ENABLED=true 定时增量）。\n" +
+        "Excel 快照是过期数据，直接导入会覆盖 MCP 同步结果。\n" +
+        "确需导入历史 Excel 时，显式加 --force-deprecated-excel 再执行。"
+    );
+    process.exit(1);
+  }
   await initDB();
 
   for (const cfg of FILES) {

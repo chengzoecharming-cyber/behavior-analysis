@@ -5,6 +5,8 @@
  * - 可靠订单：oa_orders.customer_match_status IN (matched_by_verified_id, matched_by_exact_name)，
  *   且 customer_id 命中「拜访客户名 normalize 后精确命中的 CRM 客户」，
  *   或订单原始客户名 normalize 后与拜访客户名精确相等（仅限已 confirmed 的订单，不做模糊包含）。
+ * - CRM 阶段/公海/负责人展示：拜访名 → CRM 客户走三层归并（精确 → 剥分支后缀 → 双向包含，
+ *   与 cross/stuck 同口径，resolveCrmName），歧义不归并、维持「无 CRM」。
  * - 待核查：ambiguous / unmatched 订单的原始客户名 normalize 后与拜访客户名精确相等
  *   （只给中性「关联待核查」状态，不产生确定结论）。
  * - 占位客户名（虚拟客户/住址/公司等）直接跳过，不出现结果中。
@@ -15,6 +17,7 @@
 
 import { pool } from "../db";
 import { normalizeCustomerName, splitRealCustomerNames } from "./normalization";
+import { resolveCrmName } from "./customerMatch";
 
 export interface OrderStatusOrderItem {
   process_instance_id: string;
@@ -147,6 +150,8 @@ export async function resolveVisitOrderStatus(
     arr.push(c);
     crmByNorm.set(norm, arr);
   }
+  // 三层归并用的候选集（精确 → 剥分支后缀 → 双向包含，口径与 cross/stuck 一致）
+  const crmNormCandidates = [...crmByNorm.keys()];
 
   // 订单按归一化客户名索引（仅精确相等，不做包含模糊）
   const ordersByNorm = new Map<string, OrderRow[]>();
@@ -160,7 +165,10 @@ export async function resolveVisitOrderStatus(
 
   for (const name of names) {
     const norm = normalizeCustomerName(name);
-    const crmHits = crmByNorm.get(norm) || [];
+    // CRM 侧三层归并：精确落空再走剥后缀/双向包含；歧义（resolveCrmName 返回 null）维持无 CRM。
+    // 注意：归并只影响 CRM 阶段/公海/负责人展示，订单关联仍按下方精确口径，不做模糊命中。
+    const resolvedNorm = crmByNorm.has(norm) ? norm : resolveCrmName(norm, new Set(), crmNormCandidates);
+    const crmHits = resolvedNorm ? crmByNorm.get(resolvedNorm) || [] : [];
     const crmIds = new Set(crmHits.map((c) => c.id));
     const nameOrders = ordersByNorm.get(norm) || [];
 

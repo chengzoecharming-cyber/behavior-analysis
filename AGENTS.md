@@ -89,7 +89,7 @@ map/
 │   │   ├── backfillVisitExclusion.ts     # 回填 visits.exclude_from_visit_count（拜访次数排除住址/公司地址，--dry 预览）
 │   │   ├── recomputeMileageAndRoutes.ts  # 清空并重新计算 routes、风险摘要与异常（修正里程口径后使用）
 │   │   ├── reparseApproval.ts        # 销售修改钉钉表单后重录指定审批单（重拉实例→重解析替换 visits→重算派生数据，--dry 预览）
-│   │   ├── importCrmExcel.ts         # 探迹 CRM Excel 导入（客户/联系人/跟进记录 → crm_* 表）
+│   │   ├── importCrmExcel.ts         # 【已停用 2026-10-26】探迹 CRM Excel 导入；需 --force-deprecated-excel 才执行，主数据源已切 MCP 同步
 │   │   ├── auditCrmMcp.ts            # CRM MCP 只读对账（npm run audit:crm-mcp，只 SELECT + MCP 只读调用，不写库）
 │   │   ├── backfillOaOrders.ts       # OA 订单历史回拉（30 天分窗断点续跑，上限 365 天，npm run backfill:oa-orders）
 │   │   ├── rematchOaOrders.ts        # OA 订单客户重匹配（CRM 快照更新后存量升级，npm run rematch:oa-orders）
@@ -386,10 +386,11 @@ CRM_DIGEST_RECIPIENTS=
 # 日报推送开关：置 false 时日报文档照常生成到钉钉知识库，仅跳过本人/区总汇总推送（灰度验证用），默认推送
 REPORT_PUSH_ENABLED=true
 
-# 探迹 CRM MCP 接入（2026-10-23 只读对账阶段）：streamable-http 端点 + Bearer token
-# 当前仅 audit:crm-mcp 只读对账使用；正式写库同步与 CRM_MCP_SYNC_ENABLED 调度尚未启用
+# 探迹 CRM MCP 接入：streamable-http 端点 + Bearer token
+# 2026-10-26 起写库同步已上线（crmMcpSyncService），为 CRM 数据主源；Excel 手工导入已停用
 CRM_MCP_URL=https://dingcrm.eapps.dingtalkcloud.com/open/mcp/v1/
 CRM_MCP_TOKEN=
+# 定时增量同步开关：true 后每 2 小时的 :40 分（北京时间）自动跑一轮增量
 CRM_MCP_SYNC_ENABLED=false
 # 联系人同步开关（2026-10-23 产品决策默认关闭：联系人价值低，只同步客户+跟进）
 CRM_MCP_SYNC_CONTACTS=false
@@ -640,7 +641,7 @@ docker compose -f docker-compose.ghcr.yml logs -f postgres
 
 ## 已知问题与注意事项
 
-- **探迹 CRM MCP 已接入只读对账（2026-10-23）**：`crmMcpClient.ts` + `npm run audit:crm-mcp`，审计结论归档在 `docs/crm-mcp-audit-2026-10-23.md`。关键结论：① token 权限覆盖全量（与 CRM 后台对账一致）；② 客户分 4 张表单（国内企业/国内代理商/海外代理商/海外终端），与 `customer_type` 四枚举一一对应；③ 公海=负责人为空；④ `latest_recycle_time` 掉保时间是**预计掉保截止日**（未来日期），不是历史事件，历史事件看 `latest_return_pool_time`，保护期规则待业务核实；⑤ 跟进记录表级查询不返回所属客户，只能按客户维度 `crm_get_customer_followups` 拉取；新增跟进会 bump 客户 `update_time`（10/10 样本验证），编辑跟进未验证；⑥ 跟进无创建人字段；⑦ 图片 URL 签名约 24h 过期且老记录不重新签名，历史图片已不可下载，正式同步间隔必须 ≤24h；⑧ 正式同步时需对本地多出而远端不存在的客户打标（Excel 快照从不删除导致 ~5884 条僵尸数据）。**目前未做任何写库同步与定时调度。**
+- **探迹 CRM MCP 写库同步已上线（2026-10-26）**：`crmMcpSyncService.ts` 把 4 张客户表单增量 upsert 进 `crm_customers`（与 Excel 时代同表，Excel 独有旧行由全量轮打 `is_deleted` 僵尸标，不物理删），为 CRM 数据主源；Excel 手工导入 `importCrmExcel.ts` 已停用（需 `--force-deprecated-excel` 才执行）。定时调度 `startCrmMcpSyncScheduler` 每 2 小时 :40 增量，需 `CRM_MCP_SYNC_ENABLED=true` + `CRM_MCP_TOKEN`；运维接口 `/crm-mcp/sync`（手动）、`/crm-mcp/sync-logs`、`/crm-mcp/sync-status`（同步中心「CRM 同步」Tab）。只读对账审计（`crmMcpClient.ts` + `npm run audit:crm-mcp`）结论归档在 `docs/crm-mcp-audit-2026-10-23.md`：① token 权限覆盖全量；② 客户 4 张表单与 `customer_type` 四枚举一一对应；③ 公海=负责人为空；④ `latest_recycle_time` 掉保时间是**预计掉保截止日**（未来日期），历史事件看 `latest_return_pool_time`；⑤ 跟进记录只能按客户维度 `crm_get_customer_followups` 拉取，新增跟进 bump 客户 `update_time`、编辑不 bump（每日回补兜底近 30 天客户，上限 200/轮）；⑥ 跟进无创建人字段；⑦ 图片 URL 签名约 24h 过期，同步间隔必须 ≤24h（跟进图片下载到 `backend/uploads/crm-images/`，仅近 6 个月）。**控制台订单 Tag 的 CRM 阶段展示（visitOrderStatusService）用三层归并匹配（resolveCrmName，与 cross/stuck 同口径），订单关联本身仍只认 confirmed 精确口径。**
 - `backend/schema.sql` 与 `backend/src/db.ts` 不同步，实际 schema 以 `db.ts` 为准。
 - **v2 行的 `visit_note`/`visit_detail.ai` 现由自建 LLM 总结生成**（`llmSummaryService.ts`，OpenAI 兼容接口，`LLM_API_KEY`/`LLM_BASE_URL`/`LLM_MODEL` 走环境变量，默认 DeepSeek），替代已失效的钉钉 DDAIField「AI总结」字段；同步成功后经 `recomputeDerivedDataForVisits` fire-and-forget 补写。未配置 key、调用失败、有效内容过短（comm+issues 去标点后 < 8 字，如只填「公司办公」「。」）或模型返回拒绝语（「信息不足/无法生成/内容为空/请提供」）时维持原始兜底拼接（「沟通内容：...；存在问题：...」），存量回填执行 `cd backend && npm run backfill:ai-summary`（`--dry` 预览）。回写时保留 visit_note 末尾的里程备注后缀（如「[缺少终点里程读数]」）。
 - 权限系统已完成收口（见「认证方式」章节）：核心接口均按角色过滤数据，越权返回 403。
