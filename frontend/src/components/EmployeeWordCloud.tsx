@@ -33,6 +33,9 @@ export default function EmployeeWordCloud({
       data: [{ id: "words", values }],
       nameField: "name",
       valueField: "value",
+      // 词云默认 colorMode=ordinal，按 seriesField 给每个词分配调色板颜色；
+      // 不设置 seriesField 时所有词落在同一组，只会用调色板第一个颜色（单色）
+      seriesField: "name",
       // Semi 官方色板分类色（默认调色板是蓝色系渐变，会糊成一片，需显式给多色相）
       color: ["#1664FF", "#00B2B2", "#00B42A", "#FF8800", "#722ED1", "#F5319D", "#F7B500"],
       fontSizeRange: [12, 32],
