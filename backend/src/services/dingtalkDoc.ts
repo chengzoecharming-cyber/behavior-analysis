@@ -12,6 +12,13 @@ interface ApiResponse<T = any> {
   [key: string]: any;
 }
 
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+/** 判断是否为钉钉 API 级 QPS 限流（如 Forbidden.AccessDenied.QpsLimitForApi），可退避重试 */
+function isQpsLimited(message: string): boolean {
+  return /QpsLimitForApi|qps|次数过多/i.test(message);
+}
+
 async function docApiRequest<T = any>(
   path: string,
   options: {
@@ -26,32 +33,48 @@ async function docApiRequest<T = any>(
   const queryEntries = Object.entries(query).filter(
     ([, v]) => v !== undefined && v !== null && v !== ""
   ) as [string, string][];
-  const queryString = queryEntries.length
-    ? "?" + new URLSearchParams(queryEntries).toString()
-    : "";
 
-  const url = `${DINGTALK_API_BASE}${path}${queryString}`;
-  const res = await fetch(url, {
-    method,
-    headers: {
-      "x-acs-dingtalk-access-token": accessToken,
-      "Content-Type": "application/json",
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    const queryString = queryEntries.length
+      ? "?" + new URLSearchParams(queryEntries).toString()
+      : "";
 
-  const data = (await res.json()) as ApiResponse;
-  // 钉钉新文档 API 使用 code/message 字段表示错误
-  if (data.code) {
-    throw new Error(`DingTalk Doc API error: ${data.message} (${data.code})`);
+    const url = `${DINGTALK_API_BASE}${path}${queryString}`;
+    const res = await fetch(url, {
+      method,
+      headers: {
+        "x-acs-dingtalk-access-token": accessToken,
+        "Content-Type": "application/json",
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+
+    const data = (await res.json()) as ApiResponse;
+    // 钉钉新文档 API 使用 code/message 字段表示错误
+    const errMessage = data.code
+      ? `DingTalk Doc API error: ${data.message} (${data.code})`
+      : data.errcode !== undefined && data.errcode !== 0
+        ? `DingTalk Doc API error: ${data.errmsg} (${data.errcode})`
+        : data.success === false
+          ? `DingTalk Doc API error: ${data.errmsg || data.message || "unknown"}`
+          : null;
+
+    if (!errMessage) {
+      return (data.result ?? data) as T;
+    }
+    // QPS 限流是企业维度共享窗口，退避 1s/2s 后重试通常即可通过
+    if (isQpsLimited(errMessage) && attempt < MAX_ATTEMPTS) {
+      const backoffMs = attempt * 1000;
+      console.warn(
+        `[DingTalk Doc] QPS limited on ${path}, retry ${attempt}/${MAX_ATTEMPTS - 1} after ${backoffMs}ms`
+      );
+      await sleep(backoffMs);
+      continue;
+    }
+    throw new Error(errMessage);
   }
-  if (data.errcode !== undefined && data.errcode !== 0) {
-    throw new Error(`DingTalk Doc API error: ${data.errmsg} (${data.errcode})`);
-  }
-  if (data.success === false) {
-    throw new Error(`DingTalk Doc API error: ${data.errmsg || data.message || "unknown"}`);
-  }
-  return (data.result ?? data) as T;
+  throw new Error("unreachable");
 }
 
 export interface DocWorkspace {
@@ -156,6 +179,34 @@ export interface DocNode {
 }
 
 /**
+ * listNodes 短 TTL 缓存：同一轮报告生成里会反复查询相同的父文件夹
+ * （部门/子部门/报告类型等中间层被几十份报告共享），缓存可把 ListNodes
+ * 调用量从 ~报告数×层数 降到 ~文件夹数，避免触发 wiki_2.0#ListNodes 的
+ * 企业维度 QPS 限流（2026-11-06 日报失败事故）。创建文件夹/文档时同步更新缓存。
+ */
+const NODES_CACHE_TTL_MS = 120_000;
+const nodesCache = new Map<
+  string,
+  { nodes: DocNode[]; expiresAt: number }
+>();
+
+function nodesCacheKey(workspaceId: string, parentNodeId: string): string {
+  return `${workspaceId}|${parentNodeId}`;
+}
+
+function cacheCreatedNode(
+  workspaceId: string,
+  parentNodeId: string,
+  node: DocNode
+): void {
+  const key = nodesCacheKey(workspaceId, parentNodeId);
+  const entry = nodesCache.get(key);
+  if (entry && entry.expiresAt > Date.now()) {
+    entry.nodes.push(node);
+  }
+}
+
+/**
  * 列出知识库下某父节点的子节点。
  */
 export async function listNodes(
@@ -163,6 +214,11 @@ export async function listNodes(
   workspaceId: string,
   parentNodeId: string
 ): Promise<DocNode[]> {
+  const key = nodesCacheKey(workspaceId, parentNodeId);
+  const cached = nodesCache.get(key);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.nodes;
+  }
   const res = await docApiRequest<any>("/v2.0/wiki/nodes", {
     query: {
       operatorId: unionId,
@@ -173,6 +229,7 @@ export async function listNodes(
   const nodes: DocNode[] = Array.isArray(res)
     ? res
     : res?.nodes || res?.list || [];
+  nodesCache.set(key, { nodes, expiresAt: Date.now() + NODES_CACHE_TTL_MS });
   return nodes;
 }
 
@@ -199,11 +256,13 @@ export async function createFolder(
       },
     }
   );
-  return {
+  const node = {
     ...created,
     nodeId: created.dentryUuid || created.nodeId,
     workspaceId,
   };
+  cacheCreatedNode(workspaceId, parentNodeId, node);
+  return node;
 }
 
 /** 忽略「XX. 」序号前缀，用于匹配用户手动编号后的文件夹名称 */
@@ -273,7 +332,7 @@ export async function createDoc(
   parentNodeId: string,
   name: string
 ): Promise<CreatedDoc> {
-  return docApiRequest<CreatedDoc>(
+  const created = await docApiRequest<CreatedDoc>(
     `/v1.0/doc/workspaces/${workspaceId}/docs`,
     {
       method: "POST",
@@ -285,6 +344,16 @@ export async function createDoc(
       },
     }
   );
+  // 同步进 listNodes 缓存，避免同一份报告被 findDocNodeByName 漏判后重复创建
+  cacheCreatedNode(workspaceId, parentNodeId, {
+    nodeId: created.dentryUuid || created.nodeId,
+    name,
+    type: "FILE",
+    docKey: created.docKey,
+    dentryUuid: created.dentryUuid,
+    workspaceId,
+  });
+  return created;
 }
 
 /**

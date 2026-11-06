@@ -428,7 +428,7 @@ export async function catchUpReportGeneration(): Promise<void> {
 
   const now = new Date();
 
-  // 1. 昨天的日报（日报每天 9:00 生成昨天）
+  // 1. 昨天的日报（日报每天 9:03 生成昨天）
   try {
     const yesterday = getYesterdayBeijing();
     if (await hasSuccessfulReportRun("daily", yesterday, yesterday)) {
@@ -510,16 +510,16 @@ export function startCrmDigestScheduler(): void {
   schedule();
 }
 
-/** 报告生成调度：日报 9:00（发昨天）、周报周日 18:00（发本周）、月报每月 1 日 9:00（发上月，北京时间） */
+/** 报告生成调度：日报 9:03（发昨天，错开整点降低 wiki ListNodes QPS 限流概率）、周报周日 18:00（发本周）、月报每月 1 日 9:00（发上月，北京时间） */
 export function startReportGenerationScheduler(): void {
   if (!isReportGenerationConfigured()) {
     console.log("[Scheduler] Report generation skipped: DINGTALK_OPERATOR_USERID not configured");
     return;
   }
 
-  // 日报：每天 9:00 生成昨天的日报
+  // 日报：每天 9:03 生成昨天的日报（避开 9:00 整点的全网定时任务高峰）
   const scheduleDaily = () => {
-    const ms = getMillisecondsUntil(9, 0);
+    const ms = getMillisecondsUntil(9, 3);
     console.log(`[Scheduler] Daily report generation will run in ${Math.round(ms / 1000 / 60)} minutes`);
     safeSetTimeout(async () => {
       console.log("[Scheduler] Running daily report generation");
