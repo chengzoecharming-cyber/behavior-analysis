@@ -492,7 +492,7 @@ AMAP_KEY=xxx docker-compose -f docker-compose.ghcr.yml up -d
 | GET/POST/PUT | `/feedback/*` | 反馈申诉 |
 | POST | `/export/console-report` | 导出控制台报告并发送到当前登录用户的钉钉工作通知 |
 | POST | `/export/console-report-to-doc` | 导出控制台报告到钉钉文档知识库（三级结构） |
-| POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`） |
+| POST | `/export/generate-reports` | 手动触发日/周/月报生成（trigger_source 记 `manual`）；body 支持 `force: true` 跳过「已成功生成过」幂等检查用于失败补跑（仍保留 advisory lock 防并发） |
 | GET | `/export/generation-logs` | 报告生成日志（page/pageSize 分页，report_type/status/start/end 筛选） |
 | GET | `/crm-analytics/overview` | 客户分析总览：总数、私海/公海、未跟进占比、审批中、30 天新增、按 customer_type 分布、`snapshot_date`（最近一次手工导入批次时间）（聚合口径，登录角色全量可见） |
 | GET | `/crm-analytics/cross?type=follow_only\|visit_only\|both\|unmatched&page=&pageSize=` | 客户×拜访交叉：只跟不访/只访不跟/都有 三个计数 + `unmatched_count` 待确认桶 + 分页明细（行级按可见负责人收敛）。匹配分三层（见下文「CRM 交叉匹配口径」） |
