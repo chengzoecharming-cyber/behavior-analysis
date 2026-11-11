@@ -566,7 +566,7 @@ router.post("/scope-report-to-doc", requireRole("admin", "manager"), async (req:
 });
 
 router.post("/generate-reports", requireRole("admin"), async (req: AuthRequest, res: Response) => {
-  const { type, date, start, end, year, month } = req.body || {};
+  const { type, date, start, end, year, month, force } = req.body || {};
 
   if (!type || !["daily", "weekly", "monthly"].includes(type)) {
     res.status(400).json({ error: "Invalid or missing type (daily|weekly|monthly)" });
@@ -581,13 +581,13 @@ router.post("/generate-reports", requireRole("admin"), async (req: AuthRequest, 
   try {
     let results;
     if (type === "daily") {
-      results = await generateDailyReports(date, "manual");
+      results = await generateDailyReports(date, "manual", !!force);
     } else if (type === "weekly") {
-      results = await generateWeeklyReports(start, end, "manual");
+      results = await generateWeeklyReports(start, end, "manual", !!force);
     } else {
       const y = year ? parseInt(String(year), 10) : undefined;
       const m = month ? parseInt(String(month), 10) : undefined;
-      results = await generateMonthlyReports(y, m, "manual");
+      results = await generateMonthlyReports(y, m, "manual", !!force);
     }
 
     const failedCount = results.filter((r) => r.status === "failed").length;

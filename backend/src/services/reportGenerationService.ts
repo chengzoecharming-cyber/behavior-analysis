@@ -1007,17 +1007,19 @@ function computeAdvisoryLockKeys(
  * 为同一报告类型 + 周期提供跨连接/跨进程互斥。
  * 先检查成功日志，再尝试获取 PostgreSQL advisory lock；
  * 若已生成或已有其他进程在跑，抛出 ReportGenerationSkippedError。
+ * force=true（手动补跑）时跳过「已成功」检查，仍保留 advisory lock 防并发。
  */
 async function withReportGenerationLock<T>(
   reportType: string,
   periodStart: string,
   periodEnd: string,
-  fn: () => Promise<T>
+  fn: () => Promise<T>,
+  force = false
 ): Promise<T> {
   const [key1, key2] = computeAdvisoryLockKeys(reportType, periodStart, periodEnd);
 
   // 1. 快速路径：已生成则跳过
-  if (await hasSuccessfulReportRun(reportType, periodStart, periodEnd)) {
+  if (!force && (await hasSuccessfulReportRun(reportType, periodStart, periodEnd))) {
     throw new ReportGenerationSkippedError("already-generated");
   }
 
@@ -1034,7 +1036,7 @@ async function withReportGenerationLock<T>(
 
     try {
       // 3. 拿到锁后再检查一次，防止获取锁之前刚好有别的进程完成
-      if (await hasSuccessfulReportRun(reportType, periodStart, periodEnd)) {
+      if (!force && (await hasSuccessfulReportRun(reportType, periodStart, periodEnd))) {
         throw new ReportGenerationSkippedError("already-generated");
       }
       return await fn();
@@ -1054,9 +1056,9 @@ async function generateReportsForPeriod(
   start: string,
   end: string,
   workspaceName: string,
-  options: { reportType: string; triggerSource: ReportTriggerSource }
+  options: { reportType: string; triggerSource: ReportTriggerSource; force?: boolean }
 ): Promise<ReportGenerationResult[]> {
-  const { reportType, triggerSource } = options;
+  const { reportType, triggerSource, force = false } = options;
   const operatorUserId = process.env.DINGTALK_OPERATOR_USERID || "";
   if (!operatorUserId) {
     throw new Error("未配置 DINGTALK_OPERATOR_USERID");
@@ -1311,7 +1313,7 @@ async function generateReportsForPeriod(
     await sendReportRunSummary(reportType, start, end, results);
 
     return results;
-  });
+  }, force);
 }
 
 function handleGenerationSkip(err: any, label: string, periodText: string): ReportGenerationResult[] {
@@ -1329,16 +1331,18 @@ function handleGenerationSkip(err: any, label: string, periodText: string): Repo
 /** 生成某一天的日报 */
 export async function generateDailyReports(
   date?: string,
-  triggerSource: ReportTriggerSource = "scheduler"
+  triggerSource: ReportTriggerSource = "scheduler",
+  force = false
 ): Promise<ReportGenerationResult[]> {
   const targetDate = date || formatDate(new Date(Date.now() - 24 * 60 * 60 * 1000));
   const workspaceName =
     process.env.DINGTALK_DOC_WORKSPACE_NAME || "外勤拜访报告";
-  console.log(`[Report Gen] 开始生成日报: ${targetDate}（${triggerSource}）`);
+  console.log(`[Report Gen] 开始生成日报: ${targetDate}（${triggerSource}${force ? ", force" : ""}）`);
   try {
     const results = await generateReportsForPeriod(targetDate, targetDate, workspaceName, {
       reportType: "daily",
       triggerSource,
+      force,
     });
     const failedCount = results.filter((r) => r.status === "failed").length;
     console.log(`[Report Gen] 日报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
@@ -1352,7 +1356,8 @@ export async function generateDailyReports(
 export async function generateWeeklyReports(
   start?: string,
   end?: string,
-  triggerSource: ReportTriggerSource = "scheduler"
+  triggerSource: ReportTriggerSource = "scheduler",
+  force = false
 ): Promise<ReportGenerationResult[]> {
   let weekStart: string;
   let weekEnd: string;
@@ -1375,6 +1380,7 @@ export async function generateWeeklyReports(
     const results = await generateReportsForPeriod(weekStart, weekEnd, workspaceName, {
       reportType: "weekly",
       triggerSource,
+      force,
     });
     const failedCount = results.filter((r) => r.status === "failed").length;
     console.log(`[Report Gen] 周报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
@@ -1388,7 +1394,8 @@ export async function generateWeeklyReports(
 export async function generateMonthlyReports(
   year?: number,
   month?: number,
-  triggerSource: ReportTriggerSource = "scheduler"
+  triggerSource: ReportTriggerSource = "scheduler",
+  force = false
 ): Promise<ReportGenerationResult[]> {
   let targetYear: number;
   let targetMonth: number;
@@ -1420,6 +1427,7 @@ export async function generateMonthlyReports(
     const results = await generateReportsForPeriod(monthStart, monthEnd, workspaceName, {
       reportType: "monthly",
       triggerSource,
+      force,
     });
     const failedCount = results.filter((r) => r.status === "failed").length;
     console.log(`[Report Gen] 月报生成完成: ${results.length} 份，失败 ${failedCount} 份`);
