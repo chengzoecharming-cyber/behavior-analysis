@@ -19,6 +19,17 @@ function isQpsLimited(message: string): boolean {
   return /QpsLimitForApi|qps|次数过多/i.test(message);
 }
 
+/**
+ * 判断是否为钉钉服务端临时故障（ServiceUnavailable / 网关 5xx / 返回 HTML 错误页
+ * 导致 JSON 解析失败），可退避重试。2026-11-10 事故：钉钉文档服务持续抖动，
+ * 大量 ServiceUnavailable + 网关返回 HTML 页（"Unexpected token '<'"）。
+ */
+function isTransientServerError(message: string): boolean {
+  return /ServiceUnavailable|temporary failure|InternalError|internal server error|non-JSON response|not valid JSON|Unexpected token/i.test(
+    message
+  );
+}
+
 async function docApiRequest<T = any>(
   path: string,
   options: {
@@ -34,23 +45,47 @@ async function docApiRequest<T = any>(
     ([, v]) => v !== undefined && v !== null && v !== ""
   ) as [string, string][];
 
-  const MAX_ATTEMPTS = 3;
+  const MAX_ATTEMPTS = 4;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     const queryString = queryEntries.length
       ? "?" + new URLSearchParams(queryEntries).toString()
       : "";
 
     const url = `${DINGTALK_API_BASE}${path}${queryString}`;
-    const res = await fetch(url, {
-      method,
-      headers: {
-        "x-acs-dingtalk-access-token": accessToken,
-        "Content-Type": "application/json",
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
+    let res: Response;
+    try {
+      res = await fetch(url, {
+        method,
+        headers: {
+          "x-acs-dingtalk-access-token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+    } catch (err: any) {
+      // 网络层失败（连接重置/DNS/超时）按临时故障退避重试
+      if (attempt < MAX_ATTEMPTS) {
+        const backoffMs = attempt * 2000;
+        console.warn(
+          `[DingTalk Doc] fetch failed on ${path} (${err?.message}), retry ${attempt}/${MAX_ATTEMPTS - 1} after ${backoffMs}ms`
+        );
+        await sleep(backoffMs);
+        continue;
+      }
+      throw err;
+    }
 
-    const data = (await res.json()) as ApiResponse;
+    // 网关故障时常返回 HTML 错误页而非 JSON，直接 res.json() 会抛
+    // "Unexpected token '<' ... is not valid JSON"，这里统一归一化为可重试错误
+    let data: ApiResponse;
+    try {
+      data = (await res.json()) as ApiResponse;
+    } catch {
+      data = {
+        code: "ServiceUnavailable",
+        message: `HTTP ${res.status} non-JSON response（网关错误页）`,
+      };
+    }
     // 钉钉新文档 API 使用 code/message 字段表示错误
     const errMessage = data.code
       ? `DingTalk Doc API error: ${data.message} (${data.code})`
@@ -63,11 +98,19 @@ async function docApiRequest<T = any>(
     if (!errMessage) {
       return (data.result ?? data) as T;
     }
-    // QPS 限流是企业维度共享窗口，退避 1s/2s 后重试通常即可通过
-    if (isQpsLimited(errMessage) && attempt < MAX_ATTEMPTS) {
-      const backoffMs = attempt * 1000;
+    // QPS 限流是企业维度共享窗口，退避 1s/2s/3s 后重试通常即可通过；
+    // ServiceUnavailable 等服务端抖动恢复窗口更长，退避 2s/5s/10s
+    const retryable = isQpsLimited(errMessage) || isTransientServerError(errMessage);
+    if (retryable && attempt < MAX_ATTEMPTS) {
+      const backoffMs = isQpsLimited(errMessage)
+        ? attempt * 1000
+        : attempt === 1
+          ? 2000
+          : attempt === 2
+            ? 5000
+            : 10000;
       console.warn(
-        `[DingTalk Doc] QPS limited on ${path}, retry ${attempt}/${MAX_ATTEMPTS - 1} after ${backoffMs}ms`
+        `[DingTalk Doc] transient error on ${path} (${errMessage}), retry ${attempt}/${MAX_ATTEMPTS - 1} after ${backoffMs}ms`
       );
       await sleep(backoffMs);
       continue;
